@@ -1,5 +1,31 @@
-*.log
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging / lock files
+uv.lock
+
+# Secrets / local config
 .env
 *.plist
+~/.openai-mcp/
+
+# Logs
+*.log
