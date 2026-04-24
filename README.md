@@ -1,134 +1,138 @@
 # openai-mcp
 
-Use your **ChatGPT Plus or Pro** subscription inside Claude Code, Codex, and other AI coding tools.
+Use your **ChatGPT Plus or Pro** subscription inside Claude Code, Codex, and any MCP client.
 
-One command to set up. Works in the background. Your account, your quota.
+[![PyPI version](https://img.shields.io/pypi/v/openai-mcp)](https://pypi.org/project/openai-mcp/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/openai-mcp/)
 
 ---
 
-## Quick start
+## What it does
+
+openai-mcp exposes 15 MCP tools that forward requests directly to ChatGPT's backend API.
+No proxy process. No separate account. Your token, your quota.
+
+Works with Claude Code, Codex CLI, and any client that speaks the MCP protocol over stdio.
+
+---
+
+## Install
 
 ```bash
-pip install git+https://github.com/robotlearning123/chatgpt2agent.git
+pip install openai-mcp
+```
+
+Or with pipx for an isolated install:
+
+```bash
+pipx install openai-mcp
+```
+
+---
+
+## Setup
+
+```bash
 openai-mcp setup
 ```
 
-That's it. The setup wizard will:
+The wizard will:
 
-1. Log you into ChatGPT (opens your browser)
-2. Detect your plan (Plus or Pro)
-3. Start a local server
-4. Register it with Claude Code automatically
-
-Restart Claude Code when done.
+1. Look for an existing Codex auth token at `~/.codex/auth.json`
+2. If not found, prompt you to paste a ChatGPT session token
+3. Save credentials to `~/.openai-mcp/token.json`
 
 ---
 
-## What you get
+## Configure in Claude Code
 
-Tools available inside Claude Code after setup:
-
-| Tool | What it does | Plan |
-|------|-------------|------|
-| `chat` | Chat with GPT-4o, GPT-5, o3-pro and more | Plus + Pro |
-| `deep_research` | Web search + synthesized report with citations | Plus + Pro |
-| `image_gen` | Generate images with gpt-image-2 | Pro only |
-
-**Example prompts in Claude Code:**
-
-> *"Use deep_research to find recent papers on diffusion transformers"*
->
-> *"Use chat with model gpt-5-5-pro to review this architecture"*
->
-> *"Use image_gen to create a diagram of this system"*
-
----
-
-## Requirements
-
-- Python 3.10+
-- A ChatGPT Plus ($20/mo) or Pro ($200/mo) subscription
-- Claude Code, Codex CLI, or any MCP-compatible agent
-
----
-
-## How it works
-
-```
-Your ChatGPT account (token from ~/.codex/auth.json)
-        ↓
-  MCP server  :9000   (native SSE → chatgpt.com)
-        ↓
-  Agent tools: chat / deep_research / image_gen
-             + account / memory / codex / gpts / conversations
-```
-
-One Python process. No external proxy. Token is reused from the Codex CLI — no separate login.
-
-Everything runs locally on your machine. No data leaves except to OpenAI/ChatGPT — the same as using ChatGPT directly.
-
-The server starts automatically at login (macOS LaunchAgent) and restarts if it crashes.
-
----
-
-## Connecting other tools
-
-**Any MCP client** — add this to its config:
+Add the following to `~/.claude.json` (under `mcpServers`):
 
 ```json
 {
   "mcpServers": {
     "openai": {
-      "type": "url",
-      "url": "http://localhost:9000/mcp"
+      "type": "stdio",
+      "command": "openai-mcp",
+      "args": ["run", "--stdio"]
     }
   }
 }
 ```
 
+Restart Claude Code after saving. Tools appear under the `openai` namespace.
+
 ---
 
-## Commands
+## Tools
 
-```bash
-openai-mcp setup          # First-time setup (login + register)
-openai-mcp run            # Start server manually
-openai-mcp run --stdio    # stdio mode (Claude Code legacy config)
+| Tool | What it does |
+|---|---|
+| `chat` | Chat with GPT-5.x, Pro models, o3, o3-pro |
+| `deep_research` | Web-augmented search answer (~30 s) |
+| `deep_research_heavy` | Long-form Deep Research via gpt-5-5-pro (5–30 min, uses monthly quota) |
+| `account_status` | ChatGPT plan and enabled features |
+| `list_models` | All models available to your account |
+| `memory_list` | List ChatGPT memories (PII redacted) |
+| `memory_search` | Search ChatGPT memories by keyword |
+| `custom_instructions_get` | Retrieve your ChatGPT custom instructions |
+| `list_codex_envs` | List Codex environments |
+| `list_codex_tasks` | List recent Codex tasks |
+| `list_custom_gpts` | List your custom GPTs |
+| `list_conversations` | Recent ChatGPT conversations |
+| `list_tasks` | Scheduled ChatGPT tasks |
+| `list_apps` | Connected apps and connectors |
+
+---
+
+## Architecture
+
+Native Python implementation — no proxy. The server calls
+`/backend-api/conversation` (SSE) directly using `curl_cffi` for TLS
+impersonation. Vendored POW and Turnstile solvers handle the OpenAI Sentinel
+challenge. See [NOTICES](./NOTICES.md) for attribution.
+
+```
+~/.codex/auth.json  (or ~/.openai-mcp/token.json)
+        |
+   openai-mcp  (stdio MCP server)
+        |
+   curl_cffi  →  chatgpt.com /backend-api/conversation  (SSE)
+        |
+   14 read tools + 1 heavy DR tool
 ```
 
 ---
 
-## Troubleshooting
+## Limitations
 
-**"Tools not showing in Claude Code"** → Restart Claude Code after setup.
-
-**"Login failed / token expired"** → Re-run `openai-mcp setup`. It refreshes your token.
-
-**"deep_research not available"** → Requires ChatGPT Plus or Pro plan.
-
-**Check logs:**
-```bash
-tail -f ~/.openai-mcp/mcp.log
-```
-
-**Restart server:**
-```bash
-launchctl stop com.user.openai-mcp
-launchctl start com.user.openai-mcp
-```
+- **Deep Research quota:** 248 requests/month on Pro; lower on Plus.
+- **image_gen:** stub is present but not yet wired to a working endpoint.
+- **memory_add:** read-only — the write endpoint returns 405; tool is not registered.
+- Requires an active ChatGPT Plus or Pro subscription.
 
 ---
 
-## Disclaimer
+## Development
 
-**Personal, non-commercial use only.**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
 
-This tool runs on your own machine using your own ChatGPT account. It does not bypass or resell OpenAI's services. You are responsible for complying with [OpenAI's Terms of Service](https://openai.com/policies/terms-of-use).
-
-Do not expose the local server to the internet or share your token.
-
-Not affiliated with OpenAI or Anthropic.
+---
 
 ## License
 
-[MIT](LICENSE) — personal use only, commercial use not permitted.
+[MIT](./LICENSE). See [NOTICES](./NOTICES.md) for third-party attributions.
+
+---
+
+## Acknowledgments
+
+- [lanqian528/chat2api](https://github.com/lanqian528/chat2api) — POW and Turnstile solver code (MIT)
+- [basketikun/chatgpt2api](https://github.com/basketikun/chatgpt2api) — survey of ChatGPT backend API patterns
+- [7836246/cursor2api](https://github.com/7836246/cursor2api) — survey of Cursor API patterns
