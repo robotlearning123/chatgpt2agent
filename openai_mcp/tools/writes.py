@@ -42,6 +42,7 @@ def register(mcp, client: BackendClient) -> None:
         repo_label: str,
         prompt: str,
         environment_id: str | None = None,
+        branch: str = "main",
     ) -> dict:
         """Create a new Codex task.
 
@@ -73,7 +74,7 @@ def register(mcp, client: BackendClient) -> None:
         payload = {
             "new_task": {
                 "environment_id": env_id,
-                "branch": "main",
+                "branch": branch,
             },
             "input_items": [
                 {
