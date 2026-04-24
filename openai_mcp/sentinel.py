@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
@@ -20,6 +21,27 @@ _CHAT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+
+# Matches JSON-encoded session-scoped tokens/headers so we can redact them
+# from error messages and logs.
+_SENSITIVE_KEY_RE = re.compile(
+    r'"(Openai-Sentinel-[A-Za-z-]+-Token|Authorization|OAI-[A-Za-z-]+)"\s*:\s*"[^"]*"',
+    re.IGNORECASE,
+)
+
+
+def _redact_error(text: str, max_len: int = 200) -> str:
+    """Truncate + redact session-scoped tokens before surfacing to the user.
+
+    Strips the values of any ``Openai-Sentinel-*-Token``, ``Authorization``,
+    or ``OAI-*`` header-shaped substrings, then truncates to ``max_len``.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    cleaned = _SENSITIVE_KEY_RE.sub(r'"\1":"<REDACTED>"', text)
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len] + "...[truncated]"
+    return cleaned
 
 
 class SentinelGate:
@@ -40,15 +62,18 @@ class SentinelGate:
             r = await s.post(url, headers=headers, json={"p": p}, timeout=20)
 
         if r.status_code != 200:
-            body = r.text[:400] if hasattr(r, "text") else str(r.content[:400])
+            body = r.text if hasattr(r, "text") else str(r.content)
             raise RuntimeError(
-                f"sentinel/chat-requirements HTTP {r.status_code}: {body}"
+                f"sentinel/chat-requirements HTTP {r.status_code}: "
+                f"{_redact_error(body)}"
             )
 
         resp = r.json()
         chat_token = resp.get("token")
         if not chat_token:
-            raise RuntimeError(f"sentinel/chat-requirements no token: {resp}")
+            raise RuntimeError(
+                f"sentinel/chat-requirements no token: {_redact_error(str(resp))}"
+            )
 
         out: dict[str, str] = {"chat-requirements": chat_token}
 

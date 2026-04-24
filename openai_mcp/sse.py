@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -15,6 +16,31 @@ from openai_mcp.sentinel import SentinelGate  # noqa: F401  (used in stream)
 _log = logging.getLogger(__name__)
 
 _CONV_URL = _BASE + "/backend-api/conversation"
+
+# Matches JSON-encoded session-scoped tokens/headers so we can redact them
+# from error messages and logs.
+_SENSITIVE_KEY_RE = re.compile(
+    r'"(Openai-Sentinel-[A-Za-z-]+-Token|Authorization|OAI-[A-Za-z-]+)"\s*:\s*"[^"]*"',
+    re.IGNORECASE,
+)
+
+
+def _redact_error(text: str, max_len: int = 200) -> str:
+    """Truncate + redact session-scoped tokens before surfacing to the user."""
+    if not isinstance(text, str):
+        text = str(text)
+    cleaned = _SENSITIVE_KEY_RE.sub(r'"\1":"<REDACTED>"', text)
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len] + "...[truncated]"
+    return cleaned
+
+
+def _safe_body(resp: object) -> str:
+    try:
+        text = getattr(resp, "text", "") or ""
+    except Exception:
+        return ""
+    return _redact_error(text) if text else ""
 
 
 def _build_payload(model: str, messages: list[dict]) -> dict:
@@ -74,12 +100,22 @@ class ConversationClient:
                 stream=True,
             )
             if resp.status_code == 401:
-                raise RuntimeError("401 Unauthorized — run `codex login`")
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    "401 Unauthorized — run `codex login`"
+                    + (f": {body}" if body else "")
+                )
             if resp.status_code == 403:
-                raise RuntimeError("403 Forbidden — token may have expired")
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    "403 Forbidden — token may have expired"
+                    + (f": {body}" if body else "")
+                )
             if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
                 raise RuntimeError(
                     f"HTTP {resp.status_code} from /backend-api/conversation"
+                    + (f": {body}" if body else "")
                 )
 
             current_msg_id: str | None = None
