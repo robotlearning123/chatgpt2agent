@@ -27,4 +27,4 @@ dependencies = [
 openai-mcp = "openai_mcp.server:main"
 
 [project.urls]
-Homepage = "https://github.com/robotlearning123/chatgpt-pro-mcp"
+Homepage = "https://github.com/robotlearning123/chatgpt2agent"

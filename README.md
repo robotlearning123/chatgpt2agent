@@ -9,7 +9,7 @@ One command to set up. Works in the background. Your account, your quota.
 ## Quick start
 
 ```bash
-pip install git+https://github.com/robotlearning123/chatgpt-pro-mcp.git
+pip install git+https://github.com/robotlearning123/chatgpt2agent.git
 openai-mcp setup
 ```
 
