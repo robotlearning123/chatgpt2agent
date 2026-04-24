@@ -59,13 +59,19 @@ def register(mcp, client: BackendClient) -> None:
                 target_path="/backend-api/codex/environments",
             )
             envs = data if isinstance(data, list) else (data.get("environments") or [])
-            match = next((e for e in envs if e.get("label") == repo_label), None)
-            if match is None:
+            matches = [e for e in envs if e.get("label") == repo_label]
+            if len(matches) == 0:
                 available = [e.get("label") for e in envs]
                 raise ValueError(
                     f"No Codex environment with label {repo_label!r}. Available: {available}"
                 )
-            env_id = match["id"]
+            if len(matches) > 1:
+                ids = [e.get("id") for e in matches]
+                raise ValueError(
+                    f"Ambiguous label {repo_label!r}: matches {len(matches)} environments "
+                    f"({ids}). Pass environment_id explicitly."
+                )
+            env_id = matches[0]["id"]
 
         payload = {
             "new_task": {
