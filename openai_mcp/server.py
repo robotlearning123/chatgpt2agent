@@ -73,9 +73,35 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         """Search the web and synthesize a detailed report with citations.
 
         Best for: current events, literature review, market research.
-        Takes 30–90 seconds.
+        Takes 30–120 seconds. Uses model='research' + system_hints=['research'].
         """
-        return await conv.complete("research", [{"role": "user", "content": query}])
+        final_text = ""
+        tool_calls: list[str] = []
+        refs: list = []
+        groups: list = []
+
+        async for event in conv.deep_research(query):
+            if event["type"] == "tool":
+                tool_calls.append(event["call"])
+            elif event["type"] == "done":
+                final_text = event["text"]
+                refs = event.get("content_references", [])
+                groups = event.get("search_result_groups", [])
+
+        # Append a brief sources section if citations were returned
+        if refs:
+            lines = ["\n\n---\n**Sources:**"]
+            seen: set[str] = set()
+            for ref in refs:
+                for item in ref.get("items", []):
+                    url = item.get("url", "")
+                    title = item.get("title", url)
+                    if url and url not in seen:
+                        seen.add(url)
+                        lines.append(f"- [{title}]({url})")
+            final_text += "\n".join(lines)
+
+        return final_text or "(no response)"
 
     # image_gen intentionally unregistered in 0.0.1 — the gpt-image-2 endpoint
     # is unverified in the native SSE build. Tracked for PR5. Re-add the

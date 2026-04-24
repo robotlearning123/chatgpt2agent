@@ -43,6 +43,10 @@ def _safe_body(resp: object) -> str:
     return _redact_error(text) if text else ""
 
 
+#: Model slug for Deep Research (confirmed working, resolves to web-search-capable backend)
+DR_MODEL = "research"
+
+
 def _build_payload(model: str, messages: list[dict]) -> dict:
     return {
         "action": "next",
@@ -59,9 +63,18 @@ def _build_payload(model: str, messages: list[dict]) -> dict:
         "conversation_mode": {"kind": "primary_assistant"},
         "force_paragen": False,
         "force_rate_limit": False,
+        "force_use_sse": True,
         "timezone_offset_min": -480,
         "history_and_training_disabled": True,
+        "system_hints": [],
     }
+
+
+def _build_dr_payload(query: str) -> dict:
+    """Build payload for Deep Research: model=research + system_hints=['research']."""
+    payload = _build_payload(DR_MODEL, [{"role": "user", "content": query}])
+    payload["system_hints"] = ["research"]
+    return payload
 
 
 class ConversationClient:
@@ -207,3 +220,115 @@ class ConversationClient:
         async for chunk in self.stream(model, messages):
             chunks.append(chunk)
         return "".join(chunks)
+
+    async def deep_research(self, query: str) -> AsyncIterator[dict]:
+        """Stream Deep Research events for *query*.
+
+        Yields dicts of shape:
+          {"type": "progress", "text": <partial_text>}   — intermediate text deltas
+          {"type": "tool",     "call": <search_call>}    — tool invocations (search/browse)
+          {"type": "done",     "text": <full_text>,
+           "content_references": [...], "search_result_groups": [...]}
+
+        Uses model='research' + system_hints=['research'] which triggers the
+        ChatGPT web-search deep-research backend (confirmed working 2026-04-24).
+        Timeout is 1800 s to accommodate multi-minute research runs.
+        """
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_dr_payload(query)
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL,
+                headers=headers,
+                json=payload,
+                timeout=1800,
+                stream=True,
+            )
+            if resp.status_code == 401:
+                raise RuntimeError("401 Unauthorized — run `codex login`")
+            if resp.status_code == 403:
+                raise RuntimeError("403 Forbidden — token may have expired")
+            if resp.status_code not in (200, 201):
+                body = ""
+                async for chunk in resp.aiter_content():
+                    body += (
+                        chunk.decode("utf-8", errors="replace")
+                        if isinstance(chunk, bytes)
+                        else chunk
+                    )
+                    if len(body) > 500:
+                        break
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from /backend-api/conversation: {body[:500]}"
+                )
+
+            last_text = ""
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+
+                msg = obj.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+
+                role = msg.get("author", {}).get("role", "")
+                content = msg.get("content", {})
+                ct = content.get("content_type", "")
+                status = msg.get("status", "")
+                meta = msg.get("metadata", {})
+
+                # Tool invocation events (search/browse)
+                if ct == "code" and role == "assistant":
+                    call_text = content.get("text", "")
+                    if call_text:
+                        yield {"type": "tool", "call": call_text}
+                    continue
+
+                # Text streaming — assistant in-progress or finished
+                if role == "assistant" and ct == "text":
+                    parts = content.get("parts") or []
+                    new = parts[0] if parts and isinstance(parts[0], str) else ""
+
+                    if status == "finished_successfully":
+                        # Emit final done event with citations
+                        yield {
+                            "type": "done",
+                            "text": new,
+                            "content_references": meta.get("content_references", []),
+                            "search_result_groups": meta.get(
+                                "search_result_groups", []
+                            ),
+                        }
+                        last_text = new
+                    elif status == "in_progress" and new:
+                        # Emit incremental text delta
+                        if new.startswith(last_text):
+                            delta = new[len(last_text) :]
+                            if delta:
+                                yield {"type": "progress", "text": delta}
+                        else:
+                            yield {"type": "progress", "text": new}
+                        last_text = new
