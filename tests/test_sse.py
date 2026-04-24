@@ -15,11 +15,13 @@ import pytest
 _SKIP_LIVE = os.environ.get("SKIP_LIVE", "1") == "1"
 _SKIP_HEAVY_DR = os.environ.get("SKIP_HEAVY_DR", "1") == "1"
 
-
-@pytest.mark.skipif(
+_NEEDS_AUTH = pytest.mark.skipif(
     not (Path.home() / ".codex" / "auth.json").exists(),
     reason="requires ~/.codex/auth.json",
 )
+
+
+@_NEEDS_AUTH
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 (default); set SKIP_LIVE=0 to run")
 def test_sse_pong():
     from openai_mcp.backend import BackendClient
@@ -35,10 +37,7 @@ def test_sse_pong():
     assert "pong" in out.lower(), f"no PONG in response: {out!r}"
 
 
-@pytest.mark.skipif(
-    not (Path.home() / ".codex" / "auth.json").exists(),
-    reason="requires ~/.codex/auth.json",
-)
+@_NEEDS_AUTH
 @pytest.mark.skipif(
     _SKIP_LIVE or _SKIP_HEAVY_DR,
     reason="heavy DR skipped by default; set SKIP_LIVE=0 SKIP_HEAVY_DR=0 to run",
@@ -56,3 +55,73 @@ def test_sse_deep_research_heavy():
         )
     )
     assert out and out.strip(), "empty DR response"
+
+
+def test_heavy_dr_payload_structure():
+    """Verify _build_heavy_dr_payload produces the correct ground-truth payload shape.
+
+    Pure unit test — no network call.
+    """
+    from openai_mcp.sse import (
+        HEAVY_DR_HINT,
+        HEAVY_DR_MODEL,
+        _F_CONV_URL,
+        _build_heavy_dr_payload,
+    )
+
+    payload = _build_heavy_dr_payload("What is the tallest mountain?")
+
+    assert payload["model"] == HEAVY_DR_MODEL
+    assert payload["thinking_effort"] == "extended"
+    assert payload["system_hints"] == [HEAVY_DR_HINT]
+    assert payload["conversation_mode"] == {"kind": "primary_assistant"}
+    assert payload["supported_encodings"] == ["v1"]
+    assert payload["supports_buffering"] is True
+
+    assert len(payload["messages"]) == 1
+    msg = payload["messages"][0]
+    assert msg["author"] == {"role": "user"}
+    assert msg["content"]["parts"] == ["What is the tallest mountain?"]
+
+    meta = msg["metadata"]
+    assert meta["system_hints"] == [HEAVY_DR_HINT]
+    assert meta["deep_research_version"] == "standard"
+    assert meta["venus_model_variant"] == "standard"
+    assert meta["caterpillar_selected_sources"] == []
+
+    assert _F_CONV_URL.endswith("/backend-api/f/conversation")
+
+
+@_NEEDS_AUTH
+@pytest.mark.skipif(
+    _SKIP_LIVE or _SKIP_HEAVY_DR,
+    reason="heavy DR skipped by default; set SKIP_LIVE=0 SKIP_HEAVY_DR=0 to run",
+)
+def test_heavy_dr_live_metadata():
+    """Fire one heavy DR request and verify the connector is invoked.
+
+    Checks server_ste_metadata event with tool_name=ApiToolWrapper and
+    tool_invoked=True, confirming connector_openai_deep_research fired.
+    """
+    from openai_mcp.backend import BackendClient
+    from openai_mcp.sse import ConversationClient
+
+    async def run():
+        conv = ConversationClient(BackendClient())
+        meta_events = []
+        async for event in conv.deep_research_heavy("What is 2+2?"):
+            if event["type"] == "meta":
+                meta_events.append(event["data"])
+            if event["type"] == "done":
+                break
+        return meta_events
+
+    metas = asyncio.run(run())
+    assert metas, "no server_ste_metadata events received"
+    first_meta = metas[0]
+    assert first_meta.get("tool_invoked") is True, (
+        f"tool_invoked not True in metadata: {first_meta}"
+    )
+    assert first_meta.get("tool_name") == "ApiToolWrapper", (
+        f"unexpected tool_name: {first_meta.get('tool_name')}"
+    )
