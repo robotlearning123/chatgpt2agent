@@ -55,14 +55,15 @@ Tools available inside Claude Code after setup:
 ## How it works
 
 ```
-Your ChatGPT account
+Your ChatGPT account (token from ~/.codex/auth.json)
         ↓
-  local gateway  :3001   (handles auth, talks to ChatGPT)
+  MCP server  :9000   (native SSE → chatgpt.com)
         ↓
-   MCP server    :9000   (Claude Code connects here)
-        ↓
-  Claude Code tools: chat / deep_research / image_gen
+  Agent tools: chat / deep_research / image_gen
+             + account / memory / codex / gpts / conversations
 ```
+
+One Python process. No external proxy. Token is reused from the Codex CLI — no separate login.
 
 Everything runs locally on your machine. No data leaves except to OpenAI/ChatGPT — the same as using ChatGPT directly.
 
@@ -83,21 +84,6 @@ The server starts automatically at login (macOS LaunchAgent) and restarts if it 
     }
   }
 }
-```
-
-**Any HTTP client / Python script:**
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:3001/v1",
-    api_key="openai-mcp-local"
-)
-resp = client.chat.completions.create(
-    model="gpt-5-5-pro",
-    messages=[{"role": "user", "content": "Hello"}]
-)
 ```
 
 ---
@@ -123,7 +109,6 @@ openai-mcp run --stdio    # stdio mode (Claude Code legacy config)
 **Check logs:**
 ```bash
 tail -f ~/.openai-mcp/mcp.log
-tail -f ~/.openai-mcp/chatgpt2api.log
 ```
 
 **Restart server:**
