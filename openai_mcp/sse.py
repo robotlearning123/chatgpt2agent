@@ -352,62 +352,74 @@ class ConversationClient:
                 )
 
             last_text = ""
-            async for raw_line in resp.aiter_lines():
-                if isinstance(raw_line, bytes):
-                    raw_line = raw_line.decode("utf-8", errors="replace")
-                line = raw_line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+            done_emitted = False
+            try:
+                async for raw_line in resp.aiter_lines():
+                    if isinstance(raw_line, bytes):
+                        raw_line = raw_line.decode("utf-8", errors="replace")
+                    line = raw_line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
 
-                msg = obj.get("message", {})
-                if not isinstance(msg, dict):
-                    continue
+                    msg = obj.get("message", {})
+                    if not isinstance(msg, dict):
+                        continue
 
-                role = msg.get("author", {}).get("role", "")
-                content = msg.get("content", {})
-                ct = content.get("content_type", "")
-                status = msg.get("status", "")
-                meta = msg.get("metadata", {})
+                    role = msg.get("author", {}).get("role", "")
+                    content = msg.get("content", {})
+                    ct = content.get("content_type", "")
+                    status = msg.get("status", "")
+                    meta = msg.get("metadata", {})
 
-                # Tool invocation events (search/browse)
-                if ct == "code" and role == "assistant":
-                    call_text = content.get("text", "")
-                    if call_text:
-                        yield {"type": "tool", "call": call_text}
-                    continue
+                    # Tool invocation events (search/browse)
+                    if ct == "code" and role == "assistant":
+                        call_text = content.get("text", "")
+                        if call_text:
+                            yield {"type": "tool", "call": call_text}
+                        continue
 
-                # Text streaming — assistant in-progress or finished
-                if role == "assistant" and ct == "text":
-                    parts = content.get("parts") or []
-                    new = parts[0] if parts and isinstance(parts[0], str) else ""
+                    # Text streaming — assistant in-progress or finished
+                    if role == "assistant" and ct == "text":
+                        parts = content.get("parts") or []
+                        new = parts[0] if parts and isinstance(parts[0], str) else ""
 
-                    if status == "finished_successfully":
-                        # Emit final done event with citations
-                        yield {
-                            "type": "done",
-                            "text": new,
-                            "content_references": meta.get("content_references", []),
-                            "search_result_groups": meta.get(
-                                "search_result_groups", []
-                            ),
-                        }
-                        last_text = new
-                    elif status == "in_progress" and new:
-                        # Emit incremental text delta
-                        if new.startswith(last_text):
-                            delta = new[len(last_text) :]
-                            if delta:
-                                yield {"type": "progress", "text": delta}
-                        else:
-                            yield {"type": "progress", "text": new}
-                        last_text = new
+                        if status == "finished_successfully":
+                            # Emit final done event with citations
+                            yield {
+                                "type": "done",
+                                "text": new,
+                                "content_references": meta.get("content_references", []),
+                                "search_result_groups": meta.get(
+                                    "search_result_groups", []
+                                ),
+                            }
+                            done_emitted = True
+                            last_text = new
+                        elif status == "in_progress" and new:
+                            # Emit incremental text delta
+                            if new.startswith(last_text):
+                                delta = new[len(last_text):]
+                                if delta:
+                                    yield {"type": "progress", "text": delta}
+                            else:
+                                yield {"type": "progress", "text": new}
+                            last_text = new
+            finally:
+                if last_text and not done_emitted:
+                    yield {
+                        "type": "done",
+                        "text": last_text,
+                        "content_references": [],
+                        "search_result_groups": [],
+                        "terminated_abnormally": True,
+                    }
 
     async def deep_research_heavy(self, query: str) -> AsyncIterator[dict]:
         """Stream true Pro-tier Deep Research events for *query*.
@@ -477,62 +489,74 @@ class ConversationClient:
                 )
 
             last_text = ""
-            async for raw_line in resp.aiter_lines():
-                if isinstance(raw_line, bytes):
-                    raw_line = raw_line.decode("utf-8", errors="replace")
-                line = raw_line.strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+            done_emitted = False
+            try:
+                async for raw_line in resp.aiter_lines():
+                    if isinstance(raw_line, bytes):
+                        raw_line = raw_line.decode("utf-8", errors="replace")
+                    line = raw_line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
 
-                # Server-side telemetry / metadata event
-                if obj.get("type") == "server_ste_metadata":
-                    yield {"type": "meta", "data": obj.get("metadata", {})}
-                    continue
+                    # Server-side telemetry / metadata event
+                    if obj.get("type") == "server_ste_metadata":
+                        yield {"type": "meta", "data": obj.get("metadata", {})}
+                        continue
 
-                msg = obj.get("message", {})
-                if not isinstance(msg, dict):
-                    continue
+                    msg = obj.get("message", {})
+                    if not isinstance(msg, dict):
+                        continue
 
-                role = msg.get("author", {}).get("role", "")
-                content = msg.get("content", {})
-                ct = content.get("content_type", "")
-                status = msg.get("status", "")
-                meta = msg.get("metadata", {})
+                    role = msg.get("author", {}).get("role", "")
+                    content = msg.get("content", {})
+                    ct = content.get("content_type", "")
+                    status = msg.get("status", "")
+                    meta = msg.get("metadata", {})
 
-                # Tool / connector invocation events
-                if ct == "code" and role == "assistant":
-                    call_text = content.get("text", "")
-                    if call_text:
-                        yield {"type": "tool", "call": call_text}
-                    continue
+                    # Tool / connector invocation events
+                    if ct == "code" and role == "assistant":
+                        call_text = content.get("text", "")
+                        if call_text:
+                            yield {"type": "tool", "call": call_text}
+                        continue
 
-                # Text streaming — assistant in-progress or finished
-                if role == "assistant" and ct == "text":
-                    parts = content.get("parts") or []
-                    new = parts[0] if parts and isinstance(parts[0], str) else ""
+                    # Text streaming — assistant in-progress or finished
+                    if role == "assistant" and ct == "text":
+                        parts = content.get("parts") or []
+                        new = parts[0] if parts and isinstance(parts[0], str) else ""
 
-                    if status == "finished_successfully":
-                        yield {
-                            "type": "done",
-                            "text": new,
-                            "content_references": meta.get("content_references", []),
-                            "search_result_groups": meta.get(
-                                "search_result_groups", []
-                            ),
-                        }
-                        last_text = new
-                    elif status == "in_progress" and new:
-                        if new.startswith(last_text):
-                            delta = new[len(last_text) :]
-                            if delta:
-                                yield {"type": "progress", "text": delta}
-                        else:
-                            yield {"type": "progress", "text": new}
-                        last_text = new
+                        if status == "finished_successfully":
+                            yield {
+                                "type": "done",
+                                "text": new,
+                                "content_references": meta.get("content_references", []),
+                                "search_result_groups": meta.get(
+                                    "search_result_groups", []
+                                ),
+                            }
+                            done_emitted = True
+                            last_text = new
+                        elif status == "in_progress" and new:
+                            if new.startswith(last_text):
+                                delta = new[len(last_text):]
+                                if delta:
+                                    yield {"type": "progress", "text": delta}
+                            else:
+                                yield {"type": "progress", "text": new}
+                            last_text = new
+            finally:
+                if last_text and not done_emitted:
+                    yield {
+                        "type": "done",
+                        "text": last_text,
+                        "content_references": [],
+                        "search_result_groups": [],
+                        "terminated_abnormally": True,
+                    }
