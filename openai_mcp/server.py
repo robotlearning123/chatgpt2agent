@@ -102,6 +102,16 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             )
             return f"data:image/png;base64,{resp.data[0].b64_json}"
 
+    try:
+        from openai_mcp.backend import BackendClient
+        from openai_mcp.tools import register_all
+
+        register_all(mcp, BackendClient())
+    except Exception as _exc:
+        import logging
+
+        logging.getLogger(__name__).warning("backend tools unavailable: %s", _exc)
+
     return mcp
 
 
