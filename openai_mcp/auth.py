@@ -21,7 +21,11 @@ def _from_codex() -> dict | None:
         return None
     try:
         data = json.loads(p.read_text())
-        token = data.get("accessToken") or data.get("access_token")
+        token = (
+            (data.get("tokens") or {}).get("access_token")
+            or data.get("accessToken")
+            or data.get("access_token")
+        )
         if token:
             return {"access_token": token, "source": "codex"}
     except Exception:
