@@ -1,8 +1,9 @@
-"""openai-mcp — MCP server for any OpenAI-compatible API."""
+"""openai-mcp — MCP server backed by native chatgpt.com SSE client."""
 
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,6 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore
 
-from openai import AsyncOpenAI
 from mcp.server.fastmcp import FastMCP
 
 # ── config ──────────────────────────────────────────────────────────────────
@@ -23,9 +23,8 @@ _CONFIG_SEARCH = [
 ]
 
 _DEFAULTS: dict[str, Any] = {
-    "api": {"base_url": "http://localhost:3001/v1", "api_key": "openai-mcp-local"},
     "server": {"host": "0.0.0.0", "port": 9000},
-    "models": {"chat": "gpt-4o"},
+    "models": {"chat": "gpt-5-3"},
 }
 
 
@@ -46,11 +45,14 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 
 def build_server(cfg: dict[str, Any]) -> FastMCP:
-    api = cfg["api"]
     srv = cfg["server"]
     models = cfg["models"]
 
-    client = AsyncOpenAI(base_url=api["base_url"], api_key=api["api_key"])
+    from openai_mcp.backend import BackendClient
+    from openai_mcp.sse import ConversationClient
+
+    _backend = BackendClient()
+    conv = ConversationClient(_backend)
 
     mcp = FastMCP(
         "openai-mcp",
@@ -59,57 +61,32 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         log_level="WARNING",
     )
 
-    chat_model = models.get("chat", "gpt-4o")
+    chat_model = models.get("chat", "gpt-5-3")
 
     @mcp.tool()
     async def chat(prompt: str, model: str = chat_model) -> str:
         """Chat with an AI model. Pass a different `model` name to switch models."""
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4000,
-        )
-        return resp.choices[0].message.content or ""
+        return await conv.complete(model, [{"role": "user", "content": prompt}])
 
-    if "research" in models:
-        research_model = models["research"]
+    @mcp.tool()
+    async def deep_research(query: str) -> str:
+        """Search the web and synthesize a detailed report with citations.
 
-        @mcp.tool()
-        async def deep_research(query: str) -> str:
-            """Search the web and synthesize a detailed report with citations.
+        Best for: current events, literature review, market research.
+        Takes 30–90 seconds.
+        """
+        return await conv.complete("research", [{"role": "user", "content": query}])
 
-            Best for: current events, literature review, market research.
-            Takes 30–90 seconds.
-            """
-            resp = await client.chat.completions.create(
-                model=research_model,
-                messages=[{"role": "user", "content": query}],
-                max_tokens=4000,
-            )
-            return resp.choices[0].message.content or ""
-
-    if "image" in models:
-        image_model = models["image"]
-
-        @mcp.tool()
-        async def image_gen(prompt: str) -> str:
-            """Generate an image. Returns base64 PNG. Takes 60–120 seconds."""
-            resp = await client.images.generate(
-                model=image_model,
-                prompt=prompt,
-                response_format="b64_json",
-                size="1024x1024",
-            )
-            return f"data:image/png;base64,{resp.data[0].b64_json}"
+    @mcp.tool()
+    async def image_gen(prompt: str) -> str:
+        """Generate an image with gpt-image-2. Returns base64 PNG."""
+        raise NotImplementedError("image_gen requires gpt-image-2 — TODO")
 
     try:
-        from openai_mcp.backend import BackendClient
         from openai_mcp.tools import register_all
 
-        register_all(mcp, BackendClient())
+        register_all(mcp, _backend)
     except Exception as _exc:
-        import logging
-
         logging.getLogger(__name__).warning("backend tools unavailable: %s", _exc)
 
     return mcp
