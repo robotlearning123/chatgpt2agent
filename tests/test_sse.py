@@ -64,16 +64,16 @@ def test_heavy_dr_payload_structure():
     """
     from openai_mcp.sse import (
         HEAVY_DR_HINT,
-        HEAVY_DR_MODEL,
         _F_CONV_URL,
         _build_heavy_dr_payload,
     )
 
     payload = _build_heavy_dr_payload("What is the tallest mountain?")
 
-    assert payload["model"] == HEAVY_DR_MODEL
+    # Core fields
+    assert payload["model"] == "gpt-5-5-pro", f"model mismatch: {payload['model']}"
+    assert payload["system_hints"] == ["connector:connector_openai_deep_research"]
     assert payload["thinking_effort"] == "extended"
-    assert payload["system_hints"] == [HEAVY_DR_HINT]
     assert payload["conversation_mode"] == {"kind": "primary_assistant"}
     assert payload["supported_encodings"] == ["v1"]
     assert payload["supports_buffering"] is True
@@ -89,6 +89,7 @@ def test_heavy_dr_payload_structure():
     assert meta["venus_model_variant"] == "standard"
     assert meta["caterpillar_selected_sources"] == []
 
+    # Endpoint constant must point to /f/conversation
     assert _F_CONV_URL.endswith("/backend-api/f/conversation")
 
 
