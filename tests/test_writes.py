@@ -1,14 +1,15 @@
 """Write-path integration tests.
 
 Default run: only test_custom_instructions_roundtrip executes (idempotent).
-memory_add and codex_task_create tests are skipped by default — they write
-to a live account.
+memory_add and codex_task_create tests are gated by SKIP_LIVE env var —
+they write to a live account and are skipped unless SKIP_LIVE=0 is set.
 
-Run all:  pytest tests/test_writes.py -m 'not skip'
+Run live:  SKIP_LIVE=0 pytest tests/test_writes.py
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,10 @@ import pytest
 _AUTH = Path.home() / ".codex" / "auth.json"
 _needs_auth = pytest.mark.skipif(
     not _AUTH.exists(), reason="~/.codex/auth.json not present"
+)
+_skip_live = pytest.mark.skipif(
+    os.environ.get("SKIP_LIVE", "1") == "1",
+    reason="live write test — set SKIP_LIVE=0 to run",
 )
 
 
@@ -50,7 +55,7 @@ def test_custom_instructions_roundtrip() -> None:
     assert result.get("about_user_message") == before.get("about_user_message")
 
 
-@pytest.mark.skip(reason="writes to live account — run manually")
+@_skip_live
 @_needs_auth
 def test_memory_add_safe() -> None:
     """POST /backend-api/memories — currently returns 405, documents the finding."""
@@ -69,7 +74,7 @@ def test_memory_add_safe() -> None:
         )
 
 
-@pytest.mark.skip(reason="creates a real Codex task — run manually")
+@_skip_live
 @_needs_auth
 def test_codex_task_create() -> None:
     """Create a Codex task on robotlearning123/mujoco-mcp (low-risk env)."""
