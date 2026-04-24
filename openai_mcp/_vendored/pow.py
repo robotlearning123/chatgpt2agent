@@ -447,6 +447,13 @@ def _generate_answer(seed: str, diff: str, config: list) -> tuple[str, bool]:
 def solve_pow(seed: str, difficulty: str, user_agent: str) -> str:
     config = build_config(user_agent)
     answer, _solved = _generate_answer(seed, difficulty, config)
+    if not _solved:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "POW solver did not find an answer within the iteration budget — "
+            "falling back to stub token; request may be challenged."
+        )
     return "gAAAAAB" + answer
 
 

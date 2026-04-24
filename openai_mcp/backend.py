@@ -29,13 +29,23 @@ def _load_token() -> str:
         raise RuntimeError(f"Failed to read ~/.codex/auth.json: {exc}") from exc
 
 
+_CHROME_131_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 class BackendClient:
     def __init__(self) -> None:
         token = _load_token()
-        self._session = requests.Session(impersonate="edge101", verify=True)
+        # Keep TLS fingerprint + User-Agent aligned across backend / sentinel /
+        # conversation streams. Cloudflare's bot manager cross-checks them and
+        # will 403 mixed fingerprints.
+        self._session = requests.Session(impersonate="chrome131", verify=True)
         self._session.headers.update(
             {
-                "User-Agent": "Mozilla/5.0 Chrome/143 Edg/143",
+                "User-Agent": _CHROME_131_UA,
                 "Authorization": f"Bearer {token}",
                 "OAI-Device-Id": str(uuid.uuid4()),
                 "OAI-Session-Id": str(uuid.uuid4()),
