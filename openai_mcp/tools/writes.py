@@ -25,15 +25,12 @@ def register(mcp, client: BackendClient) -> None:
             target_path="/backend-api/user_system_messages",
         )
 
-    @mcp.tool()
-    def memory_add(content: str) -> dict:
-        """Add a new ChatGPT memory.
-
-        SPIKE FINDING 2026-04-23: POST /backend-api/memories returns 405
-        Method Not Allowed (Allow: GET only). PATCH and PUT also 405.
-        Memory creation is model-initiated only — not available via REST.
-        """
-        # POST → 405, PATCH → 405, PUT → 405, OPTIONS → Allow: GET
+    # memory_add is NOT registered as an MCP tool.
+    # SPIKE FINDING 2026-04-23: POST /backend-api/memories → 405 Method Not Allowed
+    # (Allow: GET only). PATCH and PUT also 405. Memory creation is model-initiated
+    # only — not available via REST. Exposing a tool that always raises misleads agents
+    # that introspect the tool list, so registration is intentionally skipped.
+    def memory_add(content: str) -> dict:  # noqa: F841 — kept as documentation
         raise RuntimeError(
             "POST /backend-api/memories is not supported — server returns 405 "
             "Method Not Allowed (Allow: GET). Memory creation must go through "
