@@ -44,11 +44,15 @@ def _load_token() -> str:
     if wizard_path.exists():
         try:
             data = json.loads(wizard_path.read_text())
-            # Accept either flat {"token": ...} or nested {"tokens": {"access_token": ...}}
-            token = data.get("token") or (data.get("tokens") or {}).get("access_token")
+            # Accept flat {"token": ...} or {"access_token": ...} or nested {"tokens": {"access_token": ...}}
+            token = (
+                data.get("token")
+                or data.get("access_token")
+                or (data.get("tokens") or {}).get("access_token")
+            )
             if token:
                 return token
-            wizard_err = "token/tokens.access_token missing in ~/.openai-mcp/token.json"
+            wizard_err = "token/access_token/tokens.access_token missing in ~/.openai-mcp/token.json"
         except (json.JSONDecodeError, OSError) as exc:
             wizard_err = f"Failed to read ~/.openai-mcp/token.json: {exc}"
 

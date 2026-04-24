@@ -25,6 +25,7 @@ _skip_live = pytest.mark.skipif(
 
 
 @_needs_auth
+@_skip_live
 def test_custom_instructions_roundtrip() -> None:
     """Read current instructions, POST back the same values, verify 200 + fields match."""
     from openai_mcp.backend import BackendClient
