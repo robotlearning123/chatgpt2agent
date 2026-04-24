@@ -147,4 +147,10 @@ class BackendClient:
 
         if not r.text.strip():
             return None
-        return r.json()
+        try:
+            return r.json()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Expected JSON from {path} but got non-JSON 2xx response: "
+                f"{r.text[:200]!r}"
+            ) from exc
