@@ -514,6 +514,7 @@ class ConversationClient:
             "asst_metadata": {},
             "last_path": None,
             "tool_invoked": False,
+            "tool_failed": False,
             "done_emitted": False,
         }
 
@@ -521,14 +522,15 @@ class ConversationClient:
             if state["done_emitted"]:
                 return
             md = state["asst_metadata"] or {}
-            events.append(
-                {
-                    "type": "done",
-                    "text": state["asst_text"],
-                    "content_references": md.get("content_references", []) or [],
-                    "search_result_groups": md.get("search_result_groups", []) or [],
-                }
-            )
+            payload: dict = {
+                "type": "done",
+                "text": state["asst_text"],
+                "content_references": md.get("content_references", []) or [],
+                "search_result_groups": md.get("search_result_groups", []) or [],
+            }
+            if state["tool_failed"]:
+                payload["connector_failed"] = True
+            events.append(payload)
             state["done_emitted"] = True
 
         def _on_envelope(env: dict, events: list) -> None:
@@ -562,6 +564,16 @@ class ConversationClient:
                 if call:
                     events.append({"type": "tool", "call": call})
                 state["tool_invoked"] = True
+            elif role == "tool" and recipient == "all":
+                # Tool response — detect connector-not-available errors so
+                # the caller can distinguish "DR ran" from "DR silently
+                # fell through to i-mini-m because the connector isn't
+                # provisioned on this account".
+                parts = content.get("parts") or []
+                text = parts[0] if parts and isinstance(parts[0], str) else ""
+                if text and ("Resource not found" in text or text.startswith("Error")):
+                    events.append({"type": "tool_error", "message": text})
+                    state["tool_failed"] = True
 
         def _apply_path(path: str, op: str, value, events: list) -> None:
             if path == "/message/content/parts/0":

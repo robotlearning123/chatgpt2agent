@@ -109,12 +109,19 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         final_text = ""
         refs: list = []
         groups: list = []
+        connector_failed = False
+        tool_error_msg = ""
 
         async for event in conv.deep_research_heavy(query):
-            if event["type"] == "done":
+            etype = event.get("type")
+            if etype == "done":
                 final_text = event["text"]
                 refs = event.get("content_references", [])
                 groups = event.get("search_result_groups", [])
+                if event.get("connector_failed"):
+                    connector_failed = True
+            elif etype == "tool_error":
+                tool_error_msg = event.get("message", "")
 
         if refs:
             lines = ["\n\n---\n**Sources:**"]
@@ -127,6 +134,20 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                         seen.add(url)
                         lines.append(f"- [{title}]({url})")
             final_text += "\n".join(lines)
+
+        if connector_failed:
+            warning = (
+                "\n\n---\n**⚠ DR connector unavailable** — the Deep Research "
+                "connector (`connector_openai_deep_research`) returned an error, "
+                "so this response came from the fallback orchestrator (i-mini-m) "
+                "instead of the full Pro-tier DR pipeline. Enable the Deep "
+                "Research source at chatgpt.com → Settings → Connectors, then "
+                "retry."
+            )
+            if tool_error_msg:
+                first_line = tool_error_msg.splitlines()[0][:200]
+                warning += f"\n\n*Server message:* `{first_line}`"
+            final_text += warning
 
         return final_text or "(no response)"
 
