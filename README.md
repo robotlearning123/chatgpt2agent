@@ -2,6 +2,8 @@
 
 An MCP server that exposes **ChatGPT Pro models** to Claude Code and any other MCP client — one running process, shared by all agents.
 
+> **Personal use only.** See [Disclaimer](#disclaimer) before using.
+
 ## What it does
 
 Wraps an OpenAI-compatible API (e.g. [chatgpt2api](https://github.com/lanqian528/chat2api)) and serves three tools over HTTP:
@@ -21,7 +23,7 @@ Wraps an OpenAI-compatible API (e.g. [chatgpt2api](https://github.com/lanqian528
 ## Quick start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/chatgpt-pro-mcp
+git clone https://github.com/robotlearning123/chatgpt-pro-mcp
 cd chatgpt-pro-mcp
 pip install -r requirements.txt
 
@@ -100,6 +102,20 @@ python3 server.py --stdio
 }
 ```
 
+---
+
+## Disclaimer
+
+**This project is intended for personal, non-commercial use only.**
+
+- This tool is a local MCP bridge. It does **not** bypass, crack, or redistribute OpenAI's API — it connects to an OpenAI-compatible backend using credentials you own.
+- You are solely responsible for ensuring your usage complies with [OpenAI's Terms of Service](https://openai.com/policies/terms-of-use) and the terms of any backend service you connect it to.
+- **Do not** use this tool to resell API access, serve third parties, or operate a commercial service.
+- **Do not** share your API keys publicly or expose the server to the open internet without authentication.
+- The authors provide this software as-is, with no warranty of any kind. Use at your own risk.
+
+This project is not affiliated with, endorsed by, or sponsored by OpenAI or Anthropic.
+
 ## License
 
-MIT
+[MIT](LICENSE) — free for personal use. Commercial use is not permitted.
