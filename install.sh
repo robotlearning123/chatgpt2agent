@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# openai-mcp — one-line installer.
+# gpt2agent — one-line installer.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/robotlearning123/chatgpt2agent/main/install.sh | bash
@@ -12,9 +12,9 @@
 #
 # Steps:
 #   1. Ensure Python 3.10+ and pipx are available.
-#   2. pipx install openai-mcp (from PyPI by default).
+#   2. pipx install gpt2agent (from PyPI by default).
 #   3. codex login check (auth via ~/.codex/auth.json — no platform API key).
-#   4. openai-mcp install --client <X>   # register with detected MCP clients + drop skill.
+#   4. gpt2agent install --client <X>   # register with detected MCP clients + drop skill.
 set -euo pipefail
 
 GREEN=$'\033[92m'; YELLOW=$'\033[93m'; RED=$'\033[91m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
@@ -28,7 +28,7 @@ TRANSPORT="stdio"
 PORT="9000"
 SKILL_FLAG=""
 REGISTER=1
-SOURCE="openai-mcp"  # default: PyPI
+SOURCE="gpt2agent"  # default: PyPI
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-h1 "openai-mcp installer"
+h1 "gpt2agent installer"
 
 # --- 1. Python 3.10+ -------------------------------------------------------
 
@@ -85,7 +85,7 @@ if ! command -v pipx >/dev/null 2>&1; then
 fi
 ok "pipx: $(pipx --version 2>/dev/null || echo present)"
 
-# --- 3. install openai-mcp -------------------------------------------------
+# --- 3. install gpt2agent -------------------------------------------------
 
 if [[ -d "$SOURCE" ]]; then
   info "Installing (editable) from $SOURCE"
@@ -102,11 +102,11 @@ else
   fi
 fi
 
-if ! command -v openai-mcp >/dev/null 2>&1; then
-  err "openai-mcp not on PATH after install. Open a new shell and re-run."
+if ! command -v gpt2agent >/dev/null 2>&1; then
+  err "gpt2agent not on PATH after install. Open a new shell and re-run."
   exit 1
 fi
-ok "openai-mcp installed"
+ok "gpt2agent installed"
 
 # --- 4. codex login check --------------------------------------------------
 
@@ -115,7 +115,7 @@ if [[ -f "$HOME/.codex/auth.json" ]]; then
 else
   info "No ~/.codex/auth.json yet. Install codex CLI and run \`codex login\`:"
   info "  https://github.com/openai/codex#installation"
-  info "  (or run \`openai-mcp setup\` to paste a token manually)"
+  info "  (or run \`gpt2agent setup\` to paste a token manually)"
 fi
 
 # --- 5. register with clients ----------------------------------------------
@@ -123,12 +123,12 @@ fi
 if [[ $REGISTER -eq 1 ]]; then
   ARGS=(install --client "$CLIENT" --transport "$TRANSPORT" --http-port "$PORT")
   if [[ -n "$SKILL_FLAG" ]]; then ARGS+=("$SKILL_FLAG"); fi
-  openai-mcp "${ARGS[@]}"
+  gpt2agent "${ARGS[@]}"
 else
   info "Skipping client registration (--no-register). Run later:"
-  info "  openai-mcp install --client $CLIENT"
+  info "  gpt2agent install --client $CLIENT"
 fi
 
 h1 "Done."
-echo "  Try:  openai-mcp run --stdio   (manual smoke test)"
+echo "  Try:  gpt2agent run --stdio   (manual smoke test)"
 echo "  Or restart your MCP client (Claude Code / Codex) so it picks up the new server."

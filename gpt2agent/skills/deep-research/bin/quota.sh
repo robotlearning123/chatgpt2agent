@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Print remaining ChatGPT Pro Deep Research quota.
 set -euo pipefail
-PYTHON="/home/robot/.local/share/pipx/venvs/openai-mcp/bin/python"
+PYTHON="/home/robot/.local/share/pipx/venvs/gpt2agent/bin/python"
 exec "$PYTHON" - <<'PY'
-from openai_mcp.backend import BackendClient
+from gpt2agent.backend import BackendClient
 b = BackendClient()
 try:
     data = b.post("/backend-api/conversation/init", json={"conversation_mode_kind": "primary_assistant"})

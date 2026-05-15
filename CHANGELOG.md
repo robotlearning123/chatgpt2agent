@@ -6,6 +6,40 @@ versioning: [SemVer](https://semver.org/).
 
 ## [0.0.2] - 2026-05-15
 
+### Renamed — `openai-mcp` → `gpt2agent`
+
+The package, CLI, Python module, default MCP server-name key, and bundled
+Claude Code skill are all renamed:
+
+| Was | Now |
+|---|---|
+| PyPI `openai-mcp` | PyPI `gpt2agent` |
+| `pip install openai-mcp` | `pip install gpt2agent` |
+| `openai-mcp run --stdio` | `gpt2agent run --stdio` |
+| `openai-mcp install` | `gpt2agent install` |
+| `from openai_mcp.…` | `from gpt2agent.…` |
+| Claude Code key `mcpServers.openai` | `mcpServers.gpt2agent` |
+| Codex key `[mcp_servers.openai]` | `[mcp_servers.gpt2agent]` |
+| Skill `~/.claude/skills/openai-mcp/` | `~/.claude/skills/gpt2agent/` |
+| Config dir `~/.openai-mcp/` | `~/.gpt2agent/` |
+
+**Why:** "openai" is a registered OpenAI® trademark; PyPI may take the
+package down under their trademark policy and there's no implied
+affiliation. The new name continues the `chatgpt2agent` repo naming
+pattern (drop "chat") and reads as "GPT to agent" — i.e. the package
+makes any GPT account addressable as an agent.
+
+**Migration for users on 0.0.1 (`openai-mcp`):**
+```bash
+pipx uninstall openai-mcp
+pipx install gpt2agent
+gpt2agent install              # registers under new key in client configs
+# Optional cleanup:
+mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
+# Manually remove the stale "openai" entry from ~/.claude.json
+# mcpServers (the old binary no longer exists).
+```
+
 ### Added — one-command install for popular MCP clients
 
 - `openai-mcp install` subcommand — registers openai-mcp with one or more

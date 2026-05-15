@@ -1,4 +1,4 @@
-"""openai-mcp — MCP server backed by native chatgpt.com SSE client."""
+"""gpt2agent — MCP server backed by native chatgpt.com SSE client."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from mcp.server.fastmcp import FastMCP
 # ── config ──────────────────────────────────────────────────────────────────
 
 _CONFIG_SEARCH = [
-    Path.home() / ".openai-mcp" / "config.toml",
+    Path.home() / ".gpt2agent" / "config.toml",
     Path("config.toml"),
-    Path.home() / ".config" / "openai-mcp" / "config.toml",
+    Path.home() / ".config" / "gpt2agent" / "config.toml",
 ]
 
 _DEFAULTS: dict[str, Any] = {
@@ -48,14 +48,14 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
     srv = cfg["server"]
     models = cfg["models"]
 
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     _backend = BackendClient()
     conv = ConversationClient(_backend)
 
     mcp = FastMCP(
-        "openai-mcp",
+        "gpt2agent",
         host=str(srv.get("host", "0.0.0.0")),
         port=int(srv.get("port", 9000)),
         log_level="WARNING",
@@ -212,7 +212,7 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         return await conv.complete(chat_model, [{"role": "user", "content": prompt}])
 
     try:
-        from openai_mcp.tools import register_all
+        from gpt2agent.tools import register_all
 
         register_all(mcp, _backend)
     except Exception:
@@ -229,7 +229,7 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="openai-mcp",
+        prog="gpt2agent",
         description="Use your ChatGPT Plus/Pro in Claude Code and other AI agents.",
     )
     sub = parser.add_subparsers(dest="command")
@@ -237,10 +237,10 @@ def main() -> None:
     # setup subcommand
     sub.add_parser("setup", help="First-time setup wizard (login + register)")
 
-    # install subcommand — register openai-mcp with one or more MCP clients
+    # install subcommand — register gpt2agent with one or more MCP clients
     install_p = sub.add_parser(
         "install",
-        help="Register openai-mcp with an MCP client (claude-code, codex, all)",
+        help="Register gpt2agent with an MCP client (claude-code, codex, all)",
     )
     install_p.add_argument(
         "--client",
@@ -280,7 +280,7 @@ def main() -> None:
         "--stdio", action="store_true", help="stdio transport (Claude Code legacy)"
     )
 
-    # bare flags for backward compat: openai-mcp --stdio --config ...
+    # bare flags for backward compat: gpt2agent --stdio --config ...
     parser.add_argument("--config", type=Path)
     parser.add_argument("--port", type=int)
     parser.add_argument("--host")
@@ -289,13 +289,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "setup":
-        from openai_mcp.setup import run_setup
+        from gpt2agent.setup import run_setup
 
         run_setup()
         return
 
     if args.command == "install":
-        from openai_mcp.install import run_install
+        from gpt2agent.install import run_install
 
         rc = run_install(
             client=args.client,
@@ -323,7 +323,7 @@ def main() -> None:
     else:
         host = cfg["server"]["host"]
         port = cfg["server"]["port"]
-        print(f"openai-mcp  http://{host}:{port}/mcp  [{', '.join(tools)}]", flush=True)
+        print(f"gpt2agent  http://{host}:{port}/mcp  [{', '.join(tools)}]", flush=True)
         mcp.run(transport="streamable-http")
 
 

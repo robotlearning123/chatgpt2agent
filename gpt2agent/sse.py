@@ -12,8 +12,8 @@ from uuid import uuid4
 
 from curl_cffi.requests import AsyncSession
 
-from openai_mcp.backend import BackendClient, _BASE
-from openai_mcp.sentinel import SentinelGate  # noqa: F401  (used in stream)
+from gpt2agent.backend import BackendClient, _BASE
+from gpt2agent.sentinel import SentinelGate  # noqa: F401  (used in stream)
 
 _log = logging.getLogger(__name__)
 

@@ -138,7 +138,7 @@ def test_clarification_then_real_research(monkeypatch: pytest.MonkeyPatch) -> No
     """First round = clarification Q; second round = real report. The wrapper
     must auto-reply between them and yield both the clarification meta event
     and the real done event."""
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     _ScriptedSession._next = [
         _frame_clarification("conv-1", "msg-clar"),
@@ -176,7 +176,7 @@ def test_clarification_then_real_research(monkeypatch: pytest.MonkeyPatch) -> No
 def test_long_done_text_is_not_clarification(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real research reports must not be auto-retried as if they were clarifications,
     even if they happen to contain a '?' somewhere."""
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     # Only one round of frames — if the wrapper wrongly retries, it'll
     # RuntimeError out of scripted frames.
@@ -203,7 +203,7 @@ def test_long_done_text_is_not_clarification(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_clarification_detection_unit() -> None:
-    from openai_mcp.sse import _looks_like_clarification
+    from gpt2agent.sse import _looks_like_clarification
 
     # Positive — phrase matches
     assert _looks_like_clarification("Could you confirm whether to use 6 or 12 months?")
@@ -230,7 +230,7 @@ def test_clarification_detection_unit() -> None:
 
 def test_build_dr_payload_continuation_fields() -> None:
     """conversation_id + parent_message_id propagate into the payload."""
-    from openai_mcp.sse import _build_dr_payload
+    from gpt2agent.sse import _build_dr_payload
 
     p = _build_dr_payload("q")
     assert "conversation_id" not in p

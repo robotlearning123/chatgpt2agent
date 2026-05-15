@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openai-mcp"
+name = "gpt2agent"
 version = "0.0.2"
 description = "Use your ChatGPT Plus/Pro in Claude Code and other AI agents — one command setup"
 readme = "README.md"
@@ -27,16 +27,16 @@ dependencies = [
 dev = ["pytest>=7", "pytest-asyncio>=0.21"]
 
 [project.scripts]
-openai-mcp = "openai_mcp.server:main"
+gpt2agent = "gpt2agent.server:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["openai_mcp*"]
+include = ["gpt2agent*"]
 
 [tool.setuptools.package-data]
-openai_mcp = [
+gpt2agent = [
     "skills/deep-research/SKILL.md",
     "skills/deep-research/bin/*",
 ]

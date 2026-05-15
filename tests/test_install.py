@@ -1,4 +1,4 @@
-"""Tests for the ``openai-mcp install`` subcommand.
+"""Tests for the ``gpt2agent install`` subcommand.
 
 Verifies the Claude Code and Codex registration logic against synthetic
 config files in ``tmp_path``. Never touches the real ``~/.claude.json`` or
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from openai_mcp.install import (
+from gpt2agent.install import (
     _replace_or_append_toml_section,
     detect_clients,
     install_claude_code,
@@ -31,9 +31,9 @@ def test_claude_new_config(tmp_path: Path) -> None:
     assert result["backup"] is None  # no prior file → no backup
 
     data = json.loads(cfg.read_text())
-    assert data["mcpServers"]["openai"]["type"] == "stdio"
-    assert data["mcpServers"]["openai"]["command"] == "openai-mcp"
-    assert data["mcpServers"]["openai"]["args"] == ["run", "--stdio"]
+    assert data["mcpServers"]["gpt2agent"]["type"] == "stdio"
+    assert data["mcpServers"]["gpt2agent"]["command"] == "gpt2agent"
+    assert data["mcpServers"]["gpt2agent"]["args"] == ["run", "--stdio"]
 
 
 def test_claude_preserves_other_keys(tmp_path: Path) -> None:
@@ -53,7 +53,7 @@ def test_claude_preserves_other_keys(tmp_path: Path) -> None:
     assert data["numStartups"] == 42
     assert data["tipsHistory"] == {"x": 1}
     assert data["mcpServers"]["existing"]["command"] == "other"
-    assert data["mcpServers"]["openai"]["command"] == "openai-mcp"
+    assert data["mcpServers"]["gpt2agent"]["command"] == "gpt2agent"
 
 
 def test_claude_writes_backup(tmp_path: Path) -> None:
@@ -79,8 +79,8 @@ def test_claude_http_transport(tmp_path: Path) -> None:
     cfg = tmp_path / "claude.json"
     install_claude_code(config_path=cfg, transport="http", http_port=9001)
     data = json.loads(cfg.read_text())
-    assert data["mcpServers"]["openai"]["type"] == "url"
-    assert data["mcpServers"]["openai"]["url"] == "http://localhost:9001/mcp"
+    assert data["mcpServers"]["gpt2agent"]["type"] == "url"
+    assert data["mcpServers"]["gpt2agent"]["url"] == "http://localhost:9001/mcp"
 
 
 def test_claude_rejects_broken_json(tmp_path: Path) -> None:
@@ -104,8 +104,8 @@ def test_codex_new_config(tmp_path: Path) -> None:
     cfg = tmp_path / "config.toml"
     install_codex(config_path=cfg)
     text = cfg.read_text()
-    assert "[mcp_servers.openai]" in text
-    assert 'command = "openai-mcp"' in text
+    assert "[mcp_servers.gpt2agent]" in text
+    assert 'command = "gpt2agent"' in text
     assert 'args = ["run", "--stdio"]' in text
 
 
@@ -129,14 +129,14 @@ def test_codex_preserves_existing_sections(tmp_path: Path) -> None:
     assert "max_depth = 2" in text
     assert "[agents.explorer]" in text
     assert 'config_file = "agents/explorer.toml"' in text
-    assert "[mcp_servers.openai]" in text
+    assert "[mcp_servers.gpt2agent]" in text
 
 
 def test_codex_replaces_existing_mcp_section(tmp_path: Path) -> None:
-    """Re-installing must replace the stale [mcp_servers.openai] body, not duplicate."""
+    """Re-installing must replace the stale [mcp_servers.gpt2agent] body, not duplicate."""
     cfg = tmp_path / "config.toml"
     cfg.write_text(
-        "[mcp_servers.openai]\n"
+        "[mcp_servers.gpt2agent]\n"
         'command = "OLD_COMMAND"\n'
         'args = ["old", "args"]\n'
         "\n"
@@ -146,7 +146,7 @@ def test_codex_replaces_existing_mcp_section(tmp_path: Path) -> None:
     install_codex(config_path=cfg)
     text = cfg.read_text()
     assert "OLD_COMMAND" not in text
-    assert text.count("[mcp_servers.openai]") == 1
+    assert text.count("[mcp_servers.gpt2agent]") == 1
     assert "[other]" in text
     assert "key = 1" in text
 

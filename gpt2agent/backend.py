@@ -20,8 +20,8 @@ def _load_token_with_source() -> tuple[str, Path | None]:
 
     Search order:
       1. ``~/.codex/auth.json`` with ``tokens.access_token`` (codex login)
-      2. ``~/.openai-mcp/token.json`` with ``token`` (flat) OR
-         ``tokens.access_token`` (nested) — written by ``openai-mcp setup``
+      2. ``~/.gpt2agent/token.json`` with ``token`` (flat) OR
+         ``tokens.access_token`` (nested) — written by ``gpt2agent setup``
 
     Returns (token, source_path). source_path is the file we read; callers
     can stat it later to detect codex's background refresh and reload.
@@ -40,8 +40,8 @@ def _load_token_with_source() -> tuple[str, Path | None]:
         except (json.JSONDecodeError, OSError) as exc:
             codex_err = f"Failed to read ~/.codex/auth.json: {exc}"
 
-    # Source 2: openai-mcp setup wizard
-    wizard_path = Path.home() / ".openai-mcp" / "token.json"
+    # Source 2: gpt2agent setup wizard
+    wizard_path = Path.home() / ".gpt2agent" / "token.json"
     wizard_err: str | None = None
     if wizard_path.exists():
         try:
@@ -54,20 +54,20 @@ def _load_token_with_source() -> tuple[str, Path | None]:
             )
             if token:
                 return token, wizard_path
-            wizard_err = "token/access_token/tokens.access_token missing in ~/.openai-mcp/token.json"
+            wizard_err = "token/access_token/tokens.access_token missing in ~/.gpt2agent/token.json"
         except (json.JSONDecodeError, OSError) as exc:
-            wizard_err = f"Failed to read ~/.openai-mcp/token.json: {exc}"
+            wizard_err = f"Failed to read ~/.gpt2agent/token.json: {exc}"
 
     # Nothing worked — surface the most informative error we have.
     if codex_err or wizard_err:
         details = "; ".join(e for e in (codex_err, wizard_err) if e)
         raise RuntimeError(
-            f"No ChatGPT token found — run `codex login` or `openai-mcp setup` "
+            f"No ChatGPT token found — run `codex login` or `gpt2agent setup` "
             f"({details})"
         )
     raise RuntimeError(
-        "No ChatGPT token found — run `codex login` or `openai-mcp setup` "
-        "(checked ~/.codex/auth.json and ~/.openai-mcp/token.json)"
+        "No ChatGPT token found — run `codex login` or `gpt2agent setup` "
+        "(checked ~/.codex/auth.json and ~/.gpt2agent/token.json)"
     )
 
 

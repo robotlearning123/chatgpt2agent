@@ -24,8 +24,8 @@ _NEEDS_AUTH = pytest.mark.skipif(
 @_NEEDS_AUTH
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 (default); set SKIP_LIVE=0 to run")
 def test_sse_pong():
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
     out = asyncio.run(
@@ -44,8 +44,8 @@ def test_sse_pong():
 )
 def test_sse_deep_research_heavy():
     """Live deep-research probe — skipped by default (slow + costly)."""
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
     out = asyncio.run(
@@ -62,7 +62,7 @@ def test_heavy_dr_payload_structure():
 
     Pure unit test — no network call.
     """
-    from openai_mcp.sse import (
+    from gpt2agent.sse import (
         HEAVY_DR_HINT,
         _F_CONV_URL,
         _build_heavy_dr_payload,
@@ -104,8 +104,8 @@ def test_heavy_dr_live_metadata():
     Checks server_ste_metadata event with tool_name=ApiToolWrapper and
     tool_invoked=True, confirming connector_openai_deep_research fired.
     """
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     async def run():
         conv = ConversationClient(BackendClient())

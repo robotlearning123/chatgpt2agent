@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
-from openai_mcp._vendored import pow as _pow
-from openai_mcp._vendored import turnstile as _turn
+from gpt2agent._vendored import pow as _pow
+from gpt2agent._vendored import turnstile as _turn
 
 if TYPE_CHECKING:
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
 _log = logging.getLogger(__name__)
 

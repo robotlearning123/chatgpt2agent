@@ -1,9 +1,9 @@
-"""ChatGPT Pro Deep Research runner (calls openai-mcp's ConversationClient directly).
+"""ChatGPT Pro Deep Research runner (calls gpt2agent's ConversationClient directly).
 
 Two modes:
   light  -> conv.deep_research(query)        ~1 min,  citations preserved
   heavy  -> conv.deep_research_heavy(query)  5-30 min, citations LOST due to
-            openai-mcp 0.0.1 wrapper bug — reconstructed from progress events
+            gpt2agent 0.0.1 wrapper bug — reconstructed from progress events
 
 Outputs (in --out-dir):
   report.md   final markdown report
@@ -11,8 +11,8 @@ Outputs (in --out-dir):
   status.txt  START / DONE / ERROR + elapsed
   meta.json   server metadata (model slug, request id, plan type, ...)
 
-Run with the pipx-installed openai-mcp Python:
-  /home/robot/.local/share/pipx/venvs/openai-mcp/bin/python deep_research.py [...]
+Run with the pipx-installed gpt2agent Python:
+  /home/robot/.local/share/pipx/venvs/gpt2agent/bin/python deep_research.py [...]
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ import sys
 import time
 from pathlib import Path
 
-from openai_mcp.backend import BackendClient
-from openai_mcp.sse import ConversationClient
+from gpt2agent.backend import BackendClient
+from gpt2agent.sse import ConversationClient
 
 
 def _read_query(arg: str) -> str:
@@ -127,7 +127,7 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
     if tool_error_msg:
         notes_block += f"\n\n> **Tool error:** {tool_error_msg}\n"
     if mode == "heavy" and not lines:
-        notes_block += "\n\n> **Citations:** Not recovered (openai-mcp 0.0.1 heavy DR wrapper limitation). To get URLs, open the corresponding chatgpt.com conversation.\n"
+        notes_block += "\n\n> **Citations:** Not recovered (gpt2agent 0.0.1 heavy DR wrapper limitation). To get URLs, open the corresponding chatgpt.com conversation.\n"
 
     header = (
         f"# Deep Research Report\n\n"

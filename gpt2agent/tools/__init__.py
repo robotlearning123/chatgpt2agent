@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from openai_mcp.backend import BackendClient
-from openai_mcp.tools import (
+from gpt2agent.backend import BackendClient
+from gpt2agent.tools import (
     account,
     apps,
     codex,

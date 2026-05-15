@@ -164,7 +164,7 @@ class _FakeSentinel:
 
 
 def _run_heavy_dr(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     monkeypatch.setattr(sse_mod, "AsyncSession", _FakeSession)
     monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
@@ -210,7 +210,7 @@ def test_dr_payloads_disable_temp_chat() -> None:
     temporary chats" and DR also can't be Phase-2-polled (temp chats aren't
     persisted at /backend-api/conversation/{id}).
     """
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     light = sse_mod._build_dr_payload("test query")
     assert light["history_and_training_disabled"] is False, light
@@ -221,7 +221,7 @@ def test_dr_payloads_disable_temp_chat() -> None:
 
 def test_heavy_dr_model_override() -> None:
     """heavy_dr model param overrides the HEAVY_DR_MODEL default."""
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     default = sse_mod._build_heavy_dr_payload("q")
     assert default["model"] == sse_mod.HEAVY_DR_MODEL
@@ -232,7 +232,7 @@ def test_heavy_dr_model_override() -> None:
 
 def test_chat_payload_supports_gizmo_id() -> None:
     """gpt_chat passes gizmo_id into the chat payload (custom GPT routing)."""
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     no_gizmo = sse_mod._build_payload(
         "gpt-5-3", [{"role": "user", "content": "hi"}]

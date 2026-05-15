@@ -26,7 +26,7 @@ def test_reload_picks_up_codex_refresh(
     auth = tmp_path / ".codex" / "auth.json"
     _write_auth(auth, "TOK_OLD")
 
-    from openai_mcp import backend as be
+    from gpt2agent import backend as be
 
     client = be.BackendClient()
     assert client._session.headers["Authorization"] == "Bearer TOK_OLD"
@@ -46,7 +46,7 @@ def test_reload_noop_when_mtime_unchanged(
     auth = tmp_path / ".codex" / "auth.json"
     _write_auth(auth, "TOK_STABLE")
 
-    from openai_mcp import backend as be
+    from gpt2agent import backend as be
 
     client = be.BackendClient()
     auth_before = client._session.headers["Authorization"]
@@ -63,7 +63,7 @@ def test_reload_tolerates_missing_file(
     auth = tmp_path / ".codex" / "auth.json"
     _write_auth(auth, "TOK_OLD")
 
-    from openai_mcp import backend as be
+    from gpt2agent import backend as be
 
     client = be.BackendClient()
     before = client._session.headers["Authorization"]

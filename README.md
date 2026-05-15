@@ -1,24 +1,24 @@
-# openai-mcp
+# gpt2agent
 
 > **Your `codex login` → full ChatGPT Plus/Pro account inside any MCP client.**
 
 Use your **ChatGPT Plus or Pro** subscription — every model, every account-tier
 feature — inside Claude Code, Codex, and any MCP client.
 
-[![PyPI version](https://img.shields.io/pypi/v/openai-mcp)](https://pypi.org/project/openai-mcp/)
+[![PyPI version](https://img.shields.io/pypi/v/gpt2agent)](https://pypi.org/project/gpt2agent/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/openai-mcp/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/gpt2agent/)
 
 ---
 
 ## What it does
 
-openai-mcp exposes **19 MCP tools** that forward requests directly to ChatGPT's backend API.
+gpt2agent exposes **19 MCP tools** that forward requests directly to ChatGPT's backend API.
 No proxy process. No separate account. No platform API key. Your `codex login`,
 your token, your quota.
 
 If you already have the [`codex`](https://github.com/openai/codex) CLI logged in,
-setup is **zero extra steps** — openai-mcp reuses the same `~/.codex/auth.json`
+setup is **zero extra steps** — gpt2agent reuses the same `~/.codex/auth.json`
 bearer and picks up its background-refreshed token automatically.
 
 Works with Claude Code, Codex CLI, and any client that speaks the MCP protocol over stdio.
@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/robotlearning123/chatgpt2agent/main
 ```
 
 That command:
-1. Installs `openai-mcp` via pipx (creates an isolated env).
+1. Installs `gpt2agent` via pipx (creates an isolated env).
 2. Reuses your existing `~/.codex/auth.json` if you've run `codex login` — no separate ChatGPT token paste needed.
 3. Detects which MCP clients you have (Claude Code, Codex) and writes the right config snippet for each.
 4. Drops the `deep-research` Claude Code skill into `~/.claude/skills/`.
@@ -41,17 +41,17 @@ That command:
 
 ```bash
 # 1. Install the package globally (isolated venv)
-pipx install openai-mcp
+pipx install gpt2agent
 
 # 2. Register with all detected MCP clients (Claude Code, Codex)
-openai-mcp install                          # auto-detect everything
+gpt2agent install                          # auto-detect everything
 
 # Want only one client?
-openai-mcp install --client claude-code
-openai-mcp install --client codex
+gpt2agent install --client claude-code
+gpt2agent install --client codex
 
 # HTTP transport instead of stdio?
-openai-mcp install --transport http --http-port 9000
+gpt2agent install --transport http --http-port 9000
 ```
 
 ### Per-client config
@@ -60,10 +60,10 @@ The `install` subcommand writes the right thing for each:
 
 | Client | File | Section |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | `mcpServers.openai` (stdio: `openai-mcp run --stdio`) |
+| **Claude Code** | `~/.claude.json` | `mcpServers.openai` (stdio: `gpt2agent run --stdio`) |
 | **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.openai]` |
 
-Both are idempotent and back up the prior file as `<name>.bak-openai-mcp`.
+Both are idempotent and back up the prior file as `<name>.bak-gpt2agent`.
 
 After running `install`, restart Claude Code so it re-spawns the subprocess.
 Codex picks up the new server on its next invocation automatically.
@@ -77,7 +77,7 @@ Claude Code — add to `~/.claude.json`:
   "mcpServers": {
     "openai": {
       "type": "stdio",
-      "command": "openai-mcp",
+      "command": "gpt2agent",
       "args": ["run", "--stdio"]
     }
   }
@@ -88,7 +88,7 @@ Codex CLI — add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.openai]
-command = "openai-mcp"
+command = "gpt2agent"
 args = ["run", "--stdio"]
 ```
 
@@ -97,12 +97,12 @@ args = ["run", "--stdio"]
 ## Setup (manual token paste — only if codex isn't available)
 
 ```bash
-openai-mcp setup
+gpt2agent setup
 ```
 
-Prompts for a ChatGPT session token and saves it to `~/.openai-mcp/token.json`.
+Prompts for a ChatGPT session token and saves it to `~/.gpt2agent/token.json`.
 The `codex login` flow is preferred when available because codex auto-refreshes
-its token; openai-mcp reloads `~/.codex/auth.json` on mtime change so long
+its token; gpt2agent reloads `~/.codex/auth.json` on mtime change so long
 calls don't 401 mid-flight.
 
 ---
@@ -159,9 +159,9 @@ challenge. Token is reloaded from disk on each request, so codex's background
 refresh propagates transparently. See [NOTICES](./NOTICES.md) for attribution.
 
 ```
-~/.codex/auth.json  (or ~/.openai-mcp/token.json)  ← auto-refreshed by codex
+~/.codex/auth.json  (or ~/.gpt2agent/token.json)  ← auto-refreshed by codex
         |
-   openai-mcp  (stdio MCP server, token reloaded on each call)
+   gpt2agent  (stdio MCP server, token reloaded on each call)
         |
    curl_cffi  →  chatgpt.com /backend-api/{conversation,f/conversation,me,
                                           models, memories, codex, gizmos, ...}
@@ -174,7 +174,7 @@ refresh propagates transparently. See [NOTICES](./NOTICES.md) for attribution.
 
 ## Configuration
 
-Optional `~/.openai-mcp/config.toml` or `./config.toml`:
+Optional `~/.gpt2agent/config.toml` or `./config.toml`:
 
 ```toml
 [server]

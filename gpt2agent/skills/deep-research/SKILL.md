@@ -2,7 +2,7 @@
 name: deep-research
 version: 0.1.0
 description: |
-  ChatGPT Pro Deep Research via openai-mcp. Two modes: light (model=research,
+  ChatGPT Pro Deep Research via gpt2agent. Two modes: light (model=research,
   30-120s, citations preserved) and heavy (gpt-5-5-pro + connector, 5-30 min,
   long-form report, citations currently lost due to upstream wrapper bug).
   Reuses ~/.codex/auth.json — no extra login. Costs 1 quota per call out of
@@ -18,14 +18,14 @@ allowed-tools:
 
 # /deep-research — ChatGPT Pro Deep Research
 
-Calls `openai-mcp`'s `deep_research` / `deep_research_heavy` directly via
+Calls `gpt2agent`'s `deep_research` / `deep_research_heavy` directly via
 pipx Python (bypasses MCP — works even before Claude Code session restart).
 
 ## Preconditions (check once)
 
 ```bash
-test -x /home/robot/.local/share/pipx/venvs/openai-mcp/bin/python || \
-  echo "openai-mcp not installed; run: pipx install git+https://github.com/robotlearning123/chatgpt2agent.git"
+test -x /home/robot/.local/share/pipx/venvs/gpt2agent/bin/python || \
+  echo "gpt2agent not installed; run: pipx install git+https://github.com/robotlearning123/chatgpt2agent.git"
 test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
 ~/.claude/skills/deep-research/bin/quota.sh   # prints remaining DR quota
 ```
@@ -87,7 +87,7 @@ explicitly wants you to handle locally, anything covered by `context7`
 
 ## Known limitation (upstream bug)
 
-`deep_research_heavy` in `openai-mcp 0.0.1` emits its `done` event on
+`deep_research_heavy` in `gpt2agent 0.0.1` emits its `done` event on
 the FIRST assistant message (which contains only the connector-call JSON,
 not the real report). The real report streams afterward as `progress`
 events with no second `done`, so the wrapper's `content_references` field
@@ -95,7 +95,7 @@ is always empty. This script reconstructs the report from progress events
 but cannot recover citation URLs. The light `deep_research` path is
 unaffected — use it when citations matter.
 
-Upstream tracking: see `/home/robot/workspace/47-chatgpt2agent/chatgpt2agent/openai_mcp/sse.py`
+Upstream tracking: see `/home/robot/workspace/47-chatgpt2agent/chatgpt2agent/gpt2agent/sse.py`
 around the `_emit_done` / `_apply_path('/message/status', ...)` logic.
 
 ## Quota management

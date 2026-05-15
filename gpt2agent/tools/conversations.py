@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from openai_mcp.backend import BackendClient
-from openai_mcp.tools._redact import redact
+from gpt2agent.backend import BackendClient
+from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:

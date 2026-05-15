@@ -110,7 +110,7 @@ class _FakeSentinel:
 
 
 def test_multi_message_stream_no_duplication(monkeypatch: pytest.MonkeyPatch) -> None:
-    from openai_mcp import sse as sse_mod
+    from gpt2agent import sse as sse_mod
 
     monkeypatch.setattr(sse_mod, "AsyncSession", _FakeSession)
     monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)

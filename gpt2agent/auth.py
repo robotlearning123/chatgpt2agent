@@ -35,7 +35,7 @@ def _from_codex() -> dict | None:
 
 def _from_saved() -> dict | None:
     """Reuse previously saved token."""
-    p = Path.home() / ".openai-mcp" / "token.json"
+    p = Path.home() / ".gpt2agent" / "token.json"
     if not p.exists():
         return None
     try:
@@ -62,7 +62,7 @@ def _from_browser() -> dict | None:
     print("    Application → Cookies → __Secure-next-auth.session-token")
     print()
     print("  Then paste the token below.")
-    print("  (Alternatively run: openai-mcp login --browser for automatic extraction)")
+    print("  (Alternatively run: gpt2agent login --browser for automatic extraction)")
     print()
     webbrowser.open("https://chat.openai.com")
     token = input("  Paste access_token (or session token): ").strip()
@@ -140,15 +140,15 @@ def get_token(interactive: bool = True) -> str:
             return result["access_token"]
 
     if not interactive:
-        raise RuntimeError("No ChatGPT token found. Run: openai-mcp setup")
+        raise RuntimeError("No ChatGPT token found. Run: gpt2agent setup")
 
     result = _from_browser()
     if not result:
         raise RuntimeError("Token acquisition cancelled.")
 
     # Save for future use
-    save_dir = Path.home() / ".openai-mcp"
+    save_dir = Path.home() / ".gpt2agent"
     save_dir.mkdir(exist_ok=True)
     (save_dir / "token.json").write_text(json.dumps(result, indent=2))
-    print("  Token saved to ~/.openai-mcp/token.json")
+    print("  Token saved to ~/.gpt2agent/token.json")
     return result["access_token"]

@@ -1,9 +1,9 @@
-"""One-command client registration: write openai-mcp into popular MCP-capable
+"""One-command client registration: write gpt2agent into popular MCP-capable
 agent config files (Claude Code, Codex, …) plus the Claude Code skill bundle.
 
-Used by ``openai-mcp install --client {claude-code,codex,all}``. Each
+Used by ``gpt2agent install --client {claude-code,codex,all}``. Each
 register function is idempotent — running twice yields the same final
-config — and writes a sibling ``.bak-openai-mcp`` backup of the prior
+config — and writes a sibling ``.bak-gpt2agent`` backup of the prior
 contents before any change.
 """
 
@@ -50,10 +50,10 @@ def _h1(msg: str) -> None:
 
 
 def _backup(path: Path) -> Path | None:
-    """Snapshot ``path`` to ``path.bak-openai-mcp`` so the user can undo."""
+    """Snapshot ``path`` to ``path.bak-gpt2agent`` so the user can undo."""
     if not path.exists():
         return None
-    bak = path.with_name(path.name + ".bak-openai-mcp")
+    bak = path.with_name(path.name + ".bak-gpt2agent")
     bak.write_bytes(path.read_bytes())
     return bak
 
@@ -83,7 +83,7 @@ def _atomic_write(path: Path, content: str) -> None:
 def _stdio_entry() -> dict[str, Any]:
     return {
         "type": "stdio",
-        "command": "openai-mcp",
+        "command": "gpt2agent",
         "args": ["run", "--stdio"],
     }
 
@@ -99,11 +99,11 @@ def install_claude_code(
     *,
     transport: str = "stdio",
     http_port: int = 9000,
-    server_name: str = "openai",
+    server_name: str = "gpt2agent",
     dry_run: bool = False,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Register openai-mcp in ``~/.claude.json`` under ``mcpServers.<server_name>``.
+    """Register gpt2agent in ``~/.claude.json`` under ``mcpServers.<server_name>``.
 
     Preserves all other fields of the existing config (the file is large and
     holds unrelated state — tips history, conversation tracking, etc.).
@@ -197,11 +197,11 @@ def _replace_or_append_toml_section(
 
 def install_codex(
     *,
-    server_name: str = "openai",
+    server_name: str = "gpt2agent",
     dry_run: bool = False,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Register openai-mcp in ``~/.codex/config.toml`` under ``[mcp_servers.<server_name>]``.
+    """Register gpt2agent in ``~/.codex/config.toml`` under ``[mcp_servers.<server_name>]``.
 
     Preserves all other sections (codex agent definitions, model config, …).
     """
@@ -210,7 +210,7 @@ def install_codex(
 
     section_name = f"mcp_servers.{server_name}"
     new_section = [
-        f'command = {_toml_quote("openai-mcp")}',
+        f'command = {_toml_quote("gpt2agent")}',
         'args = ["run", "--stdio"]',
     ]
     new_content = _replace_or_append_toml_section(existing, section_name, new_section)
@@ -242,7 +242,7 @@ def install_claude_skill(
 ) -> dict[str, Any]:
     """Copy the bundled ``deep-research`` skill into ``~/.claude/skills/``.
 
-    The skill calls openai-mcp's ConversationClient directly (bypasses the MCP
+    The skill calls gpt2agent's ConversationClient directly (bypasses the MCP
     transport) so it works even before restarting Claude Code.
     """
     src = Path(__file__).parent / "skills" / "deep-research"
@@ -258,7 +258,7 @@ def install_claude_skill(
 
     backup: Path | None = None
     if dst.exists():
-        backup = dst.with_name(dst.name + ".bak-openai-mcp")
+        backup = dst.with_name(dst.name + ".bak-gpt2agent")
         if backup.exists():
             shutil.rmtree(backup)
         shutil.move(str(dst), str(backup))
@@ -301,7 +301,7 @@ def run_install(
     dry_run: bool = False,
 ) -> int:
     """Run the install flow for the chosen client(s)."""
-    _h1("openai-mcp install")
+    _h1("gpt2agent install")
 
     if client == "all":
         targets = detect_clients()
@@ -347,6 +347,6 @@ def run_install(
         if "claude-code" in targets:
             print("  • Restart Claude Code so it spawns the new MCP subprocess")
         if "codex" in targets:
-            print("  • Codex will spawn openai-mcp on next run; nothing else to do")
-        print("  • Try:  openai-mcp run --stdio  # (manual stdio smoke test)")
+            print("  • Codex will spawn gpt2agent on next run; nothing else to do")
+        print("  • Try:  gpt2agent run --stdio  # (manual stdio smoke test)")
     return 0

@@ -1,4 +1,4 @@
-# openai-mcp configuration
+# gpt2agent configuration
 # Copy to config.toml and fill in your values.
 
 [api]
