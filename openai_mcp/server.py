@@ -237,6 +237,40 @@ def main() -> None:
     # setup subcommand
     sub.add_parser("setup", help="First-time setup wizard (login + register)")
 
+    # install subcommand — register openai-mcp with one or more MCP clients
+    install_p = sub.add_parser(
+        "install",
+        help="Register openai-mcp with an MCP client (claude-code, codex, all)",
+    )
+    install_p.add_argument(
+        "--client",
+        choices=["claude-code", "codex", "all"],
+        default="all",
+        help="Target MCP client (default: auto-detect installed clients)",
+    )
+    install_p.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="MCP transport (default: stdio — preferred for Claude Code/Codex)",
+    )
+    install_p.add_argument(
+        "--http-port",
+        type=int,
+        default=9000,
+        help="Port for HTTP transport (default: 9000)",
+    )
+    install_p.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="Skip installing the Claude Code deep-research skill bundle",
+    )
+    install_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing any files",
+    )
+
     # run (default)
     run_p = sub.add_parser("run", help="Start the MCP server")
     run_p.add_argument("--config", type=Path, help="Path to config.toml")
@@ -259,6 +293,18 @@ def main() -> None:
 
         run_setup()
         return
+
+    if args.command == "install":
+        from openai_mcp.install import run_install
+
+        rc = run_install(
+            client=args.client,
+            transport=args.transport,
+            http_port=args.http_port,
+            install_skill=not args.no_skill,
+            dry_run=args.dry_run,
+        )
+        raise SystemExit(rc)
 
     # default: run server
     cfg_path = getattr(args, "config", None)

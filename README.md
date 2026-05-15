@@ -25,37 +25,52 @@ Works with Claude Code, Codex CLI, and any client that speaks the MCP protocol o
 
 ---
 
-## Install
+## Install — one line
 
 ```bash
-pip install openai-mcp
+curl -fsSL https://raw.githubusercontent.com/robotlearning123/chatgpt2agent/main/install.sh | bash
 ```
 
-Or with pipx for an isolated install:
+That command:
+1. Installs `openai-mcp` via pipx (creates an isolated env).
+2. Reuses your existing `~/.codex/auth.json` if you've run `codex login` — no separate ChatGPT token paste needed.
+3. Detects which MCP clients you have (Claude Code, Codex) and writes the right config snippet for each.
+4. Drops the `deep-research` Claude Code skill into `~/.claude/skills/`.
+
+### Or step-by-step
 
 ```bash
+# 1. Install the package globally (isolated venv)
 pipx install openai-mcp
+
+# 2. Register with all detected MCP clients (Claude Code, Codex)
+openai-mcp install                          # auto-detect everything
+
+# Want only one client?
+openai-mcp install --client claude-code
+openai-mcp install --client codex
+
+# HTTP transport instead of stdio?
+openai-mcp install --transport http --http-port 9000
 ```
 
----
+### Per-client config
 
-## Setup
+The `install` subcommand writes the right thing for each:
 
-```bash
-openai-mcp setup
-```
+| Client | File | Section |
+|---|---|---|
+| **Claude Code** | `~/.claude.json` | `mcpServers.openai` (stdio: `openai-mcp run --stdio`) |
+| **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.openai]` |
 
-The wizard will:
+Both are idempotent and back up the prior file as `<name>.bak-openai-mcp`.
 
-1. Look for an existing Codex auth token at `~/.codex/auth.json`
-2. If not found, prompt you to paste a ChatGPT session token
-3. Save credentials to `~/.openai-mcp/token.json`
+After running `install`, restart Claude Code so it re-spawns the subprocess.
+Codex picks up the new server on its next invocation automatically.
 
----
+### Manual config (if you'd rather not run install)
 
-## Configure in Claude Code
-
-Add the following to `~/.claude.json` (under `mcpServers`):
+Claude Code — add to `~/.claude.json`:
 
 ```json
 {
@@ -69,7 +84,26 @@ Add the following to `~/.claude.json` (under `mcpServers`):
 }
 ```
 
-Restart Claude Code after saving. Tools appear under the `openai` namespace.
+Codex CLI — add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.openai]
+command = "openai-mcp"
+args = ["run", "--stdio"]
+```
+
+---
+
+## Setup (manual token paste — only if codex isn't available)
+
+```bash
+openai-mcp setup
+```
+
+Prompts for a ChatGPT session token and saves it to `~/.openai-mcp/token.json`.
+The `codex login` flow is preferred when available because codex auto-refreshes
+its token; openai-mcp reloads `~/.codex/auth.json` on mtime change so long
+calls don't 401 mid-flight.
 
 ---
 
@@ -176,6 +210,26 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
+
+### Release
+
+Tagged releases auto-publish to PyPI and create a GitHub Release with the
+matching CHANGELOG section:
+
+```bash
+# bump version
+$EDITOR pyproject.toml             # e.g. "0.0.2" → "0.0.3"
+$EDITOR CHANGELOG.md               # add ## [0.0.3] - YYYY-MM-DD ...
+git commit -am "release: 0.0.3"
+git tag v0.0.3
+git push origin main --tags        # release workflow fires on the tag
+```
+
+The release workflow (`.github/workflows/release.yml`) verifies the tag
+matches `pyproject.toml`, runs the test matrix, builds wheel + sdist, publishes
+to PyPI via OIDC trusted publishing (no token in secrets — one-time setup at
+[pypi.org/manage/account/publishing](https://pypi.org/manage/account/publishing/)),
+and posts a GitHub Release with that version's CHANGELOG body.
 
 ---
 

@@ -29,6 +29,18 @@ dev = ["pytest>=7", "pytest-asyncio>=0.21"]
 [project.scripts]
 openai-mcp = "openai_mcp.server:main"
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["openai_mcp*"]
+
+[tool.setuptools.package-data]
+openai_mcp = [
+    "skills/deep-research/SKILL.md",
+    "skills/deep-research/bin/*",
+]
+
 [project.urls]
 Homepage = "https://github.com/robotlearning123/chatgpt2agent"
 Repository = "https://github.com/robotlearning123/chatgpt2agent"

@@ -6,7 +6,37 @@ versioning: [SemVer](https://semver.org/).
 
 ## [0.0.2] - 2026-05-15
 
-### Added
+### Added — one-command install for popular MCP clients
+
+- `openai-mcp install` subcommand — registers openai-mcp with one or more
+  MCP-capable agent clients. Targets in 0.0.2:
+  - **Claude Code** — writes `~/.claude.json` `mcpServers.openai` entry
+    (preserves all other top-level keys, backs up to `.bak-openai-mcp`).
+  - **Codex CLI** — writes `~/.codex/config.toml` `[mcp_servers.openai]`
+    section, preserving all other sections (agents, model config, …).
+  - `--client all` (default) auto-detects which clients are installed and
+    registers with each.
+  - Idempotent: re-running yields the same final config; no duplicate
+    sections or entries.
+  - `--dry-run` prints what would change without touching files.
+  - `--transport http --http-port N` switches to an HTTP entry.
+- **Bundled Claude Code skill** at `openai_mcp/skills/deep-research/` —
+  ships in the wheel; `openai-mcp install` (or `install --client claude-code`)
+  copies it to `~/.claude/skills/deep-research/`. The skill calls
+  ConversationClient directly, so it works even before Claude Code restarts.
+- **One-line installer** (`install.sh`) — cross-platform replacement of the
+  prior macOS-only LaunchAgent script. Pipes through pipx install + codex
+  login check + `openai-mcp install`. Curl-pipe-bash friendly.
+- **GitHub Actions release workflow** (`.github/workflows/release.yml`) —
+  triggers on `v*` tags, verifies the tag matches `pyproject.toml`, runs
+  pytest across {ubuntu, macos} × {Python 3.11, 3.13}, builds wheel + sdist,
+  publishes to PyPI via OIDC trusted publishing (no token in secrets), and
+  creates a GitHub Release with the matching CHANGELOG section as body.
+  Auto-marks pre-releases when tag contains `-rc` / `-alpha` / `-beta`.
+- **CI workflow** (`.github/workflows/ci.yml`) — runs tests on push/PR to
+  main across {ubuntu, macos} × {3.10–3.13}, plus shellcheck on `install.sh`.
+
+### Added — full ChatGPT account surface
 
 - `agent` tool — ChatGPT Agent Mode (262K context, autonomous browsing + code
   execution + tool use). Streams via the same SSE path as `chat` with
