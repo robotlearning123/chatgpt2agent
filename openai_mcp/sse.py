@@ -94,7 +94,12 @@ def _build_payload(
     return payload
 
 
-def _build_dr_payload(query: str) -> dict:
+def _build_dr_payload(
+    query: str,
+    *,
+    conversation_id: str | None = None,
+    parent_message_id: str | None = None,
+) -> dict:
     """Build payload for legacy Deep Research: model=research + system_hints=['research'].
 
     This resolves to i-mini-m (web-search/SearchGPT backend), NOT the Pro-tier
@@ -104,11 +109,66 @@ def _build_dr_payload(query: str) -> dict:
     Deep Research in "temporary chats" (the True setting), returning
     "Research is not currently supported in temporary chats". DR requires a
     persistent conversation so the connector can poll for the final report.
+
+    When ``conversation_id`` + ``parent_message_id`` are supplied, the payload
+    continues an existing conversation — used by multi-turn clarification
+    handling in ``ConversationClient.deep_research``.
     """
     payload = _build_payload(DR_MODEL, [{"role": "user", "content": query}])
     payload["system_hints"] = ["research"]
     payload["history_and_training_disabled"] = False
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if parent_message_id:
+        payload["parent_message_id"] = parent_message_id
     return payload
+
+
+_CLARIFICATION_HINTS = (
+    "could you confirm",
+    "could you clarify",
+    "could you tell me",
+    "would you like",
+    "do you want me",
+    "shall i proceed",
+    "before i start",
+    "before i begin",
+    "to make sure",
+    "to ensure i",
+    "i'd like to clarif",
+    "i'd like to confirm",
+    "can you specify",
+    "just one key clarif",
+    "one quick clarif",
+    "one clarif",
+    "a quick question",
+    "i have one question",
+    "i need to confirm",
+)
+
+_DR_AUTO_PROCEED = (
+    "Proceed with your best interpretation of any ambiguity. "
+    "Do not ask further clarifying questions. Begin the research now."
+)
+
+
+def _looks_like_clarification(text: str) -> bool:
+    """Heuristic: does this assistant 'done' text look like a clarification request?
+
+    Returns True when the text matches common clarification phrases, OR when
+    it is short (<800 chars) and ends with a question mark. Full DR reports
+    are typically 3–30 KB so the length floor reliably distinguishes them
+    from clarification turns; the phrase list catches longer probing replies.
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    lower = stripped.lower()
+    if any(p in lower for p in _CLARIFICATION_HINTS):
+        return True
+    return len(stripped) < 800 and stripped.endswith("?")
 
 
 def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
@@ -330,7 +390,12 @@ class ConversationClient:
             chunks.append(chunk)
         return "".join(chunks)
 
-    async def deep_research(self, query: str) -> AsyncIterator[dict]:
+    async def deep_research(
+        self,
+        query: str,
+        *,
+        max_clarification_rounds: int = 2,
+    ) -> AsyncIterator[dict]:
         """Stream Deep Research events for *query*.
 
         Yields dicts of shape:
@@ -338,10 +403,18 @@ class ConversationClient:
           {"type": "tool",     "call": <search_call>}    — tool invocations (search/browse)
           {"type": "done",     "text": <full_text>,
            "content_references": [...], "search_result_groups": [...]}
+          {"type": "clarification_auto_reply", "round": N, "question": <text>}
+              — emitted when the first turn was a clarification question and the
+              wrapper auto-replied with a "proceed with best interpretation"
+              follow-up. Real DR continues on the next round.
 
         Uses model='research' + system_hints=['research'] which triggers the
         ChatGPT web-search deep-research backend (confirmed working 2026-04-24).
-        Timeout is 1800 s to accommodate multi-minute research runs.
+        Timeout is 1800 s per round to accommodate multi-minute research runs.
+
+        ChatGPT's research mode often opens with a clarifying question instead
+        of starting research immediately. ``max_clarification_rounds`` caps how
+        many auto-replies the wrapper sends before giving up (default 2).
         """
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
@@ -356,107 +429,157 @@ class ConversationClient:
         if sentinel.get("turnstile"):
             headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
 
-        payload = _build_dr_payload(query)
+        conversation_id: str | None = None
+        last_assistant_msg_id: str | None = None
+        current_query = query
 
-        async with AsyncSession(impersonate="chrome131", verify=True) as s:
-            resp = await s.post(
-                _CONV_URL,
-                headers=headers,
-                json=payload,
-                timeout=1800,
-                stream=True,
+        for round_num in range(max_clarification_rounds + 1):
+            payload = _build_dr_payload(
+                current_query,
+                conversation_id=conversation_id,
+                parent_message_id=last_assistant_msg_id,
             )
-            if resp.status_code == 401:
-                raise RuntimeError("401 Unauthorized — run `codex login`")
-            if resp.status_code == 403:
-                raise RuntimeError("403 Forbidden — token may have expired")
-            if resp.status_code not in (200, 201):
-                body = ""
-                async for chunk in resp.aiter_content():
-                    body += (
-                        chunk.decode("utf-8", errors="replace")
-                        if isinstance(chunk, bytes)
-                        else chunk
-                    )
-                    if len(body) > 500:
-                        break
-                raise RuntimeError(
-                    f"HTTP {resp.status_code} from /backend-api/conversation: {body[:500]}"
+
+            async with AsyncSession(impersonate="chrome131", verify=True) as s:
+                resp = await s.post(
+                    _CONV_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=1800,
+                    stream=True,
                 )
+                if resp.status_code == 401:
+                    raise RuntimeError("401 Unauthorized — run `codex login`")
+                if resp.status_code == 403:
+                    raise RuntimeError("403 Forbidden — token may have expired")
+                if resp.status_code not in (200, 201):
+                    body = ""
+                    async for chunk in resp.aiter_content():
+                        body += (
+                            chunk.decode("utf-8", errors="replace")
+                            if isinstance(chunk, bytes)
+                            else chunk
+                        )
+                        if len(body) > 500:
+                            break
+                    raise RuntimeError(
+                        f"HTTP {resp.status_code} from /backend-api/conversation: {body[:500]}"
+                    )
 
-            last_text = ""
-            done_emitted = False
-            try:
-                async for raw_line in resp.aiter_lines():
-                    if isinstance(raw_line, bytes):
-                        raw_line = raw_line.decode("utf-8", errors="replace")
-                    line = raw_line.strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        obj = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(obj, dict):
-                        continue
+                last_text = ""
+                done_emitted = False
+                done_text = ""
+                try:
+                    async for raw_line in resp.aiter_lines():
+                        if isinstance(raw_line, bytes):
+                            raw_line = raw_line.decode("utf-8", errors="replace")
+                        line = raw_line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(obj, dict):
+                            continue
 
-                    msg = obj.get("message", {})
-                    if not isinstance(msg, dict):
-                        continue
+                        # Capture conversation_id for multi-turn continuation.
+                        cid = obj.get("conversation_id")
+                        if cid and not conversation_id:
+                            conversation_id = cid
 
-                    role = msg.get("author", {}).get("role", "")
-                    content = msg.get("content", {})
-                    ct = content.get("content_type", "")
-                    status = msg.get("status", "")
-                    meta = msg.get("metadata", {})
+                        msg = obj.get("message", {})
+                        if not isinstance(msg, dict):
+                            continue
 
-                    # Tool invocation events (search/browse)
-                    if ct == "code" and role == "assistant":
-                        call_text = content.get("text", "")
-                        if call_text:
-                            yield {"type": "tool", "call": call_text}
-                        continue
+                        role = msg.get("author", {}).get("role", "")
+                        content = msg.get("content", {})
+                        ct = content.get("content_type", "")
+                        status = msg.get("status", "")
+                        meta = msg.get("metadata", {})
 
-                    # Text streaming — assistant in-progress or finished
-                    if role == "assistant" and ct == "text":
-                        parts = content.get("parts") or []
-                        new = parts[0] if parts and isinstance(parts[0], str) else ""
+                        # Capture latest assistant message id so the next turn
+                        # (auto-proceed reply) can use it as parent_message_id.
+                        msg_id = msg.get("id")
+                        if msg_id and role == "assistant":
+                            last_assistant_msg_id = msg_id
 
-                        if status == "finished_successfully":
-                            # Emit final done event with citations
-                            yield {
-                                "type": "done",
-                                "text": new,
-                                "content_references": meta.get(
-                                    "content_references", []
-                                ),
-                                "search_result_groups": meta.get(
-                                    "search_result_groups", []
-                                ),
-                            }
-                            done_emitted = True
-                            last_text = new
-                        elif status == "in_progress" and new:
-                            # Emit incremental text delta
-                            if new.startswith(last_text):
-                                delta = new[len(last_text) :]
-                                if delta:
-                                    yield {"type": "progress", "text": delta}
-                            else:
-                                yield {"type": "progress", "text": new}
-                            last_text = new
-            finally:
-                if last_text and not done_emitted:
-                    yield {
-                        "type": "done",
-                        "text": last_text,
-                        "content_references": [],
-                        "search_result_groups": [],
-                        "terminated_abnormally": True,
-                    }
+                        # Tool invocation events (search/browse)
+                        if ct == "code" and role == "assistant":
+                            call_text = content.get("text", "")
+                            if call_text:
+                                yield {"type": "tool", "call": call_text}
+                            continue
+
+                        # Text streaming — assistant in-progress or finished
+                        if role == "assistant" and ct == "text":
+                            parts = content.get("parts") or []
+                            new = (
+                                parts[0]
+                                if parts and isinstance(parts[0], str)
+                                else ""
+                            )
+
+                            if status == "finished_successfully":
+                                yield {
+                                    "type": "done",
+                                    "text": new,
+                                    "content_references": meta.get(
+                                        "content_references", []
+                                    ),
+                                    "search_result_groups": meta.get(
+                                        "search_result_groups", []
+                                    ),
+                                }
+                                done_emitted = True
+                                last_text = new
+                                done_text = new
+                            elif status == "in_progress" and new:
+                                # Emit incremental text delta
+                                if new.startswith(last_text):
+                                    delta = new[len(last_text) :]
+                                    if delta:
+                                        yield {"type": "progress", "text": delta}
+                                else:
+                                    yield {"type": "progress", "text": new}
+                                last_text = new
+                finally:
+                    if last_text and not done_emitted:
+                        yield {
+                            "type": "done",
+                            "text": last_text,
+                            "content_references": [],
+                            "search_result_groups": [],
+                            "terminated_abnormally": True,
+                        }
+                        done_text = last_text
+                        done_emitted = True
+
+            # End of one round — decide whether to continue.
+            if not done_emitted:
+                return
+
+            # If the model asked for clarification AND we have a captured
+            # conversation_id (so a follow-up can land in the same thread),
+            # auto-reply and keep going.
+            if (
+                conversation_id
+                and last_assistant_msg_id
+                and _looks_like_clarification(done_text)
+                and round_num < max_clarification_rounds
+            ):
+                yield {
+                    "type": "clarification_auto_reply",
+                    "round": round_num + 1,
+                    "question": done_text,
+                }
+                current_query = _DR_AUTO_PROCEED
+                continue
+
+            return
 
     async def deep_research_heavy(
         self,

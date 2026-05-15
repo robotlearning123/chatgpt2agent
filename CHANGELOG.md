@@ -28,6 +28,17 @@ versioning: [SemVer](https://semver.org/).
   mtime of `~/.codex/auth.json` and re-reads on change, so codex's background
   refresh propagates without needing to restart the MCP server. Called before
   every `get()` / `post()`.
+- **Multi-turn DR clarification handling** in `ConversationClient.deep_research`.
+  ChatGPT's `research` model often opens with a clarifying question instead of
+  starting research immediately ("Could you confirm…?"). The wrapper now
+  detects clarification-shaped `done` events (short text + question mark, or
+  matching phrase list), captures the conversation_id + assistant message id,
+  and auto-replies "Proceed with your best interpretation. Do not ask further
+  clarifying questions." in the same conversation thread — then continues
+  streaming until the real report. Capped at 2 rounds; surface
+  `{"type": "clarification_auto_reply", "round": N, "question": text}` events
+  so callers can see what happened. Without this, single-turn DR calls
+  terminated on the clarification question and never saw real research.
 
 ### Fixed
 
