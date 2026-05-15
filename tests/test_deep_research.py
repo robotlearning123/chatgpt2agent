@@ -104,6 +104,8 @@ def test_build_dr_payload_shape():
     assert payload["system_hints"] == ["research"]
     assert payload["conversation_mode"] == {"kind": "primary_assistant"}
     assert payload["force_use_sse"] is True
-    assert payload["history_and_training_disabled"] is True
+    # DR requires persistent conversation; "temporary chats" reject DR with
+    # "Research is not currently supported in temporary chats".
+    assert payload["history_and_training_disabled"] is False
     assert len(payload["messages"]) == 1
     assert payload["messages"][0]["content"]["parts"][0] == "test query"

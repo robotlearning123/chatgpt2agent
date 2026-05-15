@@ -62,25 +62,49 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
     )
 
     chat_model = models.get("chat", "gpt-5-3")
+    agent_model = models.get("agent", "agent-mode")
+    heavy_dr_model = models.get("heavy_dr")  # None → ConversationClient uses sse.HEAVY_DR_MODEL
+
+    _DR_IMPERATIVE_PREFIX = (
+        "Begin the deep research immediately without asking for confirmation. "
+        "Do not ask clarifying questions; proceed with the best interpretation. "
+    )
 
     @mcp.tool()
     async def chat(prompt: str, model: str = chat_model) -> str:
-        """Chat with an AI model. Pass a different `model` name to switch models."""
+        """Chat with any ChatGPT model on your account.
+
+        Pass `model` to switch slugs — e.g. `gpt-5-5-pro` (410K, pro reasoning),
+        `o3-pro`, `gpt-5-4-thinking`, `gpt-5-3` (default). Call `list_models`
+        first to enumerate what your account has access to.
+        """
         return await conv.complete(model, [{"role": "user", "content": prompt}])
 
     @mcp.tool()
-    async def deep_research(query: str) -> str:
+    async def agent(prompt: str) -> str:
+        """ChatGPT Agent Mode — 262K context with autonomous browsing, code
+        execution, and tool use. Best for multi-step tasks (literature gathering,
+        document workflows, browser automation). SSE-only (no REST endpoint).
+        """
+        return await conv.complete(agent_model, [{"role": "user", "content": prompt}])
+
+    @mcp.tool()
+    async def deep_research(query: str, auto_confirm: bool = True) -> str:
         """Search the web and synthesize a detailed report with citations.
 
         Best for: current events, literature review, market research.
         Takes 30–120 seconds. Uses model='research' + system_hints=['research'].
+
+        When `auto_confirm` is True (default), an imperative prefix is prepended
+        so the model proceeds without asking "Do you want me to start?".
         """
+        q = _DR_IMPERATIVE_PREFIX + query if auto_confirm else query
         final_text = ""
         tool_calls: list[str] = []
         refs: list = []
         groups: list = []
 
-        async for event in conv.deep_research(query):
+        async for event in conv.deep_research(q):
             if event["type"] == "tool":
                 tool_calls.append(event["call"])
             elif event["type"] == "done":
@@ -104,15 +128,20 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         return final_text or "(no response)"
 
     @mcp.tool()
-    async def deep_research_heavy(query: str) -> str:
-        """Long-form Deep Research using gpt-5-5-pro (5–30 min, uses monthly DR quota — check /backend-api/conversation/init for remaining). For short web-augmented answers use `deep_research` instead."""
+    async def deep_research_heavy(query: str, auto_confirm: bool = True) -> str:
+        """Long-form Deep Research using gpt-5-5-pro (5–30 min, uses monthly DR quota — check /backend-api/conversation/init for remaining). For short web-augmented answers use `deep_research` instead.
+
+        When `auto_confirm` is True (default), an imperative prefix is prepended
+        so the model proceeds without asking "Do you want me to start?".
+        """
+        q = _DR_IMPERATIVE_PREFIX + query if auto_confirm else query
         final_text = ""
         refs: list = []
         groups: list = []
         connector_failed = False
         tool_error_msg = ""
 
-        async for event in conv.deep_research_heavy(query):
+        async for event in conv.deep_research_heavy(q, model=heavy_dr_model):
             etype = event.get("type")
             if etype == "done":
                 final_text = event["text"]
@@ -151,21 +180,46 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
         return final_text or "(no response)"
 
-    # image_gen intentionally unregistered in 0.0.1 — the gpt-image-2 endpoint
-    # is unverified in the native SSE build. Tracked for PR5. Re-add the
-    # `@mcp.tool()` decorator once the endpoint is implemented and tested.
-    async def image_gen(prompt: str) -> str:  # noqa: F841 (kept for PR5 wiring)
-        """Placeholder for future gpt-image-2 support (not exposed as a tool)."""
-        raise NotImplementedError(
-            "image_gen not available in 0.0.1 — see PR5 for implementation"
+    @mcp.tool()
+    async def gpt_chat(gizmo_id: str, prompt: str) -> str:
+        """Chat through one of your private Custom GPTs (g-p-* IDs).
+
+        Use `list_custom_gpts` to enumerate available gizmo IDs and their names.
+
+        EXPERIMENTAL: passes `gizmo_id` into the conversation payload via the
+        `conversation_origin` field reverse-engineered from chatgpt.com web
+        bundles. The gizmo's instructions, files, and memory_scope apply.
+        """
+        return await conv.complete(
+            chat_model,
+            [{"role": "user", "content": prompt}],
+            gizmo_id=gizmo_id,
         )
+
+    @mcp.tool()
+    async def memory_create_via_chat(content: str) -> str:
+        """Add an entry to your ChatGPT memories.
+
+        Workaround for `POST /backend-api/memories` returning 405 — ChatGPT only
+        allows model-initiated memory writes. This tool asks the model to remember
+        the content directly, then returns the assistant's reply (which usually
+        confirms what was stored). Use `memory_search` to verify after.
+        """
+        prompt = (
+            "Please commit the following to memory verbatim. "
+            "Do not summarize, paraphrase, or ask for confirmation:\n\n" + content
+        )
+        return await conv.complete(chat_model, [{"role": "user", "content": prompt}])
 
     try:
         from openai_mcp.tools import register_all
 
         register_all(mcp, _backend)
-    except Exception as _exc:
-        logging.getLogger(__name__).warning("backend tools unavailable: %s", _exc)
+    except Exception:
+        # P0 #4 fix — log the traceback (was bare warning, hid the cause)
+        logging.getLogger(__name__).exception(
+            "backend tools registration failed — some MCP tools will be unavailable"
+        )
 
     return mcp
 

@@ -59,8 +59,13 @@ HEAVY_DR_MODEL = "gpt-5-5-pro"
 HEAVY_DR_HINT = "connector:connector_openai_deep_research"
 
 
-def _build_payload(model: str, messages: list[dict]) -> dict:
-    return {
+def _build_payload(
+    model: str,
+    messages: list[dict],
+    *,
+    gizmo_id: str | None = None,
+) -> dict:
+    payload: dict = {
         "action": "next",
         "messages": [
             {
@@ -80,6 +85,13 @@ def _build_payload(model: str, messages: list[dict]) -> dict:
         "history_and_training_disabled": True,
         "system_hints": [],
     }
+    if gizmo_id:
+        # Custom GPT (g-p-*) routing. Reverse-engineered from chatgpt.com web —
+        # the gizmo's instructions/files/memory_scope apply when both fields are
+        # present. Tracked as experimental in tools/gpt_chat docstring.
+        payload["gizmo_id"] = gizmo_id
+        payload["conversation_origin"] = {"type": "custom_gpt", "gizmo_id": gizmo_id}
+    return payload
 
 
 def _build_dr_payload(query: str) -> dict:
@@ -87,13 +99,19 @@ def _build_dr_payload(query: str) -> dict:
 
     This resolves to i-mini-m (web-search/SearchGPT backend), NOT the Pro-tier
     multi-section deep research.  Use _build_heavy_dr_payload() for the full DR.
+
+    NOTE: history_and_training_disabled must be False here. ChatGPT refuses
+    Deep Research in "temporary chats" (the True setting), returning
+    "Research is not currently supported in temporary chats". DR requires a
+    persistent conversation so the connector can poll for the final report.
     """
     payload = _build_payload(DR_MODEL, [{"role": "user", "content": query}])
     payload["system_hints"] = ["research"]
+    payload["history_and_training_disabled"] = False
     return payload
 
 
-def _build_heavy_dr_payload(query: str) -> dict:
+def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
     """Build payload for heavy Deep Research — the true Pro-tier 5–30 min DR path.
 
     Ground-truth reverse-engineered from chatgpt.com/deep-research browser traffic
@@ -137,7 +155,7 @@ def _build_heavy_dr_payload(query: str) -> dict:
             }
         ],
         "parent_message_id": str(uuid4()),
-        "model": HEAVY_DR_MODEL,
+        "model": model or HEAVY_DR_MODEL,
         "client_prepare_state": "success",
         "timezone_offset_min": -480,
         "timezone": "UTC",
@@ -149,7 +167,11 @@ def _build_heavy_dr_payload(query: str) -> dict:
         "supported_encodings": ["v1"],
         "force_parallel_switch": "auto",
         "paragen_cot_summary_display_override": "allow",
-        "history_and_training_disabled": True,
+        # MUST be False — Deep Research is rejected by the server in
+        # "temporary chats" ("Research is not currently supported in temporary chats").
+        # DR also depends on the conversation persisting so Phase 2 polling
+        # at /backend-api/conversation/{id} can fetch the final report.
+        "history_and_training_disabled": False,
         "force_use_sse": True,
     }
 
@@ -163,6 +185,8 @@ class ConversationClient:
         model: str,
         messages: list[dict],
         tools: list | None = None,
+        *,
+        gizmo_id: str | None = None,
     ) -> AsyncIterator[str]:
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
@@ -177,7 +201,7 @@ class ConversationClient:
         if sentinel.get("turnstile"):
             headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
 
-        payload = _build_payload(model, messages)
+        payload = _build_payload(model, messages, gizmo_id=gizmo_id)
         if tools:
             payload["tools"] = tools
 
@@ -294,9 +318,15 @@ class ConversationClient:
                     yield new
                     last_text = new
 
-    async def complete(self, model: str, messages: list[dict]) -> str:
+    async def complete(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        gizmo_id: str | None = None,
+    ) -> str:
         chunks: list[str] = []
-        async for chunk in self.stream(model, messages):
+        async for chunk in self.stream(model, messages, gizmo_id=gizmo_id):
             chunks.append(chunk)
         return "".join(chunks)
 
@@ -428,7 +458,12 @@ class ConversationClient:
                         "terminated_abnormally": True,
                     }
 
-    async def deep_research_heavy(self, query: str) -> AsyncIterator[dict]:
+    async def deep_research_heavy(
+        self,
+        query: str,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[dict]:
         """Stream true Pro-tier Deep Research events for *query*.
 
         Two-phase: (1) SSE kickoff at /backend-api/f/conversation speaking
@@ -466,8 +501,10 @@ class ConversationClient:
         _INIT_PATH = "/backend-api/conversation/init"
         remaining: int | None = None
         try:
-            init_data = self._backend.post(
-                _INIT_PATH, json={"conversation_mode_kind": "primary_assistant"}
+            init_data = await asyncio.to_thread(
+                self._backend.post,
+                _INIT_PATH,
+                json={"conversation_mode_kind": "primary_assistant"},
             )
             limits = (init_data or {}).get("limits_progress") or []
             for lim in limits:
@@ -497,7 +534,7 @@ class ConversationClient:
         if sentinel.get("turnstile"):
             headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
 
-        payload = _build_heavy_dr_payload(query)
+        payload = _build_heavy_dr_payload(query, model=model)
 
         # --- Phase 1: SSE kickoff with JSON-patch delta parser ---
         # /f/conversation speaks "delta_encoding v1". The first assistant envelope
@@ -516,6 +553,12 @@ class ConversationClient:
             "tool_invoked": False,
             "tool_failed": False,
             "done_emitted": False,
+            # True while the current assistant envelope is the connector-dispatch
+            # JSON ({"path": ".../connector_openai_deep_research/start", ...}).
+            # That envelope reaches finished_successfully almost immediately —
+            # but its text is the dispatch payload, not the real report. Reset
+            # when a fresh assistant envelope (the real report) arrives.
+            "is_connector_dispatch": False,
         }
 
         def _emit_done(events: list) -> None:
@@ -550,9 +593,16 @@ class ConversationClient:
                 state["asst_text"] = initial
                 state["asst_status"] = msg.get("status") or ""
                 state["asst_metadata"] = msg.get("metadata") or {}
-                if initial:
+                state["is_connector_dispatch"] = (
+                    initial.startswith('{"path":')
+                    and "connector_openai_deep_research" in initial
+                )
+                if initial and not state["is_connector_dispatch"]:
                     events.append({"type": "progress", "text": initial})
-                if state["asst_status"] == "finished_successfully":
+                if (
+                    state["asst_status"] == "finished_successfully"
+                    and not state["is_connector_dispatch"]
+                ):
                     _emit_done(events)
             elif (
                 role == "assistant"
@@ -592,7 +642,10 @@ class ConversationClient:
             elif path == "/message/status":
                 if op == "replace" and isinstance(value, str):
                     state["asst_status"] = value
-                    if value == "finished_successfully":
+                    if (
+                        value == "finished_successfully"
+                        and not state["is_connector_dispatch"]
+                    ):
                         _emit_done(events)
             elif path == "/message/metadata":
                 if op in ("append", "patch") and isinstance(value, dict):
