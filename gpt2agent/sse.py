@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 from typing import AsyncIterator
 from uuid import uuid4
@@ -19,22 +18,7 @@ _log = logging.getLogger(__name__)
 
 _CONV_URL = _BASE + "/backend-api/conversation"
 
-# Matches JSON-encoded session-scoped tokens/headers so we can redact them
-# from error messages and logs.
-_SENSITIVE_KEY_RE = re.compile(
-    r'"(Openai-Sentinel-[A-Za-z-]+-Token|Authorization|OAI-[A-Za-z-]+)"\s*:\s*"[^"]*"',
-    re.IGNORECASE,
-)
-
-
-def _redact_error(text: str, max_len: int = 200) -> str:
-    """Truncate + redact session-scoped tokens before surfacing to the user."""
-    if not isinstance(text, str):
-        text = str(text)
-    cleaned = _SENSITIVE_KEY_RE.sub(r'"\1":"<REDACTED>"', text)
-    if len(cleaned) > max_len:
-        cleaned = cleaned[:max_len] + "...[truncated]"
-    return cleaned
+from gpt2agent._log_redact import redact_error as _redact_error  # noqa: F401
 
 
 def _safe_body(resp: object) -> str:

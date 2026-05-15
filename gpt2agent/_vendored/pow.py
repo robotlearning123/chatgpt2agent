@@ -100,7 +100,11 @@ navigator_key = [
     "requestMediaKeySystemAccess−function requestMediaKeySystemAccess() { [native code] }",
     "vendor−Google Inc.",
     "pdfViewerEnabled−true",
-    "language−zh-CN",
+    # Must match the OAI-Language header set by BackendClient — Cloudflare's
+    # bot manager cross-checks the navigator-fingerprint against the request
+    # header and 403s on mismatch. Was zh-CN inherited from upstream chat2api;
+    # we send en-US, so use en-US here too.
+    "language−en-US",
     "setAppBadge−function setAppBadge() { [native code] }",
     "geolocation−[object Geolocation]",
     "userAgentData−[object NavigatorUAData]",

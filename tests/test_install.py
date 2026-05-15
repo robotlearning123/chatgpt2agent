@@ -90,6 +90,52 @@ def test_claude_rejects_broken_json(tmp_path: Path) -> None:
         install_claude_code(config_path=cfg)
 
 
+def test_claude_migrates_legacy_openai_entry(tmp_path: Path) -> None:
+    """Stale 0.0.1 mcpServers.openai pointing at openai-mcp binary is removed."""
+    cfg = tmp_path / "claude.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "openai": {
+                        "type": "stdio",
+                        "command": "openai-mcp",
+                        "args": ["run", "--stdio"],
+                    },
+                    "other": {"type": "stdio", "command": "other-tool"},
+                }
+            }
+        )
+    )
+    install_claude_code(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    assert "openai" not in data["mcpServers"], "legacy entry must be removed"
+    assert "gpt2agent" in data["mcpServers"]
+    assert "other" in data["mcpServers"], "unrelated entries preserved"
+
+
+def test_claude_keeps_unrelated_openai_entry(tmp_path: Path) -> None:
+    """A user-installed mcpServers.openai pointing at something OTHER than the
+    old openai-mcp binary is preserved (not our place to mass-clean)."""
+    cfg = tmp_path / "claude.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "openai": {
+                        "type": "stdio",
+                        "command": "some-other-openai-bridge",
+                    }
+                }
+            }
+        )
+    )
+    install_claude_code(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    assert data["mcpServers"]["openai"]["command"] == "some-other-openai-bridge"
+    assert "gpt2agent" in data["mcpServers"]
+
+
 def test_claude_dry_run_no_write(tmp_path: Path) -> None:
     cfg = tmp_path / "claude.json"
     cfg.write_text('{"existing": true}')
@@ -158,6 +204,44 @@ def test_codex_idempotent(tmp_path: Path) -> None:
     result = install_codex(config_path=cfg)
     assert result["changed"] is False
     assert cfg.read_text() == snap
+
+
+def test_codex_migrates_legacy_openai_section(tmp_path: Path) -> None:
+    """Stale [mcp_servers.openai] block whose command is the old openai-mcp
+    binary gets dropped, since the binary is gone post-rename."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "approval_policy = \"never\"\n"
+        "\n"
+        "[mcp_servers.openai]\n"
+        'command = "openai-mcp"\n'
+        'args = ["run", "--stdio"]\n'
+        "\n"
+        "[other]\n"
+        "k = 1\n"
+    )
+    install_codex(config_path=cfg)
+    text = cfg.read_text()
+    assert "[mcp_servers.openai]" not in text, "legacy section must be removed"
+    assert "[mcp_servers.gpt2agent]" in text
+    assert 'approval_policy = "never"' in text
+    assert "[other]" in text
+
+
+def test_codex_keeps_unrelated_openai_section(tmp_path: Path) -> None:
+    """An [mcp_servers.openai] block with a command OTHER than openai-mcp
+    is left alone (someone wired up a different bridge under that key)."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[mcp_servers.openai]\n"
+        'command = "some-other-bridge"\n'
+        'args = []\n'
+    )
+    install_codex(config_path=cfg)
+    text = cfg.read_text()
+    assert "[mcp_servers.openai]" in text
+    assert 'command = "some-other-bridge"' in text
+    assert "[mcp_servers.gpt2agent]" in text
 
 
 def test_codex_dry_run_no_write(tmp_path: Path) -> None:

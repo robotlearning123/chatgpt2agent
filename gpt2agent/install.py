@@ -126,12 +126,27 @@ def install_claude_code(
     prior = servers.get(server_name)
     servers[server_name] = entry
 
-    if prior == entry:
+    # Migrate stale 0.0.1-era "openai" entry that points at the old binary.
+    # The openai-mcp pipx app is gone post-rename, so a leftover entry is a
+    # broken pointer Claude Code will spawn-and-fail on every restart.
+    legacy = servers.get("openai")
+    legacy_removed = False
+    if (
+        server_name != "openai"
+        and isinstance(legacy, dict)
+        and legacy.get("command") == "openai-mcp"
+    ):
+        del servers["openai"]
+        legacy_removed = True
+
+    if prior == entry and not legacy_removed:
         _info(f"claude-code: {cfg_path} already has {server_name!r} entry (no-op)")
         return {"path": cfg_path, "backup": None, "changed": False}
 
     if dry_run:
         _info(f"claude-code: would update {cfg_path} mcpServers.{server_name}")
+        if legacy_removed:
+            _info("claude-code: would also drop stale legacy 'openai' entry")
         return {"path": cfg_path, "backup": None, "changed": False}
 
     backup = _backup(cfg_path)
@@ -140,6 +155,8 @@ def install_claude_code(
         f"claude-code: wrote mcpServers.{server_name} to {cfg_path} "
         f"(backup: {backup.name if backup else 'none'})"
     )
+    if legacy_removed:
+        _ok("claude-code: removed stale legacy 'openai' entry (pointed at gone openai-mcp binary)")
     return {"path": cfg_path, "backup": backup, "changed": True}
 
 
@@ -150,6 +167,46 @@ def _toml_quote(value: str) -> str:
     """Quote a string for TOML basic-string form."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
+
+
+def _remove_toml_section(content: str, section_name: str) -> str:
+    """Remove the ``[section_name]`` block from TOML content. No-op if absent.
+
+    A section runs from its ``[header]`` line up to the next ``[header]`` or
+    end-of-file. Other sections are preserved verbatim.
+    """
+    header = f"[{section_name}]"
+    section_header_re = re.compile(r"^\s*\[[^\[\]]+\]\s*$")
+    out: list[str] = []
+    skipping = False
+    for line in content.splitlines():
+        if line.strip() == header:
+            skipping = True
+            continue
+        if skipping:
+            if section_header_re.match(line):
+                skipping = False
+                # fall through to keep this header line
+            else:
+                continue
+        out.append(line)
+    return "\n".join(out).rstrip() + "\n" if out else ""
+
+
+def _legacy_codex_openai_present(content: str) -> bool:
+    """True iff content has a ``[mcp_servers.openai]`` section whose
+    ``command`` is the renamed-away ``openai-mcp`` binary.
+    """
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10 fallback
+        import tomli as tomllib  # type: ignore
+    try:
+        parsed = tomllib.loads(content)
+    except Exception:
+        return False
+    legacy = (parsed.get("mcp_servers") or {}).get("openai") or {}
+    return legacy.get("command") == "openai-mcp"
 
 
 def _replace_or_append_toml_section(
@@ -215,12 +272,21 @@ def install_codex(
     ]
     new_content = _replace_or_append_toml_section(existing, section_name, new_section)
 
+    # Drop a stale 0.0.1 [mcp_servers.openai] block whose command is the
+    # gone openai-mcp binary — Codex would spawn-and-fail on every invocation.
+    legacy_removed = False
+    if section_name != "mcp_servers.openai" and _legacy_codex_openai_present(new_content):
+        new_content = _remove_toml_section(new_content, "mcp_servers.openai")
+        legacy_removed = True
+
     if new_content == existing:
         _info(f"codex: {cfg_path} already has [{section_name}] (no-op)")
         return {"path": cfg_path, "backup": None, "changed": False}
 
     if dry_run:
         _info(f"codex: would write [{section_name}] to {cfg_path}")
+        if legacy_removed:
+            _info("codex: would also drop stale legacy [mcp_servers.openai] block")
         return {"path": cfg_path, "backup": None, "changed": False}
 
     backup = _backup(cfg_path)
@@ -229,6 +295,8 @@ def install_codex(
         f"codex: wrote [{section_name}] to {cfg_path} "
         f"(backup: {backup.name if backup else 'none'})"
     )
+    if legacy_removed:
+        _ok("codex: removed stale legacy [mcp_servers.openai] block")
     return {"path": cfg_path, "backup": backup, "changed": True}
 
 
