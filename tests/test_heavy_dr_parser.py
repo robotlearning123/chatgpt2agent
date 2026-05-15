@@ -145,6 +145,9 @@ class _FakeBackend:
 
     _session = _Sess()
 
+    def _reload_token_if_stale(self) -> None:  # mirrors BackendClient
+        pass
+
     def post(self, *args: Any, **kwargs: Any) -> dict:
         # Quota probe response — plenty of DR quota left.
         return {

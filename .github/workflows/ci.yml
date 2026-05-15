@@ -30,6 +30,10 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
+      - name: Install libcurl headers (Linux fallback for curl_cffi source build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libcurl4-openssl-dev
+
       - name: Install package + dev deps
         run: |
           python -m pip install --upgrade pip

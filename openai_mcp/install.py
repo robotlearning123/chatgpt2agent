@@ -59,10 +59,24 @@ def _backup(path: Path) -> Path | None:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` via a temp file in the same directory."""
+    """Write ``content`` to ``path`` via a temp file in the same directory.
+
+    Preserves the existing file's mode bits across the rename. For new files,
+    uses 0o600 — agent-config files (~/.claude.json, ~/.codex/config.toml)
+    contain MCP server commands that the agent will exec, so they should not
+    be world-readable on shared systems.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
     tmp.write_text(content)
+    try:
+        if path.exists():
+            tmp.chmod(path.stat().st_mode)
+        else:
+            tmp.chmod(0o600)
+    except OSError:
+        # Best-effort — Windows / non-POSIX filesystems may reject chmod.
+        pass
     tmp.replace(path)
 
 

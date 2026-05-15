@@ -122,6 +122,9 @@ class _FakeBackend:
 
     _session = _Sess()
 
+    def _reload_token_if_stale(self) -> None:  # mirrors BackendClient
+        pass
+
 
 class _FakeSentinel:
     def __init__(self, *_: Any, **__: Any) -> None:
@@ -207,8 +210,16 @@ def test_clarification_detection_unit() -> None:
     assert _looks_like_clarification("Before I begin, please clarify the scope.")
     assert _looks_like_clarification("Just one key clarification on Q4: which year?")
 
-    # Positive — short + ends with ?
-    assert _looks_like_clarification("Which timeframe?")
+    # Negative — short bare question NOT matching phrase list (was previously
+    # caught by the length+"?" heuristic; that branch was dropped because it
+    # false-positived on real reports ending with rhetorical questions).
+    assert not _looks_like_clarification("Which timeframe?")
+
+    # Negative — long real report ending with a rhetorical question (the
+    # exact false-positive class the conservative heuristic now avoids).
+    rhetorical = ("Based on the evidence, the answer appears to be X. "
+                  * 30 + "But is the timeline really that short?")
+    assert not _looks_like_clarification(rhetorical)
 
     # Negative — long real report
     assert not _looks_like_clarification("Detailed report. " * 200)

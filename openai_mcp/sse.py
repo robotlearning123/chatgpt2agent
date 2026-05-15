@@ -155,10 +155,13 @@ _DR_AUTO_PROCEED = (
 def _looks_like_clarification(text: str) -> bool:
     """Heuristic: does this assistant 'done' text look like a clarification request?
 
-    Returns True when the text matches common clarification phrases, OR when
-    it is short (<800 chars) and ends with a question mark. Full DR reports
-    are typically 3–30 KB so the length floor reliably distinguishes them
-    from clarification turns; the phrase list catches longer probing replies.
+    Matches a curated phrase list ("could you confirm", "before I start", "just
+    one key clarification", "shall I proceed", etc.). The earlier "short text
+    ending in ?" branch was removed — real reports often end with rhetorical
+    questions, and triggering an auto-proceed on a real report wastes a round
+    and can corrupt the conversation. The phrase list is conservative; if a
+    clarification slips through, the caller still gets the question text and
+    can re-invoke explicitly.
     """
     if not text:
         return False
@@ -166,9 +169,7 @@ def _looks_like_clarification(text: str) -> bool:
     if not stripped:
         return False
     lower = stripped.lower()
-    if any(p in lower for p in _CLARIFICATION_HINTS):
-        return True
-    return len(stripped) < 800 and stripped.endswith("?")
+    return any(p in lower for p in _CLARIFICATION_HINTS)
 
 
 def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
@@ -248,6 +249,10 @@ class ConversationClient:
         *,
         gizmo_id: str | None = None,
     ) -> AsyncIterator[str]:
+        # Re-read codex token before snapshotting headers — _reload_token_if_stale
+        # is also called from backend.get/post but the SSE path here uses a fresh
+        # AsyncSession, so it must trigger the reload itself.
+        self._backend._reload_token_if_stale()
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
         headers["Content-Type"] = "application/json"
@@ -416,24 +421,29 @@ class ConversationClient:
         of starting research immediately. ``max_clarification_rounds`` caps how
         many auto-replies the wrapper sends before giving up (default 2).
         """
-        headers = dict(self._backend._session.headers)
-        headers["Accept"] = "text/event-stream"
-        headers["Content-Type"] = "application/json"
-
-        sentinel = await SentinelGate(self._backend).get_tokens()
-        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
-            "chat-requirements"
-        ]
-        if sentinel.get("proof"):
-            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
-        if sentinel.get("turnstile"):
-            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
-
         conversation_id: str | None = None
         last_assistant_msg_id: str | None = None
         current_query = query
 
         for round_num in range(max_clarification_rounds + 1):
+            # Re-read codex token + fetch fresh sentinel each round. The Bearer
+            # in _session.headers may have been refreshed by a concurrent
+            # backend.get/post; the sentinel is single-use and short-lived,
+            # so reusing the round-1 sentinel for a later auto-proceed POST
+            # silently 403s ("token may have expired").
+            self._backend._reload_token_if_stale()
+            headers = dict(self._backend._session.headers)
+            headers["Accept"] = "text/event-stream"
+            headers["Content-Type"] = "application/json"
+            sentinel = await SentinelGate(self._backend).get_tokens()
+            headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+                "chat-requirements"
+            ]
+            if sentinel.get("proof"):
+                headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+            if sentinel.get("turnstile"):
+                headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
             payload = _build_dr_payload(
                 current_query,
                 conversation_id=conversation_id,
@@ -469,6 +479,7 @@ class ConversationClient:
                 last_text = ""
                 done_emitted = False
                 done_text = ""
+                stream_succeeded = False
                 try:
                     async for raw_line in resp.aiter_lines():
                         if isinstance(raw_line, bytes):
@@ -546,8 +557,15 @@ class ConversationClient:
                                 else:
                                     yield {"type": "progress", "text": new}
                                 last_text = new
+                    stream_succeeded = True
                 finally:
-                    if last_text and not done_emitted:
+                    # Only emit a synthetic "abnormal" done when the stream
+                    # ended normally (no exception) but never reached
+                    # finished_successfully — e.g. server closed mid-text.
+                    # On exception, propagate without faking a done event,
+                    # so the caller doesn't mistake partial output for a
+                    # complete answer (cf. code-review medium #2).
+                    if stream_succeeded and last_text and not done_emitted:
                         yield {
                             "type": "done",
                             "text": last_text,
@@ -644,6 +662,9 @@ class ConversationClient:
                 f"Check {_BASE}{_INIT_PATH} (POST) to verify quota reset."
             )
 
+        # Re-read codex token before snapshotting headers — heavy DR runs
+        # for 5–30 min and codex may refresh ~/.codex/auth.json mid-stream.
+        self._backend._reload_token_if_stale()
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
         headers["Content-Type"] = "application/json"
