@@ -193,6 +193,116 @@ def test_connector_dispatch_done_suppressed(monkeypatch: pytest.MonkeyPatch) -> 
     assert _DISPATCH_TEXT not in dones[0]["text"]
 
 
+def test_empty_dispatch_envelope_done_suppressed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production-observed pattern (2026-05-15 events.jsonl from a 12s heavy
+    failure): the dispatch envelope arrives with parts=[""] (NOT the connector
+    JSON we originally hypothesized) and status=finished_successfully. The
+    is_connector_dispatch text heuristic doesn't match an empty string, so the
+    extra ``state["asst_text"]`` non-empty guard is what saves us.
+
+    Without this fix: wrapper exits in 12s with one done(text="") event and
+    misses the real 5–30 min report that streams afterward.
+    """
+    from gpt2agent import sse as sse_mod
+
+    empty_dispatch_then_real = [
+        # Empty dispatch envelope — production shape, NOT the {"path":...} form
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-empty-dispatch",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": [""]},
+                        "status": "finished_successfully",
+                        "metadata": {},
+                    }
+                },
+                "c": 1,
+            }
+        ),
+        # server_ste_metadata showing tool_invoked (post-done in real traffic)
+        "data: "
+        + json.dumps(
+            {
+                "type": "server_ste_metadata",
+                "metadata": {
+                    "tool_invoked": True,
+                    "turn_mode": "deep research",
+                },
+            }
+        ),
+        # Real report envelope follows — fresh assistant message, in_progress.
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-real-after-empty",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": [""]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+                "c": 2,
+            }
+        ),
+        # Streamed report content
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/content/parts/0",
+                "o": "append",
+                "v": _REAL_REPORT,
+            }
+        ),
+        # Real status flip
+        "data: "
+        + json.dumps(
+            {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
+        ),
+        "data: [DONE]",
+    ]
+
+    class _SingleShotSession:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_SingleShotSession":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def post(self, *_: Any, **__: Any) -> _FakeResp:
+            return _FakeResp(empty_dispatch_then_real)
+
+    monkeypatch.setattr(sse_mod, "AsyncSession", _SingleShotSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
+
+    client = sse_mod.ConversationClient(_FakeBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        out: list[dict] = []
+        async for ev in client.deep_research_heavy("test"):
+            out.append(ev)
+        return out
+
+    events = asyncio.run(_go())
+    dones = [e for e in events if e.get("type") == "done"]
+
+    assert len(dones) == 1, f"empty dispatch envelope must not trigger early done: {dones}"
+    assert dones[0]["text"] == _REAL_REPORT
+    # Empty text never surfaced as a "done" event.
+    assert all(d["text"] != "" for d in dones)
+
+
 def test_progress_excludes_dispatch_json(monkeypatch: pytest.MonkeyPatch) -> None:
     """Streaming progress events must not surface connector-dispatch JSON."""
     events = _run_heavy_dr(monkeypatch)

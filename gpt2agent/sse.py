@@ -727,9 +727,18 @@ class ConversationClient:
                 )
                 if initial and not state["is_connector_dispatch"]:
                     events.append({"type": "progress", "text": initial})
+                # Suppress _emit_done on:
+                #   (a) connector-dispatch envelope (matches text heuristic), OR
+                #   (b) any assistant envelope arriving with EMPTY text +
+                #       finished_successfully — the dispatch placeholder for
+                #       async DR (observed in production: heavy DR opens with
+                #       parts=[""], status=finished_successfully, then the
+                #       real report streams later via path patches or arrives
+                #       in Phase 2 polling).
                 if (
                     state["asst_status"] == "finished_successfully"
                     and not state["is_connector_dispatch"]
+                    and state["asst_text"]
                 ):
                     _emit_done(events)
             elif (
@@ -770,9 +779,13 @@ class ConversationClient:
             elif path == "/message/status":
                 if op == "replace" and isinstance(value, str):
                     state["asst_status"] = value
+                    # Same empty-text guard as in _on_envelope: a status flip
+                    # to finished_successfully on an empty assistant text
+                    # buffer is the dispatch placeholder, not the real report.
                     if (
                         value == "finished_successfully"
                         and not state["is_connector_dispatch"]
+                        and state["asst_text"]
                     ):
                         _emit_done(events)
             elif path == "/message/metadata":
