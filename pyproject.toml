@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,13 +7,13 @@ name = "gpt2agent"
 version = "0.0.2"
 description = "Use your ChatGPT Plus/Pro in Claude Code and other AI agents — one command setup"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE", "NOTICES.md"]
 requires-python = ">=3.10"
 keywords = ["mcp", "chatgpt", "claude", "openai", "agent", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
