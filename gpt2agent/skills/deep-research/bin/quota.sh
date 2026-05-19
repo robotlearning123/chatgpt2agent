@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 # Print remaining ChatGPT Pro Deep Research quota.
 set -euo pipefail
-PYTHON="/home/robot/.local/share/pipx/venvs/gpt2agent/bin/python"
+
+if command -v gpt2agent >/dev/null 2>&1; then
+  PYTHON="$(head -1 "$(command -v gpt2agent)" | sed 's|^#!||' | awk '{print $1}')"
+fi
+PYTHON="${PYTHON:-$HOME/.local/share/pipx/venvs/gpt2agent/bin/python}"
+
+if [ ! -x "$PYTHON" ]; then
+  echo "error: cannot find a Python with gpt2agent installed" >&2
+  echo "fix:   pipx install git+https://github.com/robotlearning123/gpt2agent.git" >&2
+  exit 1
+fi
+
 exec "$PYTHON" - <<'PY'
 from gpt2agent.backend import BackendClient
 b = BackendClient()

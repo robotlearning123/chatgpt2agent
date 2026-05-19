@@ -11,8 +11,12 @@ Outputs (in --out-dir):
   status.txt  START / DONE / ERROR + elapsed
   meta.json   server metadata (model slug, request id, plan type, ...)
 
-Run with the pipx-installed gpt2agent Python:
-  /home/robot/.local/share/pipx/venvs/gpt2agent/bin/python deep_research.py [...]
+Run with any Python that has gpt2agent installed, e.g.
+
+  python deep_research.py [...]
+
+or via the bundled `run.sh` wrapper, which discovers the right interpreter
+from the `gpt2agent` CLI on PATH.
 """
 
 from __future__ import annotations

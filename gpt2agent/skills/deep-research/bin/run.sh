@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Wrapper around deep_research.py. Picks the right Python (pipx-installed
-# gpt2agent venv) and forwards all args.
+# Wrapper around deep_research.py. Finds a Python with gpt2agent installed
+# (pipx, pip --user, or any venv where the `gpt2agent` CLI is on PATH).
 set -euo pipefail
 
-PYTHON="/home/robot/.local/share/pipx/venvs/gpt2agent/bin/python"
+if command -v gpt2agent >/dev/null 2>&1; then
+  PYTHON="$(head -1 "$(command -v gpt2agent)" | sed 's|^#!||' | awk '{print $1}')"
+fi
+PYTHON="${PYTHON:-$HOME/.local/share/pipx/venvs/gpt2agent/bin/python}"
 SCRIPT="$(dirname "$(readlink -f "$0")")/deep_research.py"
 
 if [ ! -x "$PYTHON" ]; then
-  echo "error: gpt2agent not installed at $PYTHON" >&2
+  echo "error: cannot find a Python with gpt2agent installed" >&2
+  echo "       (looked at: \$PATH gpt2agent CLI shebang, then $HOME/.local/share/pipx/venvs/gpt2agent/bin/python)" >&2
   echo "fix:   pipx install git+https://github.com/robotlearning123/gpt2agent.git" >&2
   exit 1
 fi
