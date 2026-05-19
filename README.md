@@ -28,7 +28,7 @@ Works with Claude Code, Codex CLI, and any client that speaks the MCP protocol o
 ## Install — one line
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/robotlearning123/chatgpt2agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/install.sh | bash
 ```
 
 That command:

@@ -8,7 +8,7 @@ SCRIPT="$(dirname "$(readlink -f "$0")")/deep_research.py"
 
 if [ ! -x "$PYTHON" ]; then
   echo "error: gpt2agent not installed at $PYTHON" >&2
-  echo "fix:   pipx install git+https://github.com/robotlearning123/chatgpt2agent.git" >&2
+  echo "fix:   pipx install git+https://github.com/robotlearning123/gpt2agent.git" >&2
   exit 1
 fi
 if [ ! -f ~/.codex/auth.json ]; then

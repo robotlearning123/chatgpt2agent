@@ -42,7 +42,7 @@ gpt2agent = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/robotlearning123/chatgpt2agent"
-Repository = "https://github.com/robotlearning123/chatgpt2agent"
-Changelog = "https://github.com/robotlearning123/chatgpt2agent/blob/main/CHANGELOG.md"
-Issues = "https://github.com/robotlearning123/chatgpt2agent/issues"
+Homepage = "https://github.com/robotlearning123/gpt2agent"
+Repository = "https://github.com/robotlearning123/gpt2agent"
+Changelog = "https://github.com/robotlearning123/gpt2agent/blob/main/CHANGELOG.md"
+Issues = "https://github.com/robotlearning123/gpt2agent/issues"

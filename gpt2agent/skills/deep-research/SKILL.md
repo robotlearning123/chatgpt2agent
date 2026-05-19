@@ -25,7 +25,7 @@ pipx Python (bypasses MCP — works even before Claude Code session restart).
 
 ```bash
 test -x /home/robot/.local/share/pipx/venvs/gpt2agent/bin/python || \
-  echo "gpt2agent not installed; run: pipx install git+https://github.com/robotlearning123/chatgpt2agent.git"
+  echo "gpt2agent not installed; run: pipx install git+https://github.com/robotlearning123/gpt2agent.git"
 test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
 ~/.claude/skills/deep-research/bin/quota.sh   # prints remaining DR quota
 ```
@@ -95,7 +95,7 @@ is always empty. This script reconstructs the report from progress events
 but cannot recover citation URLs. The light `deep_research` path is
 unaffected — use it when citations matter.
 
-Upstream tracking: see `/home/robot/workspace/47-chatgpt2agent/chatgpt2agent/gpt2agent/sse.py`
+Upstream tracking: see `/home/robot/workspace/47-chatgpt2agent/gpt2agent/gpt2agent/sse.py`
 around the `_emit_done` / `_apply_path('/message/status', ...)` logic.
 
 ## Quota management

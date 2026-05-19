@@ -2,7 +2,7 @@
 # gpt2agent — one-line installer.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/robotlearning123/chatgpt2agent/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/install.sh | bash
 #   ./install.sh                                          # from a checkout
 #   ./install.sh --client claude-code                     # install for one client only
 #   ./install.sh --transport http --port 9000             # use HTTP transport
@@ -97,7 +97,7 @@ else
   info "Installing $SOURCE from PyPI"
   if ! pipx install --force "$SOURCE" 2>&1; then
     err "PyPI install failed. If the release isn't published yet, run:"
-    err "  $0 --source git+https://github.com/robotlearning123/chatgpt2agent.git"
+    err "  $0 --source git+https://github.com/robotlearning123/gpt2agent.git"
     exit 1
   fi
 fi
