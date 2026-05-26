@@ -279,6 +279,7 @@ class ConversationClient:
 
             current_msg_id: str | None = None
             last_text = ""
+            _conversation_id: str | None = None
 
             def _reset_if_new_msg(msg_id: str | None) -> bool:
                 """Return True if this frame starts a new message (caller must not dedupe)."""
@@ -304,6 +305,11 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+
+                # Capture conversation_id from any event that carries it
+                cid = obj.get("conversation_id")
+                if cid and not _conversation_id:
+                    _conversation_id = cid
 
                 # Format A: v-patch (live streaming mode)
                 v = obj.get("v")
@@ -364,6 +370,10 @@ class ConversationClient:
                     yield new
                     last_text = new
 
+            # Emit conversation_id for complete() to use (agent mode async detection)
+            if _conversation_id:
+                yield {"_conversation_id": _conversation_id}
+
     async def complete(
         self,
         model: str,
@@ -373,10 +383,66 @@ class ConversationClient:
         temporary: bool = True,
     ) -> str:
         chunks: list[str] = []
-        async for chunk in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
-            chunks.append(chunk)
-        return "".join(chunks)
+        conv_id: str | None = None
+        async for event in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
+            if isinstance(event, dict) and event.get("_conversation_id"):
+                conv_id = event["_conversation_id"]
+            else:
+                chunks.append(event)
+        text = "".join(chunks)
 
+        # Agent mode: stream ends immediately with async_status, response arrives later
+        if not text and conv_id:
+            text = await self._poll_async_response(conv_id)
+
+        return text
+
+    async def _poll_async_response(
+        self,
+        conversation_id: str,
+        poll_interval: float = 3.0,
+        max_wait: float = 300.0,
+    ) -> str:
+        """Poll for async agent-mode response after SSE stream ends with async_status."""
+        detail_path = f"/backend-api/conversation/{conversation_id}"
+        deadline = time.monotonic() + max_wait
+
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                det = await asyncio.to_thread(self._backend.get, detail_path)
+            except Exception as exc:
+                _log.warning("Agent poll error (%s) — continuing", exc)
+                continue
+
+            mapping = (det or {}).get("mapping") or {}
+            # Find the latest assistant message with text content
+            best_text = ""
+            best_time = 0
+            for node in mapping.values():
+                msg = (node or {}).get("message")
+                if not isinstance(msg, dict):
+                    continue
+                role = (msg.get("author") or {}).get("role", "")
+                if role != "assistant":
+                    continue
+                content = msg.get("content") or {}
+                ct = content.get("content_type", "")
+                if ct not in ("text", "multimodal_text"):
+                    continue
+                parts = content.get("parts") or []
+                str_parts = [p for p in parts if isinstance(p, str)]
+                if str_parts and msg.get("status") == "finished_successfully":
+                    t = msg.get("create_time") or 0
+                    if t > best_time:
+                        best_time = t
+                        best_text = str_parts[0]
+
+            if best_text:
+                return best_text
+
+        _log.warning("Agent poll timed out after %ss for %s", max_wait, conversation_id)
+        return ""
     async def image_gen(
         self,
         prompt: str,
