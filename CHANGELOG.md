@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
-## [0.0.2] - 2026-05-15
+## [0.0.2] - 2026-05-26
 
 ### Renamed — `openai-mcp` → `gpt2agent`
 
@@ -128,6 +128,29 @@ mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
 - Tool table reorganized by category (chat, account, memory, codex).
 - Removed dead `image_gen` placeholder from `server.py` (kept as a tracked
   future PR in CHANGELOG instead of in source).
+- **25 MCP tools** (up from 19). New tools: `generate_image`, `code_interpreter`,
+  `canvas_execute`, `get_conversation`, `get_file_info`, `get_file_download_url`.
+- `list_models` returns full metadata: capabilities, enabled_tools, thinking_efforts, tags.
+- `list_tasks` returns full metadata: prompt, conversation_id, image_gen_message, interruptions_disabled.
+- `conv` singleton passed to tool modules — eliminates redundant sentinel token fetches.
+- Image poll loop has exponential backoff (max 5 consecutive errors before raising).
+- `temporary` param added to `_build_payload`, `stream`, `complete` — tools that need
+  persistent conversations (image gen, code interpreter, canvas, agent, memory) pass `temporary=False`.
+
+### Fixed (post-review)
+
+- `history_and_training_disabled=True` blocked image gen, code interpreter, and canvas —
+  new `temporary` param lets tools opt into persistent conversations.
+- `tool_call` crashed on SSE frames with `content: null` — null-safety fix (`or {}`).
+- `agent()` used `temporary=True`, silently disabling browsing and code execution — now `False`.
+- `memory_create_via_chat` used `temporary=True`, preventing memory persistence — now `False`.
+- `generate_image` sync HTTP calls blocked the async event loop — wrapped in `asyncio.to_thread`.
+- `image_gen` SSE timeout was 120s (too short for complex prompts) — increased to 300s.
+- `sediment://` stripping used global `replace` instead of `removeprefix`.
+- `tool_call` returned empty text when stream lacked `finished_successfully` —
+  added `text_parts` fallback: `last_text or "".join(text_parts)`.
+- `conversations.py` syntax error (missing `return`) crashed all tool registration.
+- `list_conversations` and `list_tasks` crash on API returning JSON `null` — added `or {}` safety.
 
 ## [0.0.1] - 2026-04-24
 
