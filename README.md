@@ -13,7 +13,7 @@ feature — inside Claude Code, Codex, and any MCP client.
 
 ## What it does
 
-gpt2agent exposes **19 MCP tools** that forward requests directly to ChatGPT's backend API.
+gpt2agent exposes **25 MCP tools** that forward requests directly to ChatGPT's backend API.
 No proxy process. No separate account. No platform API key. Your `codex login`,
 your token, your quota.
 
@@ -107,7 +107,7 @@ calls don't 401 mid-flight.
 
 ---
 
-## Tools (19)
+## Tools (25)
 
 ### Chat & reasoning
 
@@ -119,13 +119,29 @@ calls don't 401 mid-flight.
 | `deep_research_heavy` | Long-form DR via `gpt-5-5-pro` + connector (5–30 min, monthly quota). Configurable via `[models].heavy_dr` |
 | `gpt_chat` | Talk through one of your private Custom GPTs (`g-p-*`) — *experimental* |
 
+### Image & file management
+
+| Tool | What it does |
+|---|---|
+| `generate_image` | Generate images via ChatGPT's built-in DALL-E. Returns download URLs + metadata |
+| `get_file_info` | Metadata for any ChatGPT file (images, uploads) |
+| `get_file_download_url` | Temporary download URL for a ChatGPT file (~1h expiry) |
+
+### Code execution
+
+| Tool | What it does |
+|---|---|
+| `code_interpreter` | Run Python in ChatGPT's sandbox. Returns output + any generated charts/images |
+| `canvas_execute` | Execute code via ChatGPT's Canvas feature (live editing environment) |
+
 ### Account introspection
 
 | Tool | What it does |
 |---|---|
 | `account_status` | Plan, country, MFA, feature count, subscription expiry |
-| `list_models` | All models on your account (slug, max_tokens, reasoning_type) |
+| `list_models` | All models on your account (slug, max_tokens, reasoning_type, capabilities, enabled_tools) |
 | `list_conversations` | Recent ChatGPT conversations (PII redacted) |
+| `get_conversation` | Full message history for a specific conversation (multimodal, code, images) |
 | `list_tasks` | Scheduled / completed ChatGPT tasks |
 | `list_apps` | Connected apps + connectors |
 | `list_custom_gpts` | Your private `g-p-*` GPTs |
@@ -166,7 +182,8 @@ refresh propagates transparently. See [NOTICES](./NOTICES.md) for attribution.
    curl_cffi  →  chatgpt.com /backend-api/{conversation,f/conversation,me,
                                           models, memories, codex, gizmos, ...}
         |
-   19 MCP tools  (chat, agent, DR ×2, GPT chat, memory r/w,
+   25 MCP tools  (chat, agent, DR ×2, GPT chat, image gen,
+                  code interpreter, canvas, memory r/w,
                   instructions r/w, codex r/w, account introspect)
 ```
 
@@ -193,9 +210,8 @@ heavy_dr = "gpt-5-5-pro"    # override slug for deep_research_heavy
 
 - **Deep Research quota:** ~248 requests / monthly cycle on Pro; lower on Plus.
 - **Account-tier features unavailable in 0.0.2:** Sora video, Operator/CUA, voice
-  sessions, image generation (`gpt-image-2`), code interpreter, and canvas
-  execution. These use HTTP endpoints that return 404 (Sora/Operator/voice) or
-  haven't yet been reverse-engineered out of the chatgpt.com web bundle.
+  sessions. These use HTTP endpoints that return 404 or haven't yet been
+  reverse-engineered out of the chatgpt.com web bundle.
 - **`gpt_chat`** is experimental — `gizmo_id` payload field verified against
   web traffic but not load-tested across all g-p-* types.
 - Requires an active ChatGPT Plus or Pro subscription.
