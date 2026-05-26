@@ -15,7 +15,7 @@ import pytest
     reason="~/.codex/auth.json not present",
 )
 def test_account_status_has_subscription() -> None:
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
     client = BackendClient()
 

@@ -1,4 +1,4 @@
-"""openai-mcp setup wizard — one command, done."""
+"""gpt2agent setup wizard — one command, done."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def _token_from_codex() -> str | None:
 
 
 def _token_from_saved() -> str | None:
-    p = Path.home() / ".openai-mcp" / "token.json"
+    p = Path.home() / ".gpt2agent" / "token.json"
     if not p.exists():
         return None
     try:
@@ -96,11 +96,11 @@ def get_token() -> str:
     if t := _token_via_manual():
         ok("Token received")
         return t
-    raise SystemExit("Login cancelled. Re-run: openai-mcp setup")
+    raise SystemExit("Login cancelled. Re-run: gpt2agent setup")
 
 
 def save_token(token: str) -> None:
-    d = Path.home() / ".openai-mcp"
+    d = Path.home() / ".gpt2agent"
     d.mkdir(exist_ok=True)
     (d / "token.json").write_text(json.dumps({"access_token": token}))
 
@@ -111,7 +111,7 @@ def save_token(token: str) -> None:
 def detect_plan() -> str:
     """Probe chatgpt.com/backend-api/me via BackendClient. Returns pro/plus/free."""
     try:
-        from openai_mcp.backend import BackendClient
+        from gpt2agent.backend import BackendClient
 
         bc = BackendClient()
         acct = bc.get("/backend-api/accounts/check/v4-2023-04-27")
@@ -129,7 +129,7 @@ def detect_plan() -> str:
 
 # ── MCP server ───────────────────────────────────────────────────────────────
 
-MCP_CONFIG_PATH = Path.home() / ".openai-mcp" / "config.toml"
+MCP_CONFIG_PATH = Path.home() / ".gpt2agent" / "config.toml"
 MCP_PORT = 9000
 
 
@@ -162,9 +162,9 @@ def ensure_mcp_server() -> None:
         ok(f"MCP server already running on :{MCP_PORT}")
         return
 
-    log = open(Path.home() / ".openai-mcp" / "mcp.log", "w")
+    log = open(Path.home() / ".gpt2agent" / "mcp.log", "w")
     subprocess.Popen(
-        [sys.executable, "-m", "openai_mcp.server", "--config", str(MCP_CONFIG_PATH)],
+        [sys.executable, "-m", "gpt2agent.server", "--config", str(MCP_CONFIG_PATH)],
         stdout=log,
         stderr=log,
         start_new_session=True,
@@ -176,7 +176,7 @@ def ensure_mcp_server() -> None:
             return
         time.sleep(1)
 
-    raise SystemExit("MCP server failed to start. Check ~/.openai-mcp/mcp.log")
+    raise SystemExit("MCP server failed to start. Check ~/.gpt2agent/mcp.log")
 
 
 def ensure_launchagent() -> None:
@@ -184,9 +184,9 @@ def ensure_launchagent() -> None:
     if platform.system() != "Darwin":
         return
 
-    label = "com.user.openai-mcp"
+    label = "com.user.gpt2agent"
     plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
-    binary = shutil.which("openai-mcp") or sys.executable
+    binary = shutil.which("gpt2agent") or sys.executable
 
     cmd = (
         f"        <string>{binary}</string>\n"
@@ -203,8 +203,8 @@ def ensure_launchagent() -> None:
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{Path.home()}/.openai-mcp/mcp.log</string>
-    <key>StandardErrorPath</key><string>{Path.home()}/.openai-mcp/mcp.log</string>
+    <key>StandardOutPath</key><string>{Path.home()}/.gpt2agent/mcp.log</string>
+    <key>StandardErrorPath</key><string>{Path.home()}/.gpt2agent/mcp.log</string>
 </dict></plist>""")
 
     subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
@@ -263,7 +263,7 @@ def print_summary(plan: str) -> None:
     print("    list_codex_envs, list_codex_tasks")
     print("    list_custom_gpts, list_conversations, list_tasks, list_apps")
     print()
-    print("  Logs:   ~/.openai-mcp/mcp.log")
+    print("  Logs:   ~/.gpt2agent/mcp.log")
     print()
 
 
@@ -271,7 +271,7 @@ def print_summary(plan: str) -> None:
 
 
 def run_setup() -> None:
-    print(f"\n{BOLD}openai-mcp setup{RESET}")
+    print(f"\n{BOLD}gpt2agent setup{RESET}")
     print("Use your ChatGPT Plus/Pro in Claude Code and other AI tools.\n")
 
     try:

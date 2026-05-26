@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
-from openai_mcp._vendored import pow as _pow
-from openai_mcp._vendored import turnstile as _turn
+from gpt2agent._vendored import pow as _pow
+from gpt2agent._vendored import turnstile as _turn
 
 if TYPE_CHECKING:
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
 _log = logging.getLogger(__name__)
 
@@ -22,26 +21,7 @@ _CHAT_UA = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
-# Matches JSON-encoded session-scoped tokens/headers so we can redact them
-# from error messages and logs.
-_SENSITIVE_KEY_RE = re.compile(
-    r'"(Openai-Sentinel-[A-Za-z-]+-Token|Authorization|OAI-[A-Za-z-]+)"\s*:\s*"[^"]*"',
-    re.IGNORECASE,
-)
-
-
-def _redact_error(text: str, max_len: int = 200) -> str:
-    """Truncate + redact session-scoped tokens before surfacing to the user.
-
-    Strips the values of any ``Openai-Sentinel-*-Token``, ``Authorization``,
-    or ``OAI-*`` header-shaped substrings, then truncates to ``max_len``.
-    """
-    if not isinstance(text, str):
-        text = str(text)
-    cleaned = _SENSITIVE_KEY_RE.sub(r'"\1":"<REDACTED>"', text)
-    if len(cleaned) > max_len:
-        cleaned = cleaned[:max_len] + "...[truncated]"
-    return cleaned
+from gpt2agent._log_redact import redact_error as _redact_error  # noqa: F401
 
 
 class SentinelGate:

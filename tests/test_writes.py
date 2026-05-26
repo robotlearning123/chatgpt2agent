@@ -28,7 +28,7 @@ _skip_live = pytest.mark.skipif(
 @_skip_live
 def test_custom_instructions_roundtrip() -> None:
     """Read current instructions, POST back the same values, verify 200 + fields match."""
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
     client = BackendClient()
 
@@ -60,7 +60,7 @@ def test_custom_instructions_roundtrip() -> None:
 @_needs_auth
 def test_memory_add_safe() -> None:
     """POST /backend-api/memories — currently returns 405, documents the finding."""
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
     client = BackendClient()
     # Confirmed 2026-04-23: POST → 405 Method Not Allowed, Allow: GET only.
@@ -69,7 +69,7 @@ def test_memory_add_safe() -> None:
         client.post(
             "/backend-api/memories",
             json={
-                "content": "Testing chatgpt2agent write path — created 2026-04-23, can be deleted."
+                "content": "Testing gpt2agent write path — created 2026-04-23, can be deleted."
             },
             target_path="/backend-api/memories",
         )
@@ -79,7 +79,7 @@ def test_memory_add_safe() -> None:
 @_needs_auth
 def test_codex_task_create() -> None:
     """Create a Codex task on robotlearning123/mujoco-mcp (low-risk env)."""
-    from openai_mcp.backend import BackendClient
+    from gpt2agent.backend import BackendClient
 
     client = BackendClient()
 
@@ -107,7 +107,7 @@ def test_codex_task_create() -> None:
                     "content": [
                         {
                             "content_type": "text",
-                            "text": "probe-chatgpt2agent-DELETE-ME: echo hello",
+                            "text": "probe-gpt2agent-DELETE-ME: echo hello",
                         }
                     ],
                 }

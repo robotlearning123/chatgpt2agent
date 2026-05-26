@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-from openai_mcp.backend import BackendClient
-from openai_mcp.tools import (
+from gpt2agent.backend import BackendClient
+from gpt2agent.tools import (
     account,
     apps,
     codex,
     conversations,
     gpts,
+    images,
     instructions,
     memory,
+    tools_features,
     writes,
 )
 
 
-def register_all(mcp, client: BackendClient) -> None:
+def register_all(mcp, client: BackendClient, conv=None) -> None:
     """Register every backend tool on *mcp*."""
     account.register(mcp, client)
     memory.register(mcp, client)
@@ -23,3 +25,5 @@ def register_all(mcp, client: BackendClient) -> None:
     conversations.register(mcp, client)
     apps.register(mcp, client)
     writes.register(mcp, client)
+    images.register(mcp, client, conv)
+    tools_features.register(mcp, client, conv)

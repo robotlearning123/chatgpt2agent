@@ -10,8 +10,8 @@ This project includes portions of code from:
 - **Copyright:** Copyright (c) 2024 aurora-develop
 - **Source:** https://github.com/lanqian528/chat2api
 - **Files derived from upstream:**
-  - `openai_mcp/_vendored/pow.py` — ported from `chatgpt/proofofWork.py`
-  - `openai_mcp/_vendored/turnstile.py` — ported from `chatgpt/turnstile.py`
+  - `gpt2agent/_vendored/pow.py` — ported from `chatgpt/proofofWork.py`
+  - `gpt2agent/_vendored/turnstile.py` — ported from `chatgpt/turnstile.py`
 
 **Modifications:** removed `diskcache`, `pybase64`, `ua_generator`, and `utils.*`
 dependencies in favor of the Python standard library; reduced to the minimum
@@ -46,7 +46,7 @@ SOFTWARE.
 ---
 
 NOTE ON LICENSING: Portions of this project (vendored solver code in
-`openai_mcp/_vendored/`) are under the MIT License as reproduced above.
+`gpt2agent/_vendored/`) are under the MIT License as reproduced above.
 The rest of the project is under the terms in `LICENSE`. Downstream users
 of the vendored files may continue to use them under MIT regardless of any
 additional restrictions the containing project imposes on its original code.

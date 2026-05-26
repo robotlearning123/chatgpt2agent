@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from openai_mcp.backend import BackendClient
-from openai_mcp.tools._redact import redact
+from gpt2agent.backend import BackendClient
+from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:
@@ -28,7 +28,7 @@ def register(mcp, client: BackendClient) -> None:
 
     @mcp.tool()
     def list_models() -> list:
-        """Return all available ChatGPT models."""
+        """Return all available ChatGPT models with full metadata."""
         data = client.get(
             "/backend-api/models?history_and_training_disabled=false",
             target_path="/backend-api/models",
@@ -37,8 +37,14 @@ def register(mcp, client: BackendClient) -> None:
             {
                 "slug": m.get("slug"),
                 "title": m.get("title"),
+                "description": m.get("description"),
                 "max_tokens": m.get("max_tokens"),
                 "reasoning_type": m.get("reasoning_type"),
+                "thinking_efforts": m.get("thinking_efforts"),
+                "tags": m.get("tags"),
+                "capabilities": m.get("capabilities"),
+                "enabled_tools": m.get("enabled_tools"),
+                "product_features_keys": m.get("product_features_keys"),
             }
             for m in (data.get("models") or [])
         ]

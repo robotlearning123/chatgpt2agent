@@ -15,14 +15,16 @@ _CLIENT_VERSION = "prod-be885abbfcfe7b1f511e88b3003d9ee44757fbad"
 _CLIENT_BUILD = "5955942"
 
 
-def _load_token() -> str:
-    """Load the ChatGPT bearer token from either codex login or the setup wizard.
+def _load_token_with_source() -> tuple[str, Path | None]:
+    """Load the ChatGPT bearer token and return its source file for mtime tracking.
 
     Search order:
       1. ``~/.codex/auth.json`` with ``tokens.access_token`` (codex login)
-      2. ``~/.openai-mcp/token.json`` with ``token`` (flat) OR
-         ``tokens.access_token`` (nested) — written by ``openai-mcp setup``
+      2. ``~/.gpt2agent/token.json`` with ``token`` (flat) OR
+         ``tokens.access_token`` (nested) — written by ``gpt2agent setup``
 
+    Returns (token, source_path). source_path is the file we read; callers
+    can stat it later to detect codex's background refresh and reload.
     Raises RuntimeError only if neither source yields a token.
     """
     # Source 1: codex login
@@ -33,13 +35,13 @@ def _load_token() -> str:
             data = json.loads(codex_path.read_text())
             token = (data.get("tokens") or {}).get("access_token")
             if token:
-                return token
+                return token, codex_path
             codex_err = "tokens.access_token missing in ~/.codex/auth.json"
         except (json.JSONDecodeError, OSError) as exc:
             codex_err = f"Failed to read ~/.codex/auth.json: {exc}"
 
-    # Source 2: openai-mcp setup wizard
-    wizard_path = Path.home() / ".openai-mcp" / "token.json"
+    # Source 2: gpt2agent setup wizard
+    wizard_path = Path.home() / ".gpt2agent" / "token.json"
     wizard_err: str | None = None
     if wizard_path.exists():
         try:
@@ -51,22 +53,27 @@ def _load_token() -> str:
                 or (data.get("tokens") or {}).get("access_token")
             )
             if token:
-                return token
-            wizard_err = "token/access_token/tokens.access_token missing in ~/.openai-mcp/token.json"
+                return token, wizard_path
+            wizard_err = "token/access_token/tokens.access_token missing in ~/.gpt2agent/token.json"
         except (json.JSONDecodeError, OSError) as exc:
-            wizard_err = f"Failed to read ~/.openai-mcp/token.json: {exc}"
+            wizard_err = f"Failed to read ~/.gpt2agent/token.json: {exc}"
 
     # Nothing worked — surface the most informative error we have.
     if codex_err or wizard_err:
         details = "; ".join(e for e in (codex_err, wizard_err) if e)
         raise RuntimeError(
-            f"No ChatGPT token found — run `codex login` or `openai-mcp setup` "
+            f"No ChatGPT token found — run `codex login` or `gpt2agent setup` "
             f"({details})"
         )
     raise RuntimeError(
-        "No ChatGPT token found — run `codex login` or `openai-mcp setup` "
-        "(checked ~/.codex/auth.json and ~/.openai-mcp/token.json)"
+        "No ChatGPT token found — run `codex login` or `gpt2agent setup` "
+        "(checked ~/.codex/auth.json and ~/.gpt2agent/token.json)"
     )
+
+
+def _load_token() -> str:
+    """Back-compat shim — return only the token (no source path)."""
+    return _load_token_with_source()[0]
 
 
 _CHROME_131_UA = (
@@ -78,7 +85,12 @@ _CHROME_131_UA = (
 
 class BackendClient:
     def __init__(self) -> None:
-        token = _load_token()
+        token, source = _load_token_with_source()
+        self._token_source: Path | None = source
+        try:
+            self._token_mtime: float | None = source.stat().st_mtime if source else None
+        except OSError:
+            self._token_mtime = None
         # Keep TLS fingerprint + User-Agent aligned across backend / sentinel /
         # conversation streams. Cloudflare's bot manager cross-checks them and
         # will 403 mixed fingerprints.
@@ -98,12 +110,37 @@ class BackendClient:
             }
         )
 
+    def _reload_token_if_stale(self) -> None:
+        """Re-read the token file and update Authorization header if mtime changed.
+
+        Codex CLI auto-refreshes ``~/.codex/auth.json`` in the background. Without
+        this, multi-minute calls (heavy DR poll phase, codex task waits) can 401
+        once the in-memory bearer ages past the file's refresh.
+        """
+        if self._token_source is None:
+            return
+        try:
+            mtime = self._token_source.stat().st_mtime
+        except OSError:
+            return
+        if self._token_mtime is not None and mtime == self._token_mtime:
+            return
+        try:
+            token, _ = _load_token_with_source()
+        except RuntimeError:
+            # Keep the stale token rather than break mid-request — the next
+            # 401 will surface a clearer error to the caller.
+            return
+        self._session.headers["Authorization"] = f"Bearer {token}"
+        self._token_mtime = mtime
+
     def get(
         self,
         path: str,
         target_path: str | None = None,
         target_route: str | None = None,
     ) -> Any:
+        self._reload_token_if_stale()
         extra: dict[str, str] = {}
         if target_path is not None:
             extra["X-OpenAI-Target-Path"] = target_path
@@ -130,6 +167,7 @@ class BackendClient:
         target_path: str | None = None,
         target_route: str | None = None,
     ) -> Any:
+        self._reload_token_if_stale()
         extra: dict[str, str] = {"Content-Type": "application/json"}
         if target_path is not None:
             extra["X-OpenAI-Target-Path"] = target_path

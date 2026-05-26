@@ -4,6 +4,131 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.2] - 2026-05-15
+
+### Renamed — `openai-mcp` → `gpt2agent`
+
+The package, CLI, Python module, default MCP server-name key, and bundled
+Claude Code skill are all renamed:
+
+| Was | Now |
+|---|---|
+| PyPI `openai-mcp` | PyPI `gpt2agent` |
+| `pip install openai-mcp` | `pip install gpt2agent` |
+| `openai-mcp run --stdio` | `gpt2agent run --stdio` |
+| `openai-mcp install` | `gpt2agent install` |
+| `from openai_mcp.…` | `from gpt2agent.…` |
+| Claude Code key `mcpServers.openai` | `mcpServers.gpt2agent` |
+| Codex key `[mcp_servers.openai]` | `[mcp_servers.gpt2agent]` |
+| Skill `~/.claude/skills/openai-mcp/` | `~/.claude/skills/gpt2agent/` |
+| Config dir `~/.openai-mcp/` | `~/.gpt2agent/` |
+
+**Why:** "openai" is a registered OpenAI® trademark; PyPI may take the
+package down under their trademark policy and there's no implied
+affiliation. The new name continues the `chatgpt2agent` repo naming
+pattern (drop "chat") and reads as "GPT to agent" — i.e. the package
+makes any GPT account addressable as an agent.
+
+**Migration for users on 0.0.1 (`openai-mcp`):**
+```bash
+pipx uninstall openai-mcp
+pipx install gpt2agent
+gpt2agent install              # registers under new key in client configs
+# Optional cleanup:
+mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
+# Manually remove the stale "openai" entry from ~/.claude.json
+# mcpServers (the old binary no longer exists).
+```
+
+### Added — one-command install for popular MCP clients
+
+- `openai-mcp install` subcommand — registers openai-mcp with one or more
+  MCP-capable agent clients. Targets in 0.0.2:
+  - **Claude Code** — writes `~/.claude.json` `mcpServers.openai` entry
+    (preserves all other top-level keys, backs up to `.bak-openai-mcp`).
+  - **Codex CLI** — writes `~/.codex/config.toml` `[mcp_servers.openai]`
+    section, preserving all other sections (agents, model config, …).
+  - `--client all` (default) auto-detects which clients are installed and
+    registers with each.
+  - Idempotent: re-running yields the same final config; no duplicate
+    sections or entries.
+  - `--dry-run` prints what would change without touching files.
+  - `--transport http --http-port N` switches to an HTTP entry.
+- **Bundled Claude Code skill** at `openai_mcp/skills/deep-research/` —
+  ships in the wheel; `openai-mcp install` (or `install --client claude-code`)
+  copies it to `~/.claude/skills/deep-research/`. The skill calls
+  ConversationClient directly, so it works even before Claude Code restarts.
+- **One-line installer** (`install.sh`) — cross-platform replacement of the
+  prior macOS-only LaunchAgent script. Pipes through pipx install + codex
+  login check + `openai-mcp install`. Curl-pipe-bash friendly.
+- **GitHub Actions release workflow** (`.github/workflows/release.yml`) —
+  triggers on `v*` tags, verifies the tag matches `pyproject.toml`, runs
+  pytest across {ubuntu, macos} × {Python 3.11, 3.13}, builds wheel + sdist,
+  publishes to PyPI via OIDC trusted publishing (no token in secrets), and
+  creates a GitHub Release with the matching CHANGELOG section as body.
+  Auto-marks pre-releases when tag contains `-rc` / `-alpha` / `-beta`.
+- **CI workflow** (`.github/workflows/ci.yml`) — runs tests on push/PR to
+  main across {ubuntu, macos} × {3.10–3.13}, plus shellcheck on `install.sh`.
+
+### Added — full ChatGPT account surface
+
+- `agent` tool — ChatGPT Agent Mode (262K context, autonomous browsing + code
+  execution + tool use). Streams via the same SSE path as `chat` with
+  `model=agent-mode`.
+- `gpt_chat(gizmo_id, prompt)` tool — chat through one of your private Custom
+  GPTs (`g-p-*`). Routes via `gizmo_id` + `conversation_origin` payload fields.
+  *Experimental* — field shape reverse-engineered from chatgpt.com web bundle.
+- `memory_create_via_chat(content)` tool — workaround for `POST /backend-api/memories`
+  returning 405. Asks the model to commit content to memory and relies on
+  ChatGPT's model-initiated memory feature.
+- `[models].heavy_dr` config key — override the slug used for
+  `deep_research_heavy` (default still `gpt-5-5-pro`).
+- `[models].agent` config key — override the slug used for `agent` (default
+  `agent-mode`).
+- `deep_research` / `deep_research_heavy` gained `auto_confirm: bool = True`
+  parameter — prefixes an imperative directive so the model starts the
+  research without asking "Do you want me to proceed?".
+- Token auto-reload: `BackendClient._reload_token_if_stale()` watches the
+  mtime of `~/.codex/auth.json` and re-reads on change, so codex's background
+  refresh propagates without needing to restart the MCP server. Called before
+  every `get()` / `post()`.
+- **Multi-turn DR clarification handling** in `ConversationClient.deep_research`.
+  ChatGPT's `research` model often opens with a clarifying question instead of
+  starting research immediately ("Could you confirm…?"). The wrapper now
+  detects clarification-shaped `done` events (short text + question mark, or
+  matching phrase list), captures the conversation_id + assistant message id,
+  and auto-replies "Proceed with your best interpretation. Do not ask further
+  clarifying questions." in the same conversation thread — then continues
+  streaming until the real report. Capped at 2 rounds; surface
+  `{"type": "clarification_auto_reply", "round": N, "question": text}` events
+  so callers can see what happened. Without this, single-turn DR calls
+  terminated on the clarification question and never saw real research.
+
+### Fixed
+
+- **heavy DR returned dispatch JSON instead of the real report** — `_emit_done`
+  fired on the connector-dispatch envelope (`{"path": ".../connector_openai_deep_research/start", ...}`)
+  before the actual report started streaming. Gated with `is_connector_dispatch`
+  so the dispatch envelope's `finished_successfully` is suppressed. Real
+  report now streams correctly (test: `tests/test_heavy_dr_parser.py`).
+- **`Research is not currently supported in temporary chats`** — both DR payload
+  builders were forcing `history_and_training_disabled = True`, which marks the
+  conversation as Temporary Chat. ChatGPT server then rejected DR. Both DR
+  paths now set this field to `False` (regular `chat` keeps `True` for privacy).
+- **Quota probe blocked the asyncio event loop** — `init_data = self._backend.post(...)`
+  is a synchronous `curl_cffi` call; wrapped in `asyncio.to_thread`.
+- **Backend tool registration failures hid the cause** — `server.py` was
+  catching `Exception` with `logging.warning` (no traceback). Switched to
+  `logging.exception` so import / auth / wiring errors are diagnosable.
+
+### Changed
+
+- README repositioned around the `codex login` story — full account access in
+  any MCP client with zero extra credentials.
+- Tool table reorganized by category (chat, account, memory, codex).
+- Removed dead `image_gen` placeholder from `server.py` (kept as a tracked
+  future PR in CHANGELOG instead of in source).
+
 ## [0.0.1] - 2026-04-24
 
 ### Added

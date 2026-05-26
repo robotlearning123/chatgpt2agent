@@ -21,8 +21,8 @@ _SKIP_LIVE = os.environ.get("SKIP_LIVE", "1") == "1"
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 — set SKIP_LIVE=0 to run live")
 def test_deep_research_yields_done_event():
     """DR stream must emit at least one 'done' event with non-empty text."""
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
     events: list[dict] = []
@@ -44,8 +44,8 @@ def test_deep_research_yields_done_event():
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 — set SKIP_LIVE=0 to run live")
 def test_deep_research_emits_tool_events():
     """DR stream should emit at least one 'tool' event (search call)."""
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
     events: list[dict] = []
@@ -71,8 +71,8 @@ def test_deep_research_emits_tool_events():
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 — set SKIP_LIVE=0 to run live")
 def test_deep_research_has_content_references():
     """Completed DR response should include web source references."""
-    from openai_mcp.backend import BackendClient
-    from openai_mcp.sse import ConversationClient
+    from gpt2agent.backend import BackendClient
+    from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
     events: list[dict] = []
@@ -97,13 +97,15 @@ def test_deep_research_has_content_references():
 
 def test_build_dr_payload_shape():
     """Unit test: _build_dr_payload produces correct model + system_hints."""
-    from openai_mcp.sse import _build_dr_payload, DR_MODEL
+    from gpt2agent.sse import _build_dr_payload, DR_MODEL
 
     payload = _build_dr_payload("test query")
     assert payload["model"] == DR_MODEL == "research"
     assert payload["system_hints"] == ["research"]
     assert payload["conversation_mode"] == {"kind": "primary_assistant"}
     assert payload["force_use_sse"] is True
-    assert payload["history_and_training_disabled"] is True
+    # DR requires persistent conversation; "temporary chats" reject DR with
+    # "Research is not currently supported in temporary chats".
+    assert payload["history_and_training_disabled"] is False
     assert len(payload["messages"]) == 1
     assert payload["messages"][0]["content"]["parts"][0] == "test query"

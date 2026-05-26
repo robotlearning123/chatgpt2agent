@@ -1,0 +1,1339 @@
+"""Native SSE client for /backend-api/conversation — no proxy required."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from typing import AsyncIterator
+from uuid import uuid4
+
+from curl_cffi.requests import AsyncSession
+
+from gpt2agent.backend import BackendClient, _BASE
+from gpt2agent.sentinel import SentinelGate  # noqa: F401  (used in stream)
+
+_log = logging.getLogger(__name__)
+
+_CONV_URL = _BASE + "/backend-api/conversation"
+
+from gpt2agent._log_redact import redact_error as _redact_error  # noqa: F401
+
+
+def _safe_body(resp: object) -> str:
+    try:
+        text = getattr(resp, "text", "") or ""
+    except Exception:
+        return ""
+    return _redact_error(text) if text else ""
+
+
+# /backend-api/f/conversation — the frontend-facing endpoint used by the web app.
+# Required for Deep Research heavy path; regular /conversation also works for normal chat.
+_F_CONV_URL = _BASE + "/backend-api/f/conversation"
+
+#: Model slug for legacy Deep Research (resolves to i-mini-m / web-search backend)
+DR_MODEL = "research"
+
+#: Model slug for heavy Deep Research — gpt-5-5-pro with extended thinking + DR connector
+HEAVY_DR_MODEL = "gpt-5-5-pro"
+
+#: System hint for heavy Deep Research (connector identifier from chatgpt.com frontend)
+HEAVY_DR_HINT = "connector:connector_openai_deep_research"
+
+
+def _build_payload(
+    model: str,
+    messages: list[dict],
+    *,
+    gizmo_id: str | None = None,
+    temporary: bool = True,
+) -> dict:
+    payload: dict = {
+        "action": "next",
+        "messages": [
+            {
+                "id": str(uuid4()),
+                "author": {"role": m["role"]},
+                "content": {"content_type": "text", "parts": [m["content"]]},
+            }
+            for m in messages
+        ],
+        "parent_message_id": str(uuid4()),
+        "model": model,
+        "conversation_mode": {"kind": "primary_assistant"},
+        "force_paragen": False,
+        "force_rate_limit": False,
+        "force_use_sse": True,
+        "timezone_offset_min": -480,
+        "history_and_training_disabled": temporary,
+        "system_hints": [],
+    }
+    if gizmo_id:
+        payload["gizmo_id"] = gizmo_id
+        payload["conversation_origin"] = {"type": "custom_gpt", "gizmo_id": gizmo_id}
+    return payload
+
+
+def _build_dr_payload(
+    query: str,
+    *,
+    conversation_id: str | None = None,
+    parent_message_id: str | None = None,
+) -> dict:
+    """Build payload for legacy Deep Research: model=research + system_hints=['research'].
+
+    This resolves to i-mini-m (web-search/SearchGPT backend), NOT the Pro-tier
+    multi-section deep research.  Use _build_heavy_dr_payload() for the full DR.
+
+    NOTE: history_and_training_disabled must be False here. ChatGPT refuses
+    Deep Research in "temporary chats" (the True setting), returning
+    "Research is not currently supported in temporary chats". DR requires a
+    persistent conversation so the connector can poll for the final report.
+
+    When ``conversation_id`` + ``parent_message_id`` are supplied, the payload
+    continues an existing conversation — used by multi-turn clarification
+    handling in ``ConversationClient.deep_research``.
+    """
+    payload = _build_payload(DR_MODEL, [{"role": "user", "content": query}])
+    payload["system_hints"] = ["research"]
+    payload["history_and_training_disabled"] = False
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if parent_message_id:
+        payload["parent_message_id"] = parent_message_id
+    return payload
+
+
+_CLARIFICATION_HINTS = (
+    "could you confirm",
+    "could you clarify",
+    "could you tell me",
+    "would you like",
+    "do you want me",
+    "shall i proceed",
+    "before i start",
+    "before i begin",
+    "to make sure",
+    "to ensure i",
+    "i'd like to clarif",
+    "i'd like to confirm",
+    "can you specify",
+    "just one key clarif",
+    "one quick clarif",
+    "one clarif",
+    "a quick question",
+    "i have one question",
+    "i need to confirm",
+)
+
+_DR_AUTO_PROCEED = (
+    "Proceed with your best interpretation of any ambiguity. "
+    "Do not ask further clarifying questions. Begin the research now."
+)
+
+
+def _looks_like_clarification(text: str) -> bool:
+    """Heuristic: does this assistant 'done' text look like a clarification request?
+
+    Matches a curated phrase list ("could you confirm", "before I start", "just
+    one key clarification", "shall I proceed", etc.). The earlier "short text
+    ending in ?" branch was removed — real reports often end with rhetorical
+    questions, and triggering an auto-proceed on a real report wastes a round
+    and can corrupt the conversation. The phrase list is conservative; if a
+    clarification slips through, the caller still gets the question text and
+    can re-invoke explicitly.
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    lower = stripped.lower()
+    return any(p in lower for p in _CLARIFICATION_HINTS)
+
+
+def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
+    """Build payload for heavy Deep Research — the true Pro-tier 5–30 min DR path.
+
+    Ground-truth reverse-engineered from chatgpt.com/deep-research browser traffic
+    (2026-04-23).  Key differences from legacy DR:
+
+    * URL target: /backend-api/f/conversation  (frontend endpoint)
+    * model: gpt-5-5-pro
+    * system_hints: ["connector:connector_openai_deep_research"]
+    * thinking_effort: "extended"
+    * message.metadata contains deep_research_version / venus_model_variant / caterpillar fields
+
+    The server_ste_metadata from the SSE stream will show tool_name="ApiToolWrapper"
+    and tool_invoked=true, confirming the DR connector fired.  The resolved_model_slug
+    in the user-message echo is "i-mini-m" (the orchestration layer); the actual heavy
+    reasoning runs as a background tool call inside the connector.
+
+    Rate-limited by the "deep_research" feature quota (248 uses / reset cycle for Pro).
+    """
+    msg_id = str(uuid4())
+    return {
+        "action": "next",
+        "messages": [
+            {
+                "id": msg_id,
+                "author": {"role": "user"},
+                "create_time": time.time(),
+                "content": {"content_type": "text", "parts": [query]},
+                "metadata": {
+                    "caterpillar_selected_sources": [],
+                    "developer_mode_connector_ids": [],
+                    "selected_mcp_sources": [],
+                    "selected_sources": [],
+                    "selected_github_repos": [],
+                    "selected_all_github_repos": False,
+                    "system_hints": [HEAVY_DR_HINT],
+                    "deep_research_version": "standard",
+                    "venus_model_variant": "standard",
+                    "serialization_metadata": {"custom_symbol_offsets": []},
+                    "user_timezone": "UTC",
+                },
+            }
+        ],
+        "parent_message_id": str(uuid4()),
+        "model": model or HEAVY_DR_MODEL,
+        "client_prepare_state": "success",
+        "timezone_offset_min": -480,
+        "timezone": "UTC",
+        "conversation_mode": {"kind": "primary_assistant"},
+        "enable_message_followups": True,
+        "system_hints": [HEAVY_DR_HINT],
+        "thinking_effort": "extended",
+        "supports_buffering": True,
+        "supported_encodings": ["v1"],
+        "force_parallel_switch": "auto",
+        "paragen_cot_summary_display_override": "allow",
+        # MUST be False — Deep Research is rejected by the server in
+        # "temporary chats" ("Research is not currently supported in temporary chats").
+        # DR also depends on the conversation persisting so Phase 2 polling
+        # at /backend-api/conversation/{id} can fetch the final report.
+        "history_and_training_disabled": False,
+        "force_use_sse": True,
+    }
+
+
+class ConversationClient:
+    def __init__(self, backend: BackendClient) -> None:
+        self._backend = backend
+
+    async def stream(
+        self,
+        model: str,
+        messages: list[dict],
+        tools: list | None = None,
+        *,
+        gizmo_id: str | None = None,
+        temporary: bool = True,
+    ) -> AsyncIterator[str]:
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_payload(model, messages, gizmo_id=gizmo_id, temporary=temporary)
+        if tools:
+            payload["tools"] = tools
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL,
+                headers=headers,
+                json=payload,
+                timeout=300,
+                stream=True,
+            )
+            if resp.status_code == 401:
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    "401 Unauthorized — run `codex login`"
+                    + (f": {body}" if body else "")
+                )
+            if resp.status_code == 403:
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    "403 Forbidden — token may have expired"
+                    + (f": {body}" if body else "")
+                )
+            if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from /backend-api/conversation"
+                    + (f": {body}" if body else "")
+                )
+
+            current_msg_id: str | None = None
+            last_text = ""
+
+            def _reset_if_new_msg(msg_id: str | None) -> bool:
+                """Return True if this frame starts a new message (caller must not dedupe)."""
+                nonlocal current_msg_id, last_text
+                if msg_id and msg_id != current_msg_id:
+                    current_msg_id = msg_id
+                    last_text = ""
+                    return True
+                return False
+
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                # Format A: v-patch (live streaming mode)
+                v = obj.get("v")
+                if v is not None:
+                    if isinstance(v, str):
+                        # String v-patch — continuation of current message id
+                        if v:
+                            yield v
+                            last_text += v
+                        continue
+                    if isinstance(v, dict):
+                        msg_id = v.get("message", {}).get("id")
+                        is_new = _reset_if_new_msg(msg_id)
+                        parts = v.get("message", {}).get("content", {}).get("parts", [])
+                        if parts and isinstance(parts[0], str):
+                            new = parts[0]
+                            if is_new:
+                                # New message — yield fresh, don't dedupe against prior stream
+                                if new:
+                                    yield new
+                                    last_text = new
+                            elif new.startswith(last_text):
+                                delta = new[len(last_text) :]
+                                if delta:
+                                    yield delta
+                                last_text = new
+                            elif new:
+                                yield new
+                                last_text = new
+                        continue
+
+                # Format B: full message replacement (history_disabled mode)
+                msg = obj.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("author", {}).get("role") != "assistant":
+                    continue
+                content = msg.get("content") or {}
+                ct = content.get("content_type")
+                if ct not in ("text", "multimodal_text"):
+                    continue
+                parts = content.get("parts") or []
+                if not parts or not isinstance(parts[0], str):
+                    continue
+                msg_id = msg.get("id")
+                is_new = _reset_if_new_msg(msg_id)
+                new = parts[0]
+                if is_new:
+                    if new:
+                        yield new
+                        last_text = new
+                elif new.startswith(last_text):
+                    delta = new[len(last_text) :]
+                    if delta:
+                        yield delta
+                    last_text = new
+                elif new:
+                    yield new
+                    last_text = new
+
+    async def complete(
+        self,
+        model: str,
+        messages: list[dict],
+        *,
+        gizmo_id: str | None = None,
+        temporary: bool = True,
+    ) -> str:
+        chunks: list[str] = []
+        async for chunk in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
+            chunks.append(chunk)
+        return "".join(chunks)
+
+    async def image_gen(
+        self,
+        prompt: str,
+        *,
+        model: str = "gpt-5-3",
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+    ) -> dict:
+        """Generate an image via ChatGPT's built-in image generation tool.
+
+        Sends the prompt through a non-temporary conversation (required for
+        image gen). The server auto-invokes the image tool, then processes
+        the image asynchronously. This method polls until the image is ready.
+
+        Returns dict with keys:
+          conversation_id, assets (list of {asset_pointer, width, height,
+          size_bytes, download_url, file_name, file_id}), metadata
+
+        Raises RuntimeError if image gen fails or times out.
+        """
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_payload(
+            model, [{"role": "user", "content": prompt}], temporary=False
+        )
+
+        conversation_id: str | None = None
+        processing_text = ""
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL, headers=headers, json=payload, timeout=300, stream=True,
+            )
+            if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from image gen" + (f": {body}" if body else "")
+                )
+
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                cid = obj.get("conversation_id")
+                if cid and not conversation_id:
+                    conversation_id = cid
+
+                msg = obj.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("author", {}).get("role", "")
+                ct = (msg.get("content") or {}).get("content_type", "")
+                parts = (msg.get("content") or {}).get("parts", [])
+
+                if role == "tool" and ct == "multimodal_text":
+                    result = self._extract_image_result(conversation_id, msg)
+                    if result.get("assets"):
+                        return result
+
+                if role == "tool" and ct == "text" and parts and isinstance(parts[0], str):
+                    processing_text = parts[0]
+
+        # Image is async — poll the conversation until multimodal_text arrives
+        if not conversation_id:
+            raise RuntimeError("Image gen: no conversation_id returned")
+
+        return await self._poll_image_result(
+            conversation_id,
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+            processing_text=processing_text,
+        )
+
+    def _extract_image_result(self, conversation_id: str | None, msg: dict) -> dict:
+        """Extract image assets from a multimodal_text tool response."""
+        parts = (msg.get("content") or {}).get("parts", [])
+        meta = msg.get("metadata") or {}
+        assets = []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            if p.get("content_type") != "image_asset_pointer":
+                continue
+            asset_pointer = p.get("asset_pointer", "")
+            file_id = asset_pointer.removeprefix("sediment://") if asset_pointer else ""
+            assets.append({
+                "asset_pointer": asset_pointer,
+                "file_id": file_id,
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "size_bytes": p.get("size_bytes"),
+                "metadata": p.get("metadata"),
+            })
+
+        return {
+            "conversation_id": conversation_id,
+            "assets": assets,
+            "metadata": meta,
+        }
+
+    async def _poll_image_result(
+        self,
+        conversation_id: str,
+        *,
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+        processing_text: str = "",
+    ) -> dict:
+        """Poll conversation until multimodal_text with image assets arrives."""
+        detail_path = f"/backend-api/conversation/{conversation_id}"
+        deadline = time.monotonic() + max_wait
+        poll_errors = 0
+
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                det = await asyncio.to_thread(self._backend.get, detail_path)
+                poll_errors = 0  # reset on success
+            except Exception as exc:
+                poll_errors += 1
+                if poll_errors >= 5:
+                    raise RuntimeError(
+                        f"Image poll failed {poll_errors} times in a row: {exc}"
+                    ) from exc
+                backoff = min(poll_interval * (2 ** poll_errors), 30)
+                _log.warning("Image poll error (%s) — retrying in %.0fs", exc, backoff)
+                await asyncio.sleep(backoff)
+                continue
+
+            mapping = (det or {}).get("mapping") or {}
+            candidates = []
+            for node in mapping.values():
+                msg = (node or {}).get("message")
+                if not isinstance(msg, dict):
+                    continue
+                role = (msg.get("author") or {}).get("role", "")
+                ct = (msg.get("content") or {}).get("content_type", "")
+                if role == "tool" and ct == "multimodal_text":
+                    result = self._extract_image_result(conversation_id, msg)
+                    if result.get("assets"):
+                        candidates.append((msg.get("create_time") or 0, result))
+            if candidates:
+                candidates.sort(key=lambda c: c[0])
+                return candidates[-1][1]
+
+        raise RuntimeError(
+            f"Image gen timed out after {max_wait}s. "
+            f"Last status: {processing_text[:200]}"
+        )
+
+    async def tool_call(
+        self,
+        prompt: str,
+        *,
+        model: str = "gpt-5-3",
+        temporary: bool = False,
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+    ) -> dict:
+        """Send a prompt that triggers a tool-based feature (code interpreter,
+        canvas, image gen) and return the structured result.
+
+        Returns dict with keys:
+          conversation_id, text (assistant text response),
+          tool_calls (list of {recipient, content_type, parts}),
+          tool_responses (list of {content_type, parts}),
+          multimodal_assets (list of image asset dicts if any)
+        """
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_payload(
+            model, [{"role": "user", "content": prompt}], temporary=temporary
+        )
+
+        conversation_id: str | None = None
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        tool_responses: list[dict] = []
+        multimodal_assets: list[dict] = []
+        done = False
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL, headers=headers, json=payload, timeout=300, stream=True,
+            )
+            if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from tool_call" + (f": {body}" if body else "")
+                )
+
+            last_text = ""
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                cid = obj.get("conversation_id")
+                if cid and not conversation_id:
+                    conversation_id = cid
+
+                msg = obj.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("author", {}).get("role", "")
+                recipient = msg.get("recipient", "all")
+                content = msg.get("content") or {}
+                ct = content.get("content_type", "")
+                parts = content.get("parts") or []
+                status = msg.get("status", "")
+
+                # Assistant text (to "all")
+                if role == "assistant" and recipient == "all" and ct in ("text", "multimodal_text"):
+                    str_parts = [p for p in parts if isinstance(p, str)]
+                    if str_parts and status == "finished_successfully":
+                        last_text = str_parts[0]
+                        done = True
+                    elif str_parts:
+                        new = str_parts[0]
+                        if new.startswith(last_text):
+                            delta = new[len(last_text):]
+                            if delta:
+                                text_parts.append(delta)
+                        else:
+                            text_parts.append(new)
+                        last_text = new
+
+                # Tool call (assistant to non-all recipient)
+                elif role == "assistant" and recipient != "all":
+                    call_parts = []
+                    for p in parts:
+                        if isinstance(p, str) and p:
+                            call_parts.append(p)
+                        elif isinstance(p, dict):
+                            call_parts.append(json.dumps(p, ensure_ascii=False))
+                    tool_calls.append({
+                        "recipient": recipient,
+                        "content_type": ct,
+                        "parts": call_parts,
+                    })
+
+                # Tool response
+                elif role == "tool" and recipient == "all":
+                    resp_parts = []
+                    img_assets = []
+                    for p in parts:
+                        if isinstance(p, str):
+                            resp_parts.append(p)
+                        elif isinstance(p, dict):
+                            if p.get("content_type") == "image_asset_pointer":
+                                asset_pointer = p.get("asset_pointer", "")
+                                file_id = asset_pointer.replace("sediment://", "")
+                                img_assets.append({
+                                    "asset_pointer": asset_pointer,
+                                    "file_id": file_id,
+                                    "width": p.get("width"),
+                                    "height": p.get("height"),
+                                    "size_bytes": p.get("size_bytes"),
+                                })
+                            else:
+                                resp_parts.append(json.dumps(p, ensure_ascii=False))
+                    tool_responses.append({
+                        "content_type": ct,
+                        "parts": resp_parts,
+                    })
+                    multimodal_assets.extend(img_assets)
+                    done = True
+
+        final_text = last_text or "".join(text_parts)
+
+        return {
+            "conversation_id": conversation_id,
+            "text": final_text,
+            "tool_calls": tool_calls,
+            "tool_responses": tool_responses,
+            "multimodal_assets": multimodal_assets,
+        }
+
+    async def deep_research(
+        self,
+        query: str,
+        *,
+        max_clarification_rounds: int = 2,
+    ) -> AsyncIterator[dict]:
+        """Stream Deep Research events for *query*.
+
+        Yields dicts of shape:
+          {"type": "progress", "text": <partial_text>}   — intermediate text deltas
+          {"type": "tool",     "call": <search_call>}    — tool invocations (search/browse)
+          {"type": "done",     "text": <full_text>,
+           "content_references": [...], "search_result_groups": [...]}
+          {"type": "clarification_auto_reply", "round": N, "question": <text>}
+              — emitted when the first turn was a clarification question and the
+              wrapper auto-replied with a "proceed with best interpretation"
+              follow-up. Real DR continues on the next round.
+
+        Uses model='research' + system_hints=['research'] which triggers the
+        ChatGPT web-search deep-research backend (confirmed working 2026-04-24).
+        Timeout is 1800 s per round to accommodate multi-minute research runs.
+
+        ChatGPT's research mode often opens with a clarifying question instead
+        of starting research immediately. ``max_clarification_rounds`` caps how
+        many auto-replies the wrapper sends before giving up (default 2).
+        """
+        conversation_id: str | None = None
+        last_assistant_msg_id: str | None = None
+        current_query = query
+
+        for round_num in range(max_clarification_rounds + 1):
+            # Re-read codex token + fetch fresh sentinel each round. The Bearer
+            # in _session.headers may have been refreshed by a concurrent
+            # backend.get/post; the sentinel is single-use and short-lived,
+            # so reusing the round-1 sentinel for a later auto-proceed POST
+            # silently 403s ("token may have expired").
+            self._backend._reload_token_if_stale()
+            headers = dict(self._backend._session.headers)
+            headers["Accept"] = "text/event-stream"
+            headers["Content-Type"] = "application/json"
+            sentinel = await SentinelGate(self._backend).get_tokens()
+            headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+                "chat-requirements"
+            ]
+            if sentinel.get("proof"):
+                headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+            if sentinel.get("turnstile"):
+                headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+            payload = _build_dr_payload(
+                current_query,
+                conversation_id=conversation_id,
+                parent_message_id=last_assistant_msg_id,
+            )
+
+            async with AsyncSession(impersonate="chrome131", verify=True) as s:
+                resp = await s.post(
+                    _CONV_URL,
+                    headers=headers,
+                    json=payload,
+                    timeout=1800,
+                    stream=True,
+                )
+                if resp.status_code == 401:
+                    raise RuntimeError("401 Unauthorized — run `codex login`")
+                if resp.status_code == 403:
+                    raise RuntimeError("403 Forbidden — token may have expired")
+                if resp.status_code not in (200, 201):
+                    body = ""
+                    async for chunk in resp.aiter_content():
+                        body += (
+                            chunk.decode("utf-8", errors="replace")
+                            if isinstance(chunk, bytes)
+                            else chunk
+                        )
+                        if len(body) > 500:
+                            break
+                    raise RuntimeError(
+                        f"HTTP {resp.status_code} from /backend-api/conversation: {body[:500]}"
+                    )
+
+                last_text = ""
+                done_emitted = False
+                done_text = ""
+                stream_succeeded = False
+                try:
+                    async for raw_line in resp.aiter_lines():
+                        if isinstance(raw_line, bytes):
+                            raw_line = raw_line.decode("utf-8", errors="replace")
+                        line = raw_line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(obj, dict):
+                            continue
+
+                        # Capture conversation_id for multi-turn continuation.
+                        cid = obj.get("conversation_id")
+                        if cid and not conversation_id:
+                            conversation_id = cid
+
+                        msg = obj.get("message", {})
+                        if not isinstance(msg, dict):
+                            continue
+
+                        role = msg.get("author", {}).get("role", "")
+                        content = msg.get("content", {})
+                        ct = content.get("content_type", "")
+                        status = msg.get("status", "")
+                        meta = msg.get("metadata", {})
+
+                        # Capture latest assistant message id so the next turn
+                        # (auto-proceed reply) can use it as parent_message_id.
+                        msg_id = msg.get("id")
+                        if msg_id and role == "assistant":
+                            last_assistant_msg_id = msg_id
+
+                        # Tool invocation events (search/browse)
+                        if ct == "code" and role == "assistant":
+                            call_text = content.get("text", "")
+                            if call_text:
+                                yield {"type": "tool", "call": call_text}
+                            continue
+
+                        # Text streaming — assistant in-progress or finished
+                        if role == "assistant" and ct == "text":
+                            parts = content.get("parts") or []
+                            new = (
+                                parts[0]
+                                if parts and isinstance(parts[0], str)
+                                else ""
+                            )
+
+                            if status == "finished_successfully":
+                                yield {
+                                    "type": "done",
+                                    "text": new,
+                                    "content_references": meta.get(
+                                        "content_references", []
+                                    ),
+                                    "search_result_groups": meta.get(
+                                        "search_result_groups", []
+                                    ),
+                                }
+                                done_emitted = True
+                                last_text = new
+                                done_text = new
+                            elif status == "in_progress" and new:
+                                # Emit incremental text delta
+                                if new.startswith(last_text):
+                                    delta = new[len(last_text) :]
+                                    if delta:
+                                        yield {"type": "progress", "text": delta}
+                                else:
+                                    yield {"type": "progress", "text": new}
+                                last_text = new
+                    stream_succeeded = True
+                finally:
+                    # Only emit a synthetic "abnormal" done when the stream
+                    # ended normally (no exception) but never reached
+                    # finished_successfully — e.g. server closed mid-text.
+                    # On exception, propagate without faking a done event,
+                    # so the caller doesn't mistake partial output for a
+                    # complete answer (cf. code-review medium #2).
+                    if stream_succeeded and last_text and not done_emitted:
+                        yield {
+                            "type": "done",
+                            "text": last_text,
+                            "content_references": [],
+                            "search_result_groups": [],
+                            "terminated_abnormally": True,
+                        }
+                        done_text = last_text
+                        done_emitted = True
+
+            # End of one round — decide whether to continue.
+            if not done_emitted:
+                return
+
+            # If the model asked for clarification AND we have a captured
+            # conversation_id (so a follow-up can land in the same thread),
+            # auto-reply and keep going.
+            if (
+                conversation_id
+                and last_assistant_msg_id
+                and _looks_like_clarification(done_text)
+                and round_num < max_clarification_rounds
+            ):
+                yield {
+                    "type": "clarification_auto_reply",
+                    "round": round_num + 1,
+                    "question": done_text,
+                }
+                current_query = _DR_AUTO_PROCEED
+                continue
+
+            return
+
+    async def deep_research_heavy(
+        self,
+        query: str,
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[dict]:
+        """Stream true Pro-tier Deep Research events for *query*.
+
+        Two-phase: (1) SSE kickoff at /backend-api/f/conversation speaking
+        "delta_encoding v1" JSON-patches; (2) if the stream closes before the
+        assistant message reaches finished_successfully (async DR on complex
+        queries), poll /backend-api/conversation/{id} until it does.
+
+        Payload + endpoint ground-truth reverse-engineered from
+        chatgpt.com/deep-research browser traffic (2026-04-23):
+
+            model = gpt-5-5-pro
+            system_hints = ["connector:connector_openai_deep_research"]
+            thinking_effort = "extended"
+            message.metadata.deep_research_version = "standard"
+            message.metadata.venus_model_variant = "standard"
+
+        Yields dicts of shape:
+          {"type": "progress", "text": <partial>}   — streaming text deltas
+          {"type": "tool",     "call": <call_text>} — tool/connector invocations
+          {"type": "meta",     "data": <ste_meta>}  — server_ste_metadata events
+          {"type": "done",     "text": <full_text>,
+           "content_references": [...], "search_result_groups": [...]}
+
+        Rate: consumes from the "deep_research" quota (248 uses / reset cycle on Pro).
+        Timeout: 1800 s for initial SSE; poll phase adds up to 1800 s more.
+
+        Note: the resolved_model_slug in user-message echo will show "i-mini-m"
+        (the orchestration layer). The actual heavy reasoning runs inside the
+        connector_openai_deep_research tool call.
+        """
+        # --- Quota guard ---
+        # Probe /backend-api/conversation/init (POST) to check deep_research quota.
+        # Response shape: limits_progress: [{"feature_name": "deep_research", ...}].
+        # Fail-open on probe error; only "remaining <= 0" aborts.
+        _INIT_PATH = "/backend-api/conversation/init"
+        remaining: int | None = None
+        try:
+            init_data = await asyncio.to_thread(
+                self._backend.post,
+                _INIT_PATH,
+                json={"conversation_mode_kind": "primary_assistant"},
+            )
+            limits = (init_data or {}).get("limits_progress") or []
+            for lim in limits:
+                if isinstance(lim, dict) and lim.get("feature_name") == "deep_research":
+                    raw = lim.get("remaining")
+                    if raw is not None:
+                        remaining = int(raw)
+                    break
+        except Exception as _exc:
+            _log.warning("DR quota check failed (%s) — proceeding anyway", _exc)
+        if remaining is not None and remaining <= 0:
+            raise RuntimeError(
+                f"Deep Research quota exhausted. "
+                f"Check {_BASE}{_INIT_PATH} (POST) to verify quota reset."
+            )
+
+        # Re-read codex token before snapshotting headers — heavy DR runs
+        # for 5–30 min and codex may refresh ~/.codex/auth.json mid-stream.
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_heavy_dr_payload(query, model=model)
+
+        # --- Phase 1: SSE kickoff with JSON-patch delta parser ---
+        # /f/conversation speaks "delta_encoding v1". The first assistant envelope
+        # arrives as {"v": {"message": {...}}, "c": N}. Subsequent text chunks
+        # arrive as {"p": "/message/content/parts/0", "o": "append", "v": "..."}
+        # or the shortcut {"v": "..."} (continuation of last path).
+        # Batches: {"p": "", "o": "patch", "v": [<sub_patches>]}.
+        state = {
+            "conversation_id": None,
+            "resume_token": None,
+            "current_asst_id": None,
+            "asst_text": "",
+            "asst_status": "",
+            "asst_metadata": {},
+            "last_path": None,
+            "tool_invoked": False,
+            "tool_failed": False,
+            "done_emitted": False,
+            # True while the current assistant envelope is the connector-dispatch
+            # JSON ({"path": ".../connector_openai_deep_research/start", ...}).
+            # That envelope reaches finished_successfully almost immediately —
+            # but its text is the dispatch payload, not the real report. Reset
+            # when a fresh assistant envelope (the real report) arrives.
+            "is_connector_dispatch": False,
+        }
+
+        def _emit_done(events: list) -> None:
+            if state["done_emitted"]:
+                return
+            md = state["asst_metadata"] or {}
+            payload: dict = {
+                "type": "done",
+                "text": state["asst_text"],
+                "content_references": md.get("content_references", []) or [],
+                "search_result_groups": md.get("search_result_groups", []) or [],
+            }
+            if state["tool_failed"]:
+                payload["connector_failed"] = True
+            events.append(payload)
+            state["done_emitted"] = True
+
+        def _on_envelope(env: dict, events: list) -> None:
+            msg = env.get("message") or {}
+            role = (msg.get("author") or {}).get("role")
+            recipient = msg.get("recipient")
+            content = msg.get("content") or {}
+            ct = content.get("content_type")
+            if (
+                role == "assistant"
+                and recipient == "all"
+                and ct in ("text", "multimodal_text")
+            ):
+                state["current_asst_id"] = msg.get("id")
+                parts = content.get("parts") or []
+                initial = parts[0] if parts and isinstance(parts[0], str) else ""
+                state["asst_text"] = initial
+                state["asst_status"] = msg.get("status") or ""
+                state["asst_metadata"] = msg.get("metadata") or {}
+                state["is_connector_dispatch"] = (
+                    initial.startswith('{"path":')
+                    and "connector_openai_deep_research" in initial
+                )
+                if initial and not state["is_connector_dispatch"]:
+                    events.append({"type": "progress", "text": initial})
+                # Suppress _emit_done on:
+                #   (a) connector-dispatch envelope (matches text heuristic), OR
+                #   (b) any assistant envelope arriving with EMPTY text +
+                #       finished_successfully — the dispatch placeholder for
+                #       async DR (observed in production: heavy DR opens with
+                #       parts=[""], status=finished_successfully, then the
+                #       real report streams later via path patches or arrives
+                #       in Phase 2 polling).
+                if (
+                    state["asst_status"] == "finished_successfully"
+                    and not state["is_connector_dispatch"]
+                    and state["asst_text"]
+                ):
+                    _emit_done(events)
+            elif (
+                role == "assistant"
+                and isinstance(recipient, str)
+                and recipient.startswith("api_tool")
+            ):
+                parts = content.get("parts") or []
+                call = parts[0] if parts and isinstance(parts[0], str) else ""
+                if call:
+                    events.append({"type": "tool", "call": call})
+                state["tool_invoked"] = True
+            elif role == "tool" and recipient == "all":
+                # Tool response — detect connector-not-available errors so
+                # the caller can distinguish "DR ran" from "DR silently
+                # fell through to i-mini-m because the connector isn't
+                # provisioned on this account".
+                parts = content.get("parts") or []
+                text = parts[0] if parts and isinstance(parts[0], str) else ""
+                if text and ("Resource not found" in text or text.startswith("Error")):
+                    events.append({"type": "tool_error", "message": text})
+                    state["tool_failed"] = True
+
+        def _apply_path(path: str, op: str, value, events: list) -> None:
+            if path == "/message/content/parts/0":
+                if op == "append" and isinstance(value, str):
+                    state["asst_text"] += value
+                    if value:
+                        events.append({"type": "progress", "text": value})
+                elif op == "replace" and isinstance(value, str):
+                    if value.startswith(state["asst_text"]):
+                        delta = value[len(state["asst_text"]) :]
+                        if delta:
+                            events.append({"type": "progress", "text": delta})
+                    elif value:
+                        events.append({"type": "progress", "text": value})
+                    state["asst_text"] = value
+            elif path == "/message/status":
+                if op == "replace" and isinstance(value, str):
+                    state["asst_status"] = value
+                    # Same empty-text guard as in _on_envelope: a status flip
+                    # to finished_successfully on an empty assistant text
+                    # buffer is the dispatch placeholder, not the real report.
+                    if (
+                        value == "finished_successfully"
+                        and not state["is_connector_dispatch"]
+                        and state["asst_text"]
+                    ):
+                        _emit_done(events)
+            elif path == "/message/metadata":
+                if op in ("append", "patch") and isinstance(value, dict):
+                    state["asst_metadata"] = {**state["asst_metadata"], **value}
+                elif op == "replace" and isinstance(value, dict):
+                    state["asst_metadata"] = value
+
+        def _apply_patch(obj: dict, events: list) -> None:
+            t = obj.get("type")
+            if t == "resume_conversation_token":
+                state["resume_token"] = obj.get("token")
+                if obj.get("conversation_id"):
+                    state["conversation_id"] = obj["conversation_id"]
+                return
+            if t in ("message_marker", "message_stream_complete"):
+                if obj.get("conversation_id"):
+                    state["conversation_id"] = obj["conversation_id"]
+                return
+            if t == "server_ste_metadata":
+                md = obj.get("metadata") or {}
+                if md.get("tool_invoked"):
+                    state["tool_invoked"] = True
+                events.append({"type": "meta", "data": md})
+                return
+            if t == "input_message":
+                return
+            if t is not None:
+                return
+
+            p = obj.get("p")
+            o = obj.get("o")
+            has_v = "v" in obj
+            v = obj.get("v")
+
+            # Full envelope: explicit {"p": "", "o": "add", ...}
+            # or implicit {"v": {"message": ...}, "c": N}
+            if (
+                isinstance(v, dict)
+                and "message" in v
+                and ((p == "" and o == "add") or (p is None and o is None))
+            ):
+                _on_envelope(v, events)
+                state["last_path"] = None
+                return
+
+            # Batch patch
+            if p == "" and o == "patch" and isinstance(v, list):
+                for sub in v:
+                    if isinstance(sub, dict):
+                        _apply_patch(sub, events)
+                return
+
+            # Path-scoped patch
+            if isinstance(p, str) and p:
+                _apply_path(p, o or "replace", v, events)
+                state["last_path"] = p
+                return
+
+            # Shortcut: bare "v" continues the last path (text-append)
+            if p is None and o is None and has_v and state["last_path"]:
+                _apply_path(state["last_path"], "append", v, events)
+                return
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _F_CONV_URL,
+                headers=headers,
+                json=payload,
+                timeout=1800,
+                stream=True,
+            )
+            if resp.status_code == 401:
+                raise RuntimeError("401 Unauthorized — run `codex login`")
+            if resp.status_code == 403:
+                raise RuntimeError("403 Forbidden — token may have expired")
+            if resp.status_code not in (200, 201):
+                body = ""
+                async for chunk in resp.aiter_content():
+                    body += (
+                        chunk.decode("utf-8", errors="replace")
+                        if isinstance(chunk, bytes)
+                        else chunk
+                    )
+                    if len(body) > 500:
+                        break
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from {_F_CONV_URL}: {body[:500]}"
+                )
+
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or line.startswith("event:"):
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                events: list[dict] = []
+                _apply_patch(obj, events)
+                for e in events:
+                    yield e
+
+        # --- Phase 2: Async polling fallback ---
+        # If the stream closed without finished_successfully AND the DR
+        # connector fired, poll /backend-api/conversation/{id} until the
+        # real answer lands.
+        if (
+            not state["done_emitted"]
+            and state["conversation_id"]
+            and state["tool_invoked"]
+        ):
+            async for evt in self._poll_dr_completion(
+                state["conversation_id"], seed_text=state["asst_text"]
+            ):
+                yield evt
+            return
+
+        if not state["done_emitted"] and state["asst_text"]:
+            # Stream ended mid-text without finalize — surface what we have.
+            yield {
+                "type": "done",
+                "text": state["asst_text"],
+                "content_references": [],
+                "search_result_groups": [],
+                "terminated_abnormally": True,
+            }
+
+    async def _poll_dr_completion(
+        self,
+        conv_id: str,
+        *,
+        seed_text: str = "",
+        interval: float = 15.0,
+        max_wait: float = 1800.0,
+    ) -> AsyncIterator[dict]:
+        """Poll /backend-api/conversation/{id} until the DR answer lands.
+
+        Walks mapping[*].message for the latest assistant text node; yields
+        incremental progress until its status reaches finished_successfully
+        (or max_wait elapses).
+        """
+        detail_path = f"/backend-api/conversation/{conv_id}"
+        deadline = time.monotonic() + max_wait
+        last_emitted = seed_text
+
+        while time.monotonic() < deadline:
+            await asyncio.sleep(interval)
+            try:
+                det = await asyncio.to_thread(self._backend.get, detail_path)
+            except Exception as exc:
+                _log.warning("DR poll error (%s) — continuing", exc)
+                continue
+
+            mapping = (det or {}).get("mapping") or {}
+            candidates = []
+            for node in mapping.values():
+                msg = (node or {}).get("message")
+                if not isinstance(msg, dict):
+                    continue
+                if (msg.get("author") or {}).get("role") != "assistant":
+                    continue
+                recipient = msg.get("recipient")
+                if recipient and recipient != "all":
+                    continue
+                content = msg.get("content") or {}
+                if content.get("content_type") not in ("text", "multimodal_text"):
+                    continue
+                parts = content.get("parts") or []
+                text = parts[0] if parts and isinstance(parts[0], str) else ""
+                if not text:
+                    continue
+                candidates.append(
+                    (
+                        msg.get("create_time") or 0,
+                        msg.get("status") or "",
+                        text,
+                        msg.get("metadata") or {},
+                    )
+                )
+            if not candidates:
+                continue
+            candidates.sort(key=lambda c: c[0])
+            _, latest_status, latest_text, latest_meta = candidates[-1]
+
+            if latest_text != last_emitted:
+                if latest_text.startswith(last_emitted):
+                    delta = latest_text[len(last_emitted) :]
+                    if delta:
+                        yield {"type": "progress", "text": delta}
+                else:
+                    yield {"type": "progress", "text": latest_text}
+                last_emitted = latest_text
+
+            if latest_status == "finished_successfully":
+                yield {
+                    "type": "done",
+                    "text": latest_text,
+                    "content_references": latest_meta.get("content_references", [])
+                    or [],
+                    "search_result_groups": latest_meta.get("search_result_groups", [])
+                    or [],
+                }
+                return
+
+        if last_emitted:
+            yield {
+                "type": "done",
+                "text": last_emitted,
+                "content_references": [],
+                "search_result_groups": [],
+                "terminated_abnormally": True,
+                "timeout": True,
+            }
+        else:
+            raise RuntimeError(
+                f"DR polling timed out after {max_wait}s waiting for conv {conv_id}"
+            )
