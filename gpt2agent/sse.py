@@ -48,6 +48,7 @@ def _build_payload(
     messages: list[dict],
     *,
     gizmo_id: str | None = None,
+    temporary: bool = True,
 ) -> dict:
     payload: dict = {
         "action": "next",
@@ -66,13 +67,10 @@ def _build_payload(
         "force_rate_limit": False,
         "force_use_sse": True,
         "timezone_offset_min": -480,
-        "history_and_training_disabled": True,
+        "history_and_training_disabled": temporary,
         "system_hints": [],
     }
     if gizmo_id:
-        # Custom GPT (g-p-*) routing. Reverse-engineered from chatgpt.com web —
-        # the gizmo's instructions/files/memory_scope apply when both fields are
-        # present. Tracked as experimental in tools/gpt_chat docstring.
         payload["gizmo_id"] = gizmo_id
         payload["conversation_origin"] = {"type": "custom_gpt", "gizmo_id": gizmo_id}
     return payload
@@ -232,10 +230,8 @@ class ConversationClient:
         tools: list | None = None,
         *,
         gizmo_id: str | None = None,
+        temporary: bool = True,
     ) -> AsyncIterator[str]:
-        # Re-read codex token before snapshotting headers — _reload_token_if_stale
-        # is also called from backend.get/post but the SSE path here uses a fresh
-        # AsyncSession, so it must trigger the reload itself.
         self._backend._reload_token_if_stale()
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
@@ -250,7 +246,7 @@ class ConversationClient:
         if sentinel.get("turnstile"):
             headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
 
-        payload = _build_payload(model, messages, gizmo_id=gizmo_id)
+        payload = _build_payload(model, messages, gizmo_id=gizmo_id, temporary=temporary)
         if tools:
             payload["tools"] = tools
 
@@ -346,7 +342,8 @@ class ConversationClient:
                 if msg.get("author", {}).get("role") != "assistant":
                     continue
                 content = msg.get("content", {})
-                if content.get("content_type") != "text":
+                ct = content.get("content_type")
+                if ct not in ("text", "multimodal_text"):
                     continue
                 parts = content.get("parts") or []
                 if not parts or not isinstance(parts[0], str):
@@ -373,11 +370,319 @@ class ConversationClient:
         messages: list[dict],
         *,
         gizmo_id: str | None = None,
+        temporary: bool = True,
     ) -> str:
         chunks: list[str] = []
-        async for chunk in self.stream(model, messages, gizmo_id=gizmo_id):
+        async for chunk in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
             chunks.append(chunk)
         return "".join(chunks)
+
+    async def image_gen(
+        self,
+        prompt: str,
+        *,
+        model: str = "gpt-5-3",
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+    ) -> dict:
+        """Generate an image via ChatGPT's built-in image generation tool.
+
+        Sends the prompt through a non-temporary conversation (required for
+        image gen). The server auto-invokes the image tool, then processes
+        the image asynchronously. This method polls until the image is ready.
+
+        Returns dict with keys:
+          conversation_id, assets (list of {asset_pointer, width, height,
+          size_bytes, download_url, file_name, file_id}), metadata
+
+        Raises RuntimeError if image gen fails or times out.
+        """
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_payload(
+            model, [{"role": "user", "content": prompt}], temporary=False
+        )
+
+        conversation_id: str | None = None
+        processing_text = ""
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL, headers=headers, json=payload, timeout=120, stream=True,
+            )
+            if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from image gen" + (f": {body}" if body else "")
+                )
+
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                cid = obj.get("conversation_id")
+                if cid and not conversation_id:
+                    conversation_id = cid
+
+                msg = obj.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("author", {}).get("role", "")
+                ct = (msg.get("content") or {}).get("content_type", "")
+                parts = (msg.get("content") or {}).get("parts", [])
+
+                if role == "tool" and ct == "multimodal_text":
+                    # Image arrived synchronously (rare but possible)
+                    return self._extract_image_result(conversation_id, msg)
+
+                if role == "tool" and ct == "text" and parts and isinstance(parts[0], str):
+                    processing_text = parts[0]
+
+        # Image is async — poll the conversation until multimodal_text arrives
+        if not conversation_id:
+            raise RuntimeError("Image gen: no conversation_id returned")
+
+        return await self._poll_image_result(
+            conversation_id,
+            poll_interval=poll_interval,
+            max_wait=max_wait,
+            processing_text=processing_text,
+        )
+
+    def _extract_image_result(self, conversation_id: str | None, msg: dict) -> dict:
+        """Extract image assets from a multimodal_text tool response."""
+        parts = (msg.get("content") or {}).get("parts", [])
+        meta = msg.get("metadata") or {}
+        assets = []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            if p.get("content_type") != "image_asset_pointer":
+                continue
+            asset_pointer = p.get("asset_pointer", "")
+            file_id = asset_pointer.replace("sediment://", "") if asset_pointer else ""
+            assets.append({
+                "asset_pointer": asset_pointer,
+                "file_id": file_id,
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "size_bytes": p.get("size_bytes"),
+                "metadata": p.get("metadata"),
+            })
+
+        return {
+            "conversation_id": conversation_id,
+            "assets": assets,
+            "metadata": meta,
+        }
+
+    async def _poll_image_result(
+        self,
+        conversation_id: str,
+        *,
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+        processing_text: str = "",
+    ) -> dict:
+        """Poll conversation until multimodal_text with image assets arrives."""
+        detail_path = f"/backend-api/conversation/{conversation_id}"
+        deadline = time.monotonic() + max_wait
+
+        while time.monotonic() < deadline:
+            await asyncio.sleep(poll_interval)
+            try:
+                det = await asyncio.to_thread(self._backend.get, detail_path)
+            except Exception as exc:
+                _log.warning("Image poll error (%s) — continuing", exc)
+                continue
+
+            mapping = (det or {}).get("mapping") or {}
+            for node in mapping.values():
+                msg = (node or {}).get("message")
+                if not isinstance(msg, dict):
+                    continue
+                role = (msg.get("author") or {}).get("role", "")
+                ct = (msg.get("content") or {}).get("content_type", "")
+                if role == "tool" and ct == "multimodal_text":
+                    return self._extract_image_result(conversation_id, msg)
+
+        raise RuntimeError(
+            f"Image gen timed out after {max_wait}s. "
+            f"Last status: {processing_text[:200]}"
+        )
+
+    async def tool_call(
+        self,
+        prompt: str,
+        *,
+        model: str = "gpt-5-3",
+        temporary: bool = False,
+        poll_interval: float = 5.0,
+        max_wait: float = 300.0,
+    ) -> dict:
+        """Send a prompt that triggers a tool-based feature (code interpreter,
+        canvas, image gen) and return the structured result.
+
+        Returns dict with keys:
+          conversation_id, text (assistant text response),
+          tool_calls (list of {recipient, content_type, parts}),
+          tool_responses (list of {content_type, parts}),
+          multimodal_assets (list of image asset dicts if any)
+        """
+        self._backend._reload_token_if_stale()
+        headers = dict(self._backend._session.headers)
+        headers["Accept"] = "text/event-stream"
+        headers["Content-Type"] = "application/json"
+
+        sentinel = await SentinelGate(self._backend).get_tokens()
+        headers["Openai-Sentinel-Chat-Requirements-Token"] = sentinel[
+            "chat-requirements"
+        ]
+        if sentinel.get("proof"):
+            headers["Openai-Sentinel-Proof-Token"] = sentinel["proof"]
+        if sentinel.get("turnstile"):
+            headers["Openai-Sentinel-Turnstile-Token"] = sentinel["turnstile"]
+
+        payload = _build_payload(
+            model, [{"role": "user", "content": prompt}], temporary=temporary
+        )
+
+        conversation_id: str | None = None
+        text_parts: list[str] = []
+        tool_calls: list[dict] = []
+        tool_responses: list[dict] = []
+        multimodal_assets: list[dict] = []
+        done = False
+
+        async with AsyncSession(impersonate="chrome131", verify=True) as s:
+            resp = await s.post(
+                _CONV_URL, headers=headers, json=payload, timeout=300, stream=True,
+            )
+            if resp.status_code not in (200, 201):
+                body = _safe_body(resp)
+                raise RuntimeError(
+                    f"HTTP {resp.status_code} from tool_call" + (f": {body}" if body else "")
+                )
+
+            last_text = ""
+            async for raw_line in resp.aiter_lines():
+                if isinstance(raw_line, bytes):
+                    raw_line = raw_line.decode("utf-8", errors="replace")
+                line = raw_line.strip()
+                if not line or line.startswith(":") or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+
+                cid = obj.get("conversation_id")
+                if cid and not conversation_id:
+                    conversation_id = cid
+
+                msg = obj.get("message", {})
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("author", {}).get("role", "")
+                recipient = msg.get("recipient", "all")
+                content = msg.get("content", {})
+                ct = content.get("content_type", "")
+                parts = content.get("parts") or []
+                status = msg.get("status", "")
+
+                # Assistant text (to "all")
+                if role == "assistant" and recipient == "all" and ct in ("text", "multimodal_text"):
+                    str_parts = [p for p in parts if isinstance(p, str)]
+                    if str_parts and status == "finished_successfully":
+                        last_text = str_parts[0]
+                        done = True
+                    elif str_parts:
+                        new = str_parts[0]
+                        if new.startswith(last_text):
+                            delta = new[len(last_text):]
+                            if delta:
+                                text_parts.append(delta)
+                        else:
+                            text_parts.append(new)
+                        last_text = new
+
+                # Tool call (assistant to non-all recipient)
+                elif role == "assistant" and recipient != "all":
+                    call_parts = []
+                    for p in parts:
+                        if isinstance(p, str) and p:
+                            call_parts.append(p)
+                        elif isinstance(p, dict):
+                            call_parts.append(json.dumps(p, ensure_ascii=False))
+                    tool_calls.append({
+                        "recipient": recipient,
+                        "content_type": ct,
+                        "parts": call_parts,
+                    })
+
+                # Tool response
+                elif role == "tool" and recipient == "all":
+                    resp_parts = []
+                    img_assets = []
+                    for p in parts:
+                        if isinstance(p, str):
+                            resp_parts.append(p)
+                        elif isinstance(p, dict):
+                            if p.get("content_type") == "image_asset_pointer":
+                                asset_pointer = p.get("asset_pointer", "")
+                                file_id = asset_pointer.replace("sediment://", "")
+                                img_assets.append({
+                                    "asset_pointer": asset_pointer,
+                                    "file_id": file_id,
+                                    "width": p.get("width"),
+                                    "height": p.get("height"),
+                                    "size_bytes": p.get("size_bytes"),
+                                })
+                            else:
+                                resp_parts.append(json.dumps(p, ensure_ascii=False))
+                    tool_responses.append({
+                        "content_type": ct,
+                        "parts": resp_parts,
+                    })
+                    multimodal_assets.extend(img_assets)
+                    done = True
+
+        return {
+            "conversation_id": conversation_id,
+            "text": last_text,
+            "tool_calls": tool_calls,
+            "tool_responses": tool_responses,
+            "multimodal_assets": multimodal_assets,
+        }
 
     async def deep_research(
         self,

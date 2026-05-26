@@ -7,8 +7,10 @@ from gpt2agent.tools import (
     codex,
     conversations,
     gpts,
+    images,
     instructions,
     memory,
+    tools_features,
     writes,
 )
 
@@ -23,3 +25,5 @@ def register_all(mcp, client: BackendClient) -> None:
     conversations.register(mcp, client)
     apps.register(mcp, client)
     writes.register(mcp, client)
+    images.register(mcp, client)
+    tools_features.register(mcp, client)

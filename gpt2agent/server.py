@@ -71,14 +71,19 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
     )
 
     @mcp.tool()
-    async def chat(prompt: str, model: str = chat_model) -> str:
+    async def chat(prompt: str, model: str = chat_model, temporary: bool = True) -> str:
         """Chat with any ChatGPT model on your account.
 
         Pass `model` to switch slugs — e.g. `gpt-5-5-pro` (410K, pro reasoning),
         `o3-pro`, `gpt-5-4-thinking`, `gpt-5-3` (default). Call `list_models`
         first to enumerate what your account has access to.
+
+        Set `temporary=False` to allow tool-based features (image gen, code
+        interpreter, canvas). Temporary chats (default) cannot use these tools.
         """
-        return await conv.complete(model, [{"role": "user", "content": prompt}])
+        return await conv.complete(
+            model, [{"role": "user", "content": prompt}], temporary=temporary
+        )
 
     @mcp.tool()
     async def agent(prompt: str) -> str:
