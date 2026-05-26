@@ -91,7 +91,7 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         execution, and tool use. Best for multi-step tasks (literature gathering,
         document workflows, browser automation). SSE-only (no REST endpoint).
         """
-        return await conv.complete(agent_model, [{"role": "user", "content": prompt}])
+        return await conv.complete(agent_model, [{"role": "user", "content": prompt}], temporary=False)
 
     @mcp.tool()
     async def deep_research(query: str, auto_confirm: bool = True) -> str:
@@ -215,12 +215,12 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             "Please commit the following to memory verbatim. "
             "Do not summarize, paraphrase, or ask for confirmation:\n\n" + content
         )
-        return await conv.complete(chat_model, [{"role": "user", "content": prompt}])
+        return await conv.complete(chat_model, [{"role": "user", "content": prompt}], temporary=False)
 
     try:
         from gpt2agent.tools import register_all
 
-        register_all(mcp, _backend)
+        register_all(mcp, _backend, conv)
     except Exception:
         # P0 #4 fix — log the traceback (was bare warning, hid the cause)
         logging.getLogger(__name__).exception(

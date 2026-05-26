@@ -4,7 +4,7 @@ from __future__ import annotations
 from gpt2agent.backend import BackendClient
 
 
-def register(mcp, client: BackendClient) -> None:
+def register(mcp, client: BackendClient, conv=None) -> None:
 
     @mcp.tool()
     async def code_interpreter(
@@ -24,10 +24,13 @@ def register(mcp, client: BackendClient) -> None:
             Dict with: conversation_id, text (assistant explanation),
             tool_calls, tool_responses, multimodal_assets (if any charts/images).
         """
-        from gpt2agent.sse import ConversationClient
+        if conv is None:
+            from gpt2agent.sse import ConversationClient
+            _conv = ConversationClient(client)
+        else:
+            _conv = conv
 
-        conv = ConversationClient(client)
-        return await conv.tool_call(prompt, model=model, temporary=False)
+        return await _conv.tool_call(prompt, model=model, temporary=False)
 
     @mcp.tool()
     async def canvas_execute(
@@ -46,9 +49,12 @@ def register(mcp, client: BackendClient) -> None:
         Returns:
             Dict with: conversation_id, text, tool_calls, tool_responses.
         """
-        from gpt2agent.sse import ConversationClient
+        if conv is None:
+            from gpt2agent.sse import ConversationClient
+            _conv = ConversationClient(client)
+        else:
+            _conv = conv
 
-        conv = ConversationClient(client)
-        return await conv.tool_call(
+        return await _conv.tool_call(
             f"Use Canvas to: {prompt}", model=model, temporary=False
         )

@@ -15,7 +15,7 @@ from gpt2agent.tools import (
 )
 
 
-def register_all(mcp, client: BackendClient) -> None:
+def register_all(mcp, client: BackendClient, conv=None) -> None:
     """Register every backend tool on *mcp*."""
     account.register(mcp, client)
     memory.register(mcp, client)
@@ -25,5 +25,5 @@ def register_all(mcp, client: BackendClient) -> None:
     conversations.register(mcp, client)
     apps.register(mcp, client)
     writes.register(mcp, client)
-    images.register(mcp, client)
-    tools_features.register(mcp, client)
+    images.register(mcp, client, conv)
+    tools_features.register(mcp, client, conv)

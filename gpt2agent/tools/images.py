@@ -1,10 +1,12 @@
 """Image generation and file download tools."""
 from __future__ import annotations
 
+import asyncio
+
 from gpt2agent.backend import BackendClient
 
 
-def register(mcp, client: BackendClient) -> None:
+def register(mcp, client: BackendClient, conv=None) -> None:
 
     @mcp.tool()
     async def generate_image(
@@ -25,17 +27,20 @@ def register(mcp, client: BackendClient) -> None:
             Dict with: conversation_id, assets (list with asset_pointer, file_id,
             width, height, size_bytes, download_url, file_name), metadata.
         """
-        from gpt2agent.sse import ConversationClient
+        if conv is None:
+            from gpt2agent.sse import ConversationClient
+            _conv = ConversationClient(client)
+        else:
+            _conv = conv
 
-        conv = ConversationClient(client)
-        result = await conv.image_gen(prompt, model=model)
+        result = await _conv.image_gen(prompt, model=model)
 
-        # Enrich each asset with a download URL
+        # Enrich each asset with a download URL (offload sync HTTP to thread)
         for asset in result.get("assets", []):
             file_id = asset.get("file_id", "")
             if file_id:
                 try:
-                    dl = client.get(f"/backend-api/files/{file_id}/download")
+                    dl = await asyncio.to_thread(client.get, f"/backend-api/files/{file_id}/download")
                     asset["download_url"] = (dl or {}).get("download_url", "")
                     asset["file_name"] = (dl or {}).get("file_name", "")
                     asset["file_size_bytes"] = (dl or {}).get("file_size_bytes")
@@ -45,7 +50,7 @@ def register(mcp, client: BackendClient) -> None:
 
             if file_id and not asset.get("file_name"):
                 try:
-                    info = client.get(f"/backend-api/files/{file_id}")
+                    info = await asyncio.to_thread(client.get, f"/backend-api/files/{file_id}")
                     asset["file_name"] = (info or {}).get("name", "")
                     asset["use_case"] = (info or {}).get("use_case")
                     asset["state"] = (info or {}).get("state")

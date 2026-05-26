@@ -420,7 +420,7 @@ class ConversationClient:
 
         async with AsyncSession(impersonate="chrome131", verify=True) as s:
             resp = await s.post(
-                _CONV_URL, headers=headers, json=payload, timeout=120, stream=True,
+                _CONV_URL, headers=headers, json=payload, timeout=300, stream=True,
             )
             if resp.status_code not in (200, 201):
                 body = _safe_body(resp)
@@ -485,7 +485,7 @@ class ConversationClient:
             if p.get("content_type") != "image_asset_pointer":
                 continue
             asset_pointer = p.get("asset_pointer", "")
-            file_id = asset_pointer.replace("sediment://", "") if asset_pointer else ""
+            file_id = asset_pointer.removeprefix("sediment://") if asset_pointer else ""
             assets.append({
                 "asset_pointer": asset_pointer,
                 "file_id": file_id,
@@ -512,13 +512,22 @@ class ConversationClient:
         """Poll conversation until multimodal_text with image assets arrives."""
         detail_path = f"/backend-api/conversation/{conversation_id}"
         deadline = time.monotonic() + max_wait
+        poll_errors = 0
 
         while time.monotonic() < deadline:
             await asyncio.sleep(poll_interval)
             try:
                 det = await asyncio.to_thread(self._backend.get, detail_path)
+                poll_errors = 0  # reset on success
             except Exception as exc:
-                _log.warning("Image poll error (%s) — continuing", exc)
+                poll_errors += 1
+                if poll_errors >= 5:
+                    raise RuntimeError(
+                        f"Image poll failed {poll_errors} times in a row: {exc}"
+                    ) from exc
+                backoff = min(poll_interval * (2 ** poll_errors), 30)
+                _log.warning("Image poll error (%s) — retrying in %.0fs", exc, backoff)
+                await asyncio.sleep(backoff)
                 continue
 
             mapping = (det or {}).get("mapping") or {}
@@ -621,7 +630,7 @@ class ConversationClient:
                     continue
                 role = msg.get("author", {}).get("role", "")
                 recipient = msg.get("recipient", "all")
-                content = msg.get("content", {})
+                content = msg.get("content") or {}
                 ct = content.get("content_type", "")
                 parts = content.get("parts") or []
                 status = msg.get("status", "")
@@ -683,9 +692,11 @@ class ConversationClient:
                     multimodal_assets.extend(img_assets)
                     done = True
 
+        final_text = last_text or "".join(text_parts)
+
         return {
             "conversation_id": conversation_id,
-            "text": last_text,
+            "text": final_text,
             "tool_calls": tool_calls,
             "tool_responses": tool_responses,
             "multimodal_assets": multimodal_assets,

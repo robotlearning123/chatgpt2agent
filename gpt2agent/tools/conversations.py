@@ -11,7 +11,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             f"/backend-api/conversations?offset=0&limit={limit}&order=updated",
             target_path="/backend-api/conversations",
-        )
+        ) or {}
         return [
             {
                 "id": c.get("id"),
@@ -76,6 +76,8 @@ def register(mcp, client: BackendClient) -> None:
             messages.append(entry)
             if len(messages) >= max_messages:
                 break
+
+        return {
             "id": data.get("id"),
             "title": redact(data.get("title") or ""),
             "create_time": data.get("create_time"),
@@ -90,7 +92,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             f"/backend-api/tasks?limit={limit}",
             target_path="/backend-api/tasks",
-        )
+        ) or {}
         return [
             {
                 "task_id": t.get("task_id"),
