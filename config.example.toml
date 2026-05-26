@@ -1,23 +1,16 @@
 # gpt2agent configuration
-# Copy to config.toml and fill in your values.
-
-[api]
-# Any OpenAI-compatible API endpoint
-base_url = "http://localhost:3001/v1"
-api_key  = "your-api-key-here"
+# Copy to ~/.gpt2agent/config.toml and edit as needed.
 
 [server]
 host = "0.0.0.0"
 port = 9000
 
 [models]
-# Model to use for the `chat` tool (required)
-chat = "gpt-4o"
+# Default model for the `chat` tool
+chat = "gpt-5-3"
 
-# Model for the `research` tool — enables deep web search + synthesis.
-# Comment out to disable the research tool.
-research = "research"
+# Override the model for `agent` (default: agent-mode)
+# agent = "agent-mode"
 
-# Model for the `image_gen` tool — enables image generation.
-# Comment out to disable the image tool.
-image = "gpt-image-2"
+# Override the model for `deep_research_heavy` (default: gpt-5-5-pro)
+# heavy_dr = "gpt-5-5-pro"

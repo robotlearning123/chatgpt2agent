@@ -406,17 +406,24 @@ class ConversationClient:
         """Poll for async agent-mode response after SSE stream ends with async_status."""
         detail_path = f"/backend-api/conversation/{conversation_id}"
         deadline = time.monotonic() + max_wait
+        poll_errors = 0
 
         while time.monotonic() < deadline:
             await asyncio.sleep(poll_interval)
             try:
                 det = await asyncio.to_thread(self._backend.get, detail_path)
             except Exception as exc:
+                poll_errors += 1
+                if poll_errors >= 5:
+                    raise RuntimeError(
+                        f"Agent poll: {poll_errors} consecutive errors, giving up"
+                    ) from exc
                 _log.warning("Agent poll error (%s) — continuing", exc)
                 continue
 
+            poll_errors = 0
+
             mapping = (det or {}).get("mapping") or {}
-            # Find the latest assistant message with text content
             best_text = ""
             best_time = 0
             for node in mapping.values():

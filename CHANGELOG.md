@@ -42,11 +42,11 @@ mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
 
 ### Added — one-command install for popular MCP clients
 
-- `openai-mcp install` subcommand — registers openai-mcp with one or more
+- `gpt2agent install` subcommand — registers gpt2agent with one or more
   MCP-capable agent clients. Targets in 0.0.2:
-  - **Claude Code** — writes `~/.claude.json` `mcpServers.openai` entry
-    (preserves all other top-level keys, backs up to `.bak-openai-mcp`).
-  - **Codex CLI** — writes `~/.codex/config.toml` `[mcp_servers.openai]`
+  - **Claude Code** — writes `~/.claude.json` `mcpServers.gpt2agent` entry
+    (preserves all other top-level keys, backs up to `.bak-gpt2agent`).
+  - **Codex CLI** — writes `~/.codex/config.toml` `[mcp_servers.gpt2agent]`
     section, preserving all other sections (agents, model config, …).
   - `--client all` (default) auto-detects which clients are installed and
     registers with each.
@@ -54,13 +54,13 @@ mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
     sections or entries.
   - `--dry-run` prints what would change without touching files.
   - `--transport http --http-port N` switches to an HTTP entry.
-- **Bundled Claude Code skill** at `openai_mcp/skills/deep-research/` —
-  ships in the wheel; `openai-mcp install` (or `install --client claude-code`)
+- **Bundled Claude Code skill** at `gpt2agent/skills/deep-research/` —
+  ships in the wheel; `gpt2agent install` (or `install --client claude-code`)
   copies it to `~/.claude/skills/deep-research/`. The skill calls
   ConversationClient directly, so it works even before Claude Code restarts.
 - **One-line installer** (`install.sh`) — cross-platform replacement of the
   prior macOS-only LaunchAgent script. Pipes through pipx install + codex
-  login check + `openai-mcp install`. Curl-pipe-bash friendly.
+  login check + `gpt2agent install`. Curl-pipe-bash friendly.
 - **GitHub Actions release workflow** (`.github/workflows/release.yml`) —
   triggers on `v*` tags, verifies the tag matches `pyproject.toml`, runs
   pytest across {ubuntu, macos} × {Python 3.11, 3.13}, builds wheel + sdist,
