@@ -40,10 +40,9 @@ def register(mcp, client: BackendClient) -> None:
                     asset["file_name"] = (dl or {}).get("file_name", "")
                     asset["file_size_bytes"] = (dl or {}).get("file_size_bytes")
                     asset["mime_type"] = (dl or {}).get("mime_type")
-                except Exception:
-                    pass
+                except Exception as e:
+                    asset["download_error"] = str(e)[:200]
 
-            # Also fetch file metadata
             if file_id and not asset.get("file_name"):
                 try:
                     info = client.get(f"/backend-api/files/{file_id}")
@@ -51,8 +50,8 @@ def register(mcp, client: BackendClient) -> None:
                     asset["use_case"] = (info or {}).get("use_case")
                     asset["state"] = (info or {}).get("state")
                     asset["creation_time"] = (info or {}).get("creation_time")
-                except Exception:
-                    pass
+                except Exception as e:
+                    asset["info_error"] = str(e)[:200]
 
         return result
 

@@ -24,11 +24,12 @@ def register(mcp, client: BackendClient) -> None:
         ]
 
     @mcp.tool()
-    def get_conversation(conversation_id: str) -> dict:
+    def get_conversation(conversation_id: str, max_messages: int = 100) -> dict:
         """Get full details of a ChatGPT conversation including all messages.
 
         Args:
             conversation_id: The conversation ID.
+            max_messages: Maximum number of messages to return (default 100).
 
         Returns:
             Dict with title, create_time, mapping (all messages), and metadata.
@@ -73,8 +74,8 @@ def register(mcp, client: BackendClient) -> None:
             elif ct == "code" and parts and isinstance(parts[0], str):
                 entry["code"] = parts[0][:500]
             messages.append(entry)
-
-        return {
+            if len(messages) >= max_messages:
+                break
             "id": data.get("id"),
             "title": redact(data.get("title") or ""),
             "create_time": data.get("create_time"),

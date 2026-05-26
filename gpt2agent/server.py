@@ -199,6 +199,7 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             chat_model,
             [{"role": "user", "content": prompt}],
             gizmo_id=gizmo_id,
+            temporary=False,
         )
 
     @mcp.tool()

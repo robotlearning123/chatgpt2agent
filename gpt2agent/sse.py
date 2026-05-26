@@ -341,7 +341,7 @@ class ConversationClient:
                     continue
                 if msg.get("author", {}).get("role") != "assistant":
                     continue
-                content = msg.get("content", {})
+                content = msg.get("content") or {}
                 ct = content.get("content_type")
                 if ct not in ("text", "multimodal_text"):
                     continue
@@ -456,8 +456,9 @@ class ConversationClient:
                 parts = (msg.get("content") or {}).get("parts", [])
 
                 if role == "tool" and ct == "multimodal_text":
-                    # Image arrived synchronously (rare but possible)
-                    return self._extract_image_result(conversation_id, msg)
+                    result = self._extract_image_result(conversation_id, msg)
+                    if result.get("assets"):
+                        return result
 
                 if role == "tool" and ct == "text" and parts and isinstance(parts[0], str):
                     processing_text = parts[0]
@@ -521,6 +522,7 @@ class ConversationClient:
                 continue
 
             mapping = (det or {}).get("mapping") or {}
+            candidates = []
             for node in mapping.values():
                 msg = (node or {}).get("message")
                 if not isinstance(msg, dict):
@@ -528,7 +530,12 @@ class ConversationClient:
                 role = (msg.get("author") or {}).get("role", "")
                 ct = (msg.get("content") or {}).get("content_type", "")
                 if role == "tool" and ct == "multimodal_text":
-                    return self._extract_image_result(conversation_id, msg)
+                    result = self._extract_image_result(conversation_id, msg)
+                    if result.get("assets"):
+                        candidates.append((msg.get("create_time") or 0, result))
+            if candidates:
+                candidates.sort(key=lambda c: c[0])
+                return candidates[-1][1]
 
         raise RuntimeError(
             f"Image gen timed out after {max_wait}s. "
