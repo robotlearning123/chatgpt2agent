@@ -102,7 +102,9 @@ def get_token() -> str:
 def save_token(token: str) -> None:
     d = Path.home() / ".gpt2agent"
     d.mkdir(exist_ok=True)
-    (d / "token.json").write_text(json.dumps({"access_token": token}))
+    p = d / "token.json"
+    p.write_text(json.dumps({"access_token": token}))
+    p.chmod(0o600)
 
 
 # ── plan detection ──────────────────────────────────────────────────────────

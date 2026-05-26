@@ -60,8 +60,8 @@ The `install` subcommand writes the right thing for each:
 
 | Client | File | Section |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | `mcpServers.openai` (stdio: `gpt2agent run --stdio`) |
-| **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.openai]` |
+| **Claude Code** | `~/.claude.json` | `mcpServers.gpt2agent` (stdio: `gpt2agent run --stdio`) |
+| **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.gpt2agent]` |
 
 Both are idempotent and back up the prior file as `<name>.bak-gpt2agent`.
 
@@ -75,7 +75,7 @@ Claude Code — add to `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "openai": {
+    "gpt2agent": {
       "type": "stdio",
       "command": "gpt2agent",
       "args": ["run", "--stdio"]
@@ -87,7 +87,7 @@ Claude Code — add to `~/.claude.json`:
 Codex CLI — add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.openai]
+[mcp_servers.gpt2agent]
 command = "gpt2agent"
 args = ["run", "--stdio"]
 ```

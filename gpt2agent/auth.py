@@ -149,6 +149,8 @@ def get_token(interactive: bool = True) -> str:
     # Save for future use
     save_dir = Path.home() / ".gpt2agent"
     save_dir.mkdir(exist_ok=True)
-    (save_dir / "token.json").write_text(json.dumps(result, indent=2))
+    tp = save_dir / "token.json"
+    tp.write_text(json.dumps(result, indent=2))
+    tp.chmod(0o600)
     print("  Token saved to ~/.gpt2agent/token.json")
     return result["access_token"]
