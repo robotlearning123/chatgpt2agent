@@ -128,10 +128,8 @@ mv ~/.openai-mcp ~/.gpt2agent  # if you have a config dir from 0.0.1
 - Tool table reorganized by category (chat, account, memory, codex).
 - Removed dead `image_gen` placeholder from `server.py` (kept as a tracked
   future PR in CHANGELOG instead of in source).
-- **25 MCP tools** (up from 14). New tools: `agent`, `gpt_chat`, `generate_image`,
-  `code_interpreter`, `canvas_execute`, `get_conversation`, `get_file_info`,
-  `get_file_download_url`, `memory_create_via_chat`, `custom_instructions_set`,
-  `codex_task_create`.
+- **25 MCP tools** (up from 19). New tools: `generate_image`, `code_interpreter`,
+  `canvas_execute`, `get_conversation`, `get_file_info`, `get_file_download_url`.
 - `list_models` returns full metadata: capabilities, enabled_tools, thinking_efforts, tags.
 - `list_tasks` returns full metadata: prompt, conversation_id, image_gen_message, interruptions_disabled.
 - `conv` singleton passed to tool modules — eliminates redundant sentinel token fetches.
