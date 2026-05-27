@@ -1,0 +1,172 @@
+---
+name: gpt2agent
+description: |
+  Full ChatGPT Plus/Pro account access via MCP. 25 tools covering chat,
+  agent mode, deep research, image generation, code execution, canvas,
+  memory, custom instructions, conversations, Custom GPTs, and Codex.
+  Reuses ~/.codex/auth.json (same as Codex CLI) — no extra login needed.
+  Use when you need ChatGPT models, web research with citations, DALL-E
+  image gen, Python sandbox execution, or ChatGPT account management.
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - mcp__gpt2agent__chat
+  - mcp__gpt2agent__agent
+  - mcp__gpt2agent__deep_research
+  - mcp__gpt2agent__deep_research_heavy
+  - mcp__gpt2agent__gpt_chat
+  - mcp__gpt2agent__generate_image
+  - mcp__gpt2agent__get_file_info
+  - mcp__gpt2agent__get_file_download_url
+  - mcp__gpt2agent__code_interpreter
+  - mcp__gpt2agent__canvas_execute
+  - mcp__gpt2agent__account_status
+  - mcp__gpt2agent__list_models
+  - mcp__gpt2agent__list_conversations
+  - mcp__gpt2agent__get_conversation
+  - mcp__gpt2agent__list_tasks
+  - mcp__gpt2agent__list_apps
+  - mcp__gpt2agent__list_custom_gpts
+  - mcp__gpt2agent__memory_list
+  - mcp__gpt2agent__memory_search
+  - mcp__gpt2agent__memory_create_via_chat
+  - mcp__gpt2agent__custom_instructions_get
+  - mcp__gpt2agent__custom_instructions_set
+  - mcp__gpt2agent__list_codex_envs
+  - mcp__gpt2agent__list_codex_tasks
+  - mcp__gpt2agent__codex_task_create
+---
+
+# gpt2agent — ChatGPT Account Access via MCP
+
+```!
+command -v gpt2agent >/dev/null && echo "gpt2agent: installed ($(gpt2agent --version 2>/dev/null || echo 'unknown version'))" || echo "gpt2agent: NOT INSTALLED — run: pipx install gpt2agent"
+test -f ~/.codex/auth.json && echo "codex token: present" || echo "codex token: MISSING — run: codex login"
+test -f ~/.gpt2agent/token.json && echo "gpt2agent token: present" || echo "gpt2agent token: not set (codex token preferred)"
+```
+
+## Preconditions
+
+1. `gpt2agent` installed via pipx. If missing: `pipx install gpt2agent`
+2. Auth token at `~/.codex/auth.json` (from `codex login`) or `~/.gpt2agent/token.json`.
+3. MCP server registered in Claude Code. If missing: `gpt2agent install`
+4. Restart Claude Code session after first install to load MCP tools.
+
+If any precondition fails, stop and tell the user the exact fix command.
+
+## Quick Reference
+
+| Category | Tools |
+|---|---|
+| Chat & reasoning | `chat`, `agent`, `deep_research`, `deep_research_heavy`, `gpt_chat` |
+| Image & file | `generate_image`, `get_file_info`, `get_file_download_url` |
+| Code execution | `code_interpreter`, `canvas_execute` |
+| Account & models | `account_status`, `list_models`, `list_apps` |
+| Conversations | `list_conversations`, `get_conversation`, `list_tasks` |
+| Custom GPTs | `list_custom_gpts`, `gpt_chat` |
+| Memory | `memory_list`, `memory_search`, `memory_create_via_chat` |
+| Instructions | `custom_instructions_get`, `custom_instructions_set` |
+| Codex | `list_codex_envs`, `list_codex_tasks`, `codex_task_create` |
+
+## When to Use Which Tool
+
+| Need | Tool | Notes |
+|---|---|---|
+| Quick Q&A with a ChatGPT model | `chat` | Default: gpt-5-3, temporary=True |
+| Chat that needs image gen / code / canvas | `chat(temporary=False)` | Temporary chats block these features |
+| Multi-step task with browsing + code exec | `agent` | 262K context, autonomous |
+| Web research with citations (30-120s) | `deep_research` | Costs 1 DR quota |
+| Long-form research report (5-30 min) | `deep_research_heavy` | Costs 1 DR quota, use background mode |
+| Generate an image | `generate_image` | DALL-E, requires temporary=False context |
+| Run Python in sandbox | `code_interpreter` | Requires temporary=False |
+| Live document editing | `canvas_execute` | Requires temporary=False |
+| Use a Custom GPT | `gpt_chat(gizmo_id, prompt)` | List IDs with `list_custom_gpts` |
+| Save something to ChatGPT memory | `memory_create_via_chat` | Model-initiated write (REST 405 workaround) |
+| Create a Codex coding task | `codex_task_create` | Auto-resolves environment_id from repo_label |
+
+## Usage Patterns
+
+### Research workflow
+```
+1. deep_research("topic")          -- fast, citations included
+2. deep_research_heavy("topic")    -- long-form, run in background
+3. Read result, summarize for user
+```
+
+For deep_research_heavy, use `run_in_background: true` in Bash. It takes 5-30 minutes.
+
+### Image generation
+```
+1. chat("describe what you want", temporary=False)  -- or generate_image directly
+2. generate_image("prompt")  -- returns file_id
+3. get_file_download_url(file_id)  -- get the URL
+```
+
+### Code execution
+```
+1. code_interpreter("python code here")  -- runs in ChatGPT sandbox
+2. canvas_execute(content="...")  -- live document editing
+```
+
+Both require a non-temporary conversation context.
+
+### Account inspection
+```
+1. account_status()   -- plan, features, expiry
+2. list_models()      -- all available model slugs
+3. list_conversations() -- recent chat history
+```
+
+### Codex integration
+```
+1. list_codex_envs()              -- see available repos
+2. list_codex_tasks()             -- recent tasks
+3. codex_task_create(repo, desc)  -- spin up a coding task
+```
+
+## Quota Management
+
+Deep Research quota: 248 calls/month on Pro plan (resets ~21st of each month).
+
+- `deep_research` and `deep_research_heavy` each cost 1 quota.
+- Check `account_status()` before heavy usage.
+- Warn user if remaining quota < 10 before firing deep research.
+
+## Configuration
+
+Config file locations (checked in order):
+1. `~/.gpt2agent/config.toml`
+2. `./config.toml` (cwd)
+3. `~/.config/gpt2agent/config.toml`
+
+Key settings:
+```toml
+[server]
+host = "0.0.0.0"
+port = 9000
+
+[models]
+chat = "gpt-5-3"
+# agent = "agent-mode"
+# heavy_dr = "gpt-5-5-pro"
+```
+
+## Troubleshooting
+
+| Error | Fix |
+|---|---|
+| "gpt2agent not installed" | `pipx install gpt2agent` |
+| "codex token MISSING" | `codex login` |
+| MCP tools not appearing | Restart Claude Code session after `gpt2agent install` |
+| 401 / auth error | Re-run `codex login`, then restart MCP server |
+| Image/code/canvas fails | Ensure `temporary=False` — these features are blocked in temporary chats |
+| DR connector unavailable | Enable Deep Research at chatgpt.com > Settings > Connectors |
+| "memory_add not available" | Use `memory_create_via_chat` instead (REST POST returns 405) |
+
+## Detailed Reference
+
+For full parameter docs and return types, see:
+`gpt2agent/gpt2agent/skills/gpt2agent/tools-reference.md`
+
+Or inspect tool schemas directly: `mcp__gpt2agent__*` tools are self-describing via MCP.

@@ -303,22 +303,15 @@ def install_codex(
 # ── Claude Code skill bundle ───────────────────────────────────────────────
 
 
-def install_claude_skill(
+def _install_one_skill(
+    name: str,
+    src: Path,
+    dst_dir: Path,
     *,
-    dst_dir: Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Copy the bundled ``deep-research`` skill into ``~/.claude/skills/``.
-
-    The skill calls gpt2agent's ConversationClient directly (bypasses the MCP
-    transport) so it works even before restarting Claude Code.
-    """
-    src = Path(__file__).parent / "skills" / "deep-research"
-    if not src.exists():
-        _warn("skill bundle not found in package — skipped")
-        return {"path": None, "skipped": True}
-
-    dst = (dst_dir or Path.home() / ".claude" / "skills") / "deep-research"
+    """Copy one skill directory into *dst_dir*."""
+    dst = dst_dir / name
 
     if dry_run:
         _info(f"skill: would install {src} → {dst}")
@@ -338,10 +331,39 @@ def install_claude_skill(
         sh.chmod(0o755)
 
     _ok(
-        f"skill: installed deep-research → {dst} "
+        f"skill: installed {name} → {dst} "
         f"(backup: {backup.name if backup else 'none'})"
     )
     return {"path": dst, "backup": backup, "changed": True}
+
+
+def install_claude_skill(
+    *,
+    dst_dir: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Copy bundled skills (deep-research + gpt2agent) into ``~/.claude/skills/``.
+
+    The deep-research skill calls gpt2agent's ConversationClient directly
+    (bypasses MCP) so it works even before restarting Claude Code.
+    The gpt2agent skill provides full account access instructions and
+    pre-approves all 25 MCP tools.
+    """
+    skills_src = Path(__file__).parent / "skills"
+    target_dir = dst_dir or Path.home() / ".claude" / "skills"
+
+    results = []
+    for name in ("deep-research", "gpt2agent"):
+        src = skills_src / name
+        if not src.exists():
+            _warn(f"skill bundle '{name}' not found in package — skipped")
+            continue
+        results.append(_install_one_skill(name, src, target_dir, dry_run=dry_run))
+
+    if not results:
+        return {"path": None, "skipped": True}
+
+    return results[-1]
 
 
 # ── auto-detect ────────────────────────────────────────────────────────────
