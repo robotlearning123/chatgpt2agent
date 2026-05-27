@@ -39,6 +39,8 @@ include = ["gpt2agent*"]
 gpt2agent = [
     "skills/deep-research/SKILL.md",
     "skills/deep-research/bin/*",
+    "skills/gpt2agent/SKILL.md",
+    "skills/gpt2agent/tools-reference.md",
 ]
 
 [project.urls]

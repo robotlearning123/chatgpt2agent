@@ -261,10 +261,16 @@ def test_skill_install(tmp_path: Path) -> None:
     # If skill bundle missing from package, test is informational only.
     if result.get("skipped"):
         pytest.skip("skill bundle not present in package")
-    dst = skills_root / "deep-research"
-    assert dst.exists()
-    assert (dst / "SKILL.md").exists()
-    assert (dst / "bin" / "run.sh").exists()
+    # deep-research skill
+    dr = skills_root / "deep-research"
+    assert dr.exists()
+    assert (dr / "SKILL.md").exists()
+    assert (dr / "bin" / "run.sh").exists()
+    # gpt2agent skill
+    ga = skills_root / "gpt2agent"
+    assert ga.exists()
+    assert (ga / "SKILL.md").exists()
+    assert (ga / "tools-reference.md").exists()
 
 
 def test_skill_backup_on_overwrite(tmp_path: Path) -> None:
@@ -275,9 +281,10 @@ def test_skill_backup_on_overwrite(tmp_path: Path) -> None:
     # Touch a sentinel file to verify it lands in the backup.
     sentinel = skills_root / "deep-research" / "USER_OVERRIDE.txt"
     sentinel.write_text("user-edited")
-    second = install_claude_skill(dst_dir=skills_root)
-    assert second["backup"] is not None
-    assert (second["backup"] / "USER_OVERRIDE.txt").exists()
+    install_claude_skill(dst_dir=skills_root)
+    dr_backup = skills_root / "deep-research.bak-gpt2agent"
+    assert dr_backup.exists()
+    assert (dr_backup / "USER_OVERRIDE.txt").exists()
 
 
 # ── TOML section editor ────────────────────────────────────────────────────
