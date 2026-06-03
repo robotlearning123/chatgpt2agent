@@ -37,9 +37,10 @@ test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
 ```
 
 - Default mode: **light** (`deep_research`, ~1 min, citations included).
-- `--heavy`: **deep_research_heavy** (5-30 min, gpt-5-5-pro + connector,
-  long-form report; citation URLs are currently NOT recovered — view in
-  chatgpt.com web UI of the same conversation if needed).
+- `--heavy`: **deep_research_heavy** (5-30 min, gpt-5-5-pro + connector). NOTE:
+  the connector renders an embedded-UI experience and does NOT write a fetchable
+  report back over the API — heavy runs currently time out empty. Prefer light
+  mode for programmatic cited research. See "Known limitation" below.
 - `-o OUT_DIR`: output directory (default: `./research/dr-YYYYMMDD-HHMM/`).
 - Query can be inline string, `-` for stdin, or `@file.md` to read from file.
 
@@ -85,18 +86,28 @@ explicitly wants you to handle locally, anything covered by `context7`
 5. After completion: Read `report.md`, summarize key findings in 5-8
    bullets for the user, point to the full file path.
 
-## Known limitation (upstream bug)
+## Known limitation — heavy DR does not return a fetchable report (verified 2026-06-03)
 
-`deep_research_heavy` in `gpt2agent 0.0.1` emits its `done` event on
-the FIRST assistant message (which contains only the connector-call JSON,
-not the real report). The real report streams afterward as `progress`
-events with no second `done`, so the wrapper's `content_references` field
-is always empty. This script reconstructs the report from progress events
-but cannot recover citation URLs. The light `deep_research` path is
-unaffected — use it when citations matter.
+`deep_research_heavy` dispatches the `connector_openai_deep_research` connector,
+which renders an **"embedded UI experience" widget**. The actual report runs
+inside that connector experience and is **NOT written back** into the
+conversation as a fetchable assistant text node. Verified on a clean Pro account:
+a full 30-minute run left the conversation's report node empty
+(`content_references: []`, 0-char text), `async_status` went `7 → None`, and no
+`done` event was ever emitted — the poll timed out with no report. The report is
+visible only in the chatgpt.com web UI's deep-research experience.
+
+**Practical guidance: use light mode (`deep_research`) for programmatic, cited
+research.** It returns the report + `content_references` directly over SSE.
+
+The wrapper retains *best-effort* heavy citation extraction (`_emit_done` /
+`_poll_dr_completion` pull refs from nested `/message/metadata/...` patches or a
+same-turn conversation-detail node) — dormant until/unless the backend exposes
+refs on that path. Set `GPT2AGENT_RAW_DUMP=<path>` to capture the raw heavy
+stream + polls for further reverse-engineering.
 
 Upstream tracking: see `gpt2agent/sse.py` (https://github.com/robotlearning123/gpt2agent/blob/main/gpt2agent/sse.py)
-around the `_emit_done` / `_apply_path('/message/status', ...)` logic.
+around `_emit_done` / `_poll_dr_completion`.
 
 ## Quota management
 
