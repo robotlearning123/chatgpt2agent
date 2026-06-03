@@ -127,7 +127,7 @@ The DR *quota* (≈248/cycle) is NOT the only limit. The ChatGPT backend also
 rate-limits the conversation endpoints per account.
 
 **Run heavy DR SERIALLY — never concurrently.** One heavy DR at a time. While a
-heavy DR is running (it polls `/backend-api/conversation/{id}` every ~15s during
+heavy DR is running (it polls `/backend-api/conversation/{id}` every ~120s during
 its 5–30 min Phase-2 wait), do NOT launch anything else that hits the same
 account's chatgpt.com backend — a second heavy/light DR, `codex`/`cx` exec jobs,
 agent mode, or `get_conversation`/`list_conversations` polling. Two pollers on

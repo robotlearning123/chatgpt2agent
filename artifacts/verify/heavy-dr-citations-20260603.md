@@ -18,8 +18,8 @@ Command:
 CODEX_HOME=~/.codex-cx2 PYTHONPATH=<worktree> GPT2AGENT_RAW_DUMP=/tmp/cx2-heavy-raw.jsonl \
   ~/.claude/skills/deep-research/bin/run.sh --heavy -o <out> @<short citation-seeking query>
 ```
-Account: cx2 = `wangcongrobot@gmail.com` (acct `606e1424…`, Pro), quota 229, **uncontended**
-(main account's codex loops do not touch it — no 429).
+Account: cx2 (acct `606e1424…`, Pro, distinct from the main account), quota 229,
+**uncontended** (main account's codex loops do not touch it — no 429).
 
 Result (read from real output, not CI/worker say-so):
 ```
