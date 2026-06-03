@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,10 @@ def _load_token_with_source() -> tuple[str, Path | None]:
     """Load the ChatGPT bearer token and return its source file for mtime tracking.
 
     Search order:
-      1. ``~/.codex/auth.json`` with ``tokens.access_token`` (codex login)
+      1. ``$CODEX_HOME/auth.json`` (or ``~/.codex/auth.json`` if CODEX_HOME
+         is unset) with ``tokens.access_token`` (codex login). Honoring
+         CODEX_HOME lets a second account (e.g. ``CODEX_HOME=~/.codex-cx2``)
+         be used without touching the default login.
       2. ``~/.gpt2agent/token.json`` with ``token`` (flat) OR
          ``tokens.access_token`` (nested) — written by ``gpt2agent setup``
 
@@ -27,8 +31,9 @@ def _load_token_with_source() -> tuple[str, Path | None]:
     can stat it later to detect codex's background refresh and reload.
     Raises RuntimeError only if neither source yields a token.
     """
-    # Source 1: codex login
-    codex_path = Path.home() / ".codex" / "auth.json"
+    # Source 1: codex login (honor CODEX_HOME for multi-account)
+    _codex_home = os.environ.get("CODEX_HOME")
+    codex_path = (Path(_codex_home) if _codex_home else Path.home() / ".codex") / "auth.json"
     codex_err: str | None = None
     if codex_path.exists():
         try:

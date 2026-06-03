@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -41,6 +43,87 @@ HEAVY_DR_MODEL = "gpt-5-5-pro"
 
 #: System hint for heavy Deep Research (connector identifier from chatgpt.com frontend)
 HEAVY_DR_HINT = "connector:connector_openai_deep_research"
+
+
+def _raw_dump(obj: dict, *, phase: str) -> None:
+    path = os.environ.get("GPT2AGENT_RAW_DUMP")
+    if not path:
+        return
+    record = {"phase": phase, "obj": obj}
+    try:
+        out = Path(path).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
+            f.write("\n")
+    except Exception as exc:
+        _log.warning("GPT2AGENT_RAW_DUMP write failed (%s)", exc)
+
+
+def _has_citation_payload(meta: dict | None) -> bool:
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("content_references") or meta.get("search_result_groups"))
+
+
+def _citation_payload(*metas: dict | None) -> tuple[list, list]:
+    refs: list = []
+    groups: list = []
+    for meta in metas:
+        if not isinstance(meta, dict):
+            continue
+        if not refs:
+            refs = meta.get("content_references") or []
+        if not groups:
+            groups = meta.get("search_result_groups") or []
+    return refs, groups
+
+
+def _pointer_parts(path: str, prefix: str) -> list[str]:
+    tail = path[len(prefix) :].strip("/")
+    if not tail:
+        return []
+    return [p.replace("~1", "/").replace("~0", "~") for p in tail.split("/")]
+
+
+def _merge_metadata_path(meta: dict, path: str, op: str, value) -> dict:
+    if path == "/message/metadata":
+        if op in ("append", "patch") and isinstance(value, dict):
+            return {**meta, **value}
+        if op == "replace" and isinstance(value, dict):
+            return value
+        return meta
+
+    if not path.startswith("/message/metadata/"):
+        return meta
+
+    out = dict(meta)
+    parts = _pointer_parts(path, "/message/metadata")
+    if not parts:
+        return out
+
+    cur = out
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+
+    key = parts[-1]
+    if op == "append":
+        existing = cur.get(key)
+        if isinstance(existing, list):
+            cur[key] = [*existing, value]
+        elif isinstance(existing, str) and isinstance(value, str):
+            cur[key] = existing + value
+        else:
+            cur[key] = value
+    elif op == "patch" and isinstance(value, dict) and isinstance(cur.get(key), dict):
+        cur[key] = {**cur[key], **value}
+    else:
+        cur[key] = value
+    return out
 
 
 def _build_payload(
@@ -1077,6 +1160,7 @@ class ConversationClient:
             "tool_invoked": False,
             "tool_failed": False,
             "done_emitted": False,
+            "citation_metadata": {},
             # True while the current assistant envelope is the connector-dispatch
             # JSON ({"path": ".../connector_openai_deep_research/start", ...}).
             # That envelope reaches finished_successfully almost immediately —
@@ -1089,11 +1173,13 @@ class ConversationClient:
             if state["done_emitted"]:
                 return
             md = state["asst_metadata"] or {}
+            citation_md = state["citation_metadata"] or {}
+            refs, groups = _citation_payload(md, citation_md)
             payload: dict = {
                 "type": "done",
                 "text": state["asst_text"],
-                "content_references": md.get("content_references", []) or [],
-                "search_result_groups": md.get("search_result_groups", []) or [],
+                "content_references": refs,
+                "search_result_groups": groups,
             }
             if state["tool_failed"]:
                 payload["connector_failed"] = True
@@ -1117,6 +1203,8 @@ class ConversationClient:
                 state["asst_text"] = initial
                 state["asst_status"] = msg.get("status") or ""
                 state["asst_metadata"] = msg.get("metadata") or {}
+                if _has_citation_payload(state["asst_metadata"]):
+                    state["citation_metadata"] = state["asst_metadata"]
                 state["is_connector_dispatch"] = (
                     initial.startswith('{"path":')
                     and "connector_openai_deep_research" in initial
@@ -1184,11 +1272,12 @@ class ConversationClient:
                         and state["asst_text"]
                     ):
                         _emit_done(events)
-            elif path == "/message/metadata":
-                if op in ("append", "patch") and isinstance(value, dict):
-                    state["asst_metadata"] = {**state["asst_metadata"], **value}
-                elif op == "replace" and isinstance(value, dict):
-                    state["asst_metadata"] = value
+            elif path == "/message/metadata" or path.startswith("/message/metadata/"):
+                state["asst_metadata"] = _merge_metadata_path(
+                    state["asst_metadata"], path, op, value
+                )
+                if _has_citation_payload(state["asst_metadata"]):
+                    state["citation_metadata"] = state["asst_metadata"]
 
         def _apply_patch(obj: dict, events: list) -> None:
             t = obj.get("type")
@@ -1289,6 +1378,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raw_dump(obj, phase="heavy_sse")
 
                 events: list[dict] = []
                 _apply_patch(obj, events)
@@ -1325,7 +1415,7 @@ class ConversationClient:
         conv_id: str,
         *,
         seed_text: str = "",
-        interval: float = 15.0,
+        interval: float = 120.0,
         max_wait: float = 1800.0,
     ) -> AsyncIterator[dict]:
         """Poll /backend-api/conversation/{id} until the DR answer lands.
@@ -1344,14 +1434,22 @@ class ConversationClient:
                 det = await asyncio.to_thread(self._backend.get, detail_path)
             except Exception as exc:
                 _log.warning("DR poll error (%s) — continuing", exc)
+                if "HTTP 429" in str(exc):
+                    await asyncio.sleep(max(interval * 2, 300.0))
                 continue
+            if isinstance(det, dict):
+                _raw_dump(det, phase="heavy_poll")
 
             mapping = (det or {}).get("mapping") or {}
             candidates = []
+            citation_candidates = []
             for node in mapping.values():
                 msg = (node or {}).get("message")
                 if not isinstance(msg, dict):
                     continue
+                meta = msg.get("metadata") or {}
+                if _has_citation_payload(meta):
+                    citation_candidates.append((msg.get("create_time") or 0, meta))
                 if (msg.get("author") or {}).get("role") != "assistant":
                     continue
                 recipient = msg.get("recipient")
@@ -1369,7 +1467,7 @@ class ConversationClient:
                         msg.get("create_time") or 0,
                         msg.get("status") or "",
                         text,
-                        msg.get("metadata") or {},
+                        meta,
                     )
                 )
             if not candidates:
@@ -1387,13 +1485,34 @@ class ConversationClient:
                 last_emitted = latest_text
 
             if latest_status == "finished_successfully":
+                refs = latest_meta.get("content_references") or []
+                groups = latest_meta.get("search_result_groups") or []
+                if citation_candidates and (not refs or not groups):
+                    turn_keys = ("working_turn_id", "turn_exchange_id")
+                    same_turn = [
+                        meta
+                        for _, meta in sorted(citation_candidates, key=lambda c: c[0])
+                        if any(
+                            latest_meta.get(k) and latest_meta.get(k) == meta.get(k)
+                            for k in turn_keys
+                        )
+                    ]
+                    fallback_metas = same_turn or [
+                        meta
+                        for _, meta in sorted(citation_candidates, key=lambda c: c[0])
+                    ]
+                    for meta in reversed(fallback_metas):
+                        if not refs:
+                            refs = meta.get("content_references") or []
+                        if not groups:
+                            groups = meta.get("search_result_groups") or []
+                        if refs and groups:
+                            break
                 yield {
                     "type": "done",
                     "text": latest_text,
-                    "content_references": latest_meta.get("content_references", [])
-                    or [],
-                    "search_result_groups": latest_meta.get("search_result_groups", [])
-                    or [],
+                    "content_references": refs,
+                    "search_result_groups": groups,
                 }
                 return
 

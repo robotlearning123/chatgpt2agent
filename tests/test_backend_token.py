@@ -73,3 +73,33 @@ def test_reload_tolerates_missing_file(
     # Must not raise — keeps the old bearer; next 401 will surface error.
     client._reload_token_if_stale()
     assert client._session.headers["Authorization"] == before
+
+
+def test_codex_home_routes_to_alt_account(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CODEX_HOME selects a second account's auth.json over ~/.codex."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_auth(tmp_path / ".codex" / "auth.json", "TOK_DEFAULT")
+    alt_home = tmp_path / ".codex-cx2"
+    _write_auth(alt_home / "auth.json", "TOK_CX2")
+    monkeypatch.setenv("CODEX_HOME", str(alt_home))
+
+    from gpt2agent import backend as be
+
+    client = be.BackendClient()
+    assert client._session.headers["Authorization"] == "Bearer TOK_CX2"
+
+
+def test_codex_home_unset_falls_back_to_home(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without CODEX_HOME, the default ~/.codex/auth.json is used."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    _write_auth(tmp_path / ".codex" / "auth.json", "TOK_DEFAULT")
+
+    from gpt2agent import backend as be
+
+    client = be.BackendClient()
+    assert client._session.headers["Authorization"] == "Bearer TOK_DEFAULT"

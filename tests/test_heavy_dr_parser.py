@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -164,9 +165,28 @@ class _FakeSentinel:
 
 
 def _run_heavy_dr(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    return _run_heavy_dr_with_frames(monkeypatch, _FRAMES)
+
+
+def _run_heavy_dr_with_frames(
+    monkeypatch: pytest.MonkeyPatch, frames: list[str]
+) -> list[dict]:
     from gpt2agent import sse as sse_mod
 
-    monkeypatch.setattr(sse_mod, "AsyncSession", _FakeSession)
+    class _FrameSession:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FrameSession":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def post(self, *_: Any, **__: Any) -> _FakeResp:
+            return _FakeResp(frames)
+
+    monkeypatch.setattr(sse_mod, "AsyncSession", _FrameSession)
     monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
 
     client = sse_mod.ConversationClient(_FakeBackend())  # type: ignore[arg-type]
@@ -191,6 +211,110 @@ def test_connector_dispatch_done_suppressed(monkeypatch: pytest.MonkeyPatch) -> 
     # And it must hold the REAL report, not the dispatch JSON.
     assert dones[0]["text"] == _REAL_REPORT
     assert _DISPATCH_TEXT not in dones[0]["text"]
+
+
+def test_nested_metadata_patch_preserves_citation_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ref = {
+        "matched_text": "OpenAI",
+        "safe_urls": ["https://openai.com/"],
+        "items": [{"title": "OpenAI", "url": "https://openai.com/"}],
+        "type": "webpage",
+    }
+    group = {
+        "type": "search_result_group",
+        "domain": "openai.com",
+        "entries": [
+            {
+                "type": "search_result",
+                "url": "https://openai.com/",
+                "title": "OpenAI",
+                "snippet": "Homepage",
+                "ref_id": "turn0search0",
+            }
+        ],
+    }
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-report",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": ["Report"]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+                "c": 1,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/metadata/content_references",
+                "o": "replace",
+                "v": [ref],
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/metadata/search_result_groups",
+                "o": "replace",
+                "v": [group],
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
+        ),
+        "data: [DONE]",
+    ]
+    events = _run_heavy_dr_with_frames(monkeypatch, frames)
+    done = [e for e in events if e.get("type") == "done"][-1]
+
+    assert done["content_references"] == [ref]
+    assert done["search_result_groups"] == [group]
+
+
+def test_poll_completion_uses_citation_metadata_from_same_turn_fixture() -> None:
+    from gpt2agent import sse as sse_mod
+
+    fixture = json.loads(
+        Path("tests/fixtures/heavy_dr_conversation_detail_h2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    class _FixtureBackend(_FakeBackend):
+        def get(self, *_: Any, **__: Any) -> dict:
+            return fixture
+
+    client = sse_mod.ConversationClient(_FixtureBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        out: list[dict] = []
+        async for ev in client._poll_dr_completion(
+            "fixture-conv", interval=0, max_wait=1
+        ):
+            out.append(ev)
+        return out
+
+    events = asyncio.run(_go())
+    done = [e for e in events if e.get("type") == "done"][-1]
+    refs = done["content_references"]
+
+    assert refs
+    assert any(
+        isinstance(item.get("url"), str) and item["url"].startswith("https://")
+        for ref in refs
+        for item in ref.get("items", [])
+    )
+    assert done["search_result_groups"]
 
 
 def test_empty_dispatch_envelope_done_suppressed(

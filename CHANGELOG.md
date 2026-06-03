@@ -4,6 +4,47 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.3] - 2026-06-03
+
+### Fixed
+
+- **Light Deep Research report extraction.** The research model often emits a
+  short tool-dispatch JSON as the FIRST `done` event (e.g.
+  `{"queries":[...],"source_filter":[...]}`); the bundled runner took that first
+  done as the report and silently discarded the real, later report. It now picks
+  the longest `done` and falls back to all streamed progress text.
+
+### Added
+
+- **Multi-account auth via `CODEX_HOME`.** `BackendClient` reads
+  `$CODEX_HOME/auth.json` (falling back to `~/.codex/auth.json`), so a second
+  account (e.g. `CODEX_HOME=~/.codex-cx2`) can be used without touching the
+  default login. Adds 2 tests.
+- **`GPT2AGENT_RAW_DUMP` heavy-DR diagnostics.** When set, `deep_research_heavy`
+  writes every raw SSE object (Phase 1) and conversation-detail poll (Phase 2)
+  as JSONL — used to reverse-engineer the real heavy-DR shape.
+- Heavy-DR poll backs off ≥300s on HTTP 429 and polls every 120s (was 15s) to
+  avoid rate-limiting the conversation endpoint.
+- Best-effort heavy-DR citation extraction: `done` pulls
+  `content_references` / `search_result_groups` from nested
+  `/message/metadata/...` patches or a same-turn conversation-detail node, if
+  the backend provides them.
+
+### Known limitations (verified 2026-06-03)
+
+- **Heavy DR does not return a programmatically-fetchable report.** Verified on a
+  clean Pro account: `deep_research_heavy` dispatches the
+  `connector_openai_deep_research` connector, which renders an "embedded UI
+  experience" widget; after a full 30-minute run the conversation's report node
+  stayed empty (`content_references: []`, 0-char text) and no `done` event was
+  emitted. The report exists only inside the ChatGPT web UI's deep-research
+  experience, not in `/backend-api/conversation/{id}`. **Use light mode
+  (`deep_research`) for programmatic, cited research.** The best-effort citation
+  extraction above is dormant until/unless the backend exposes refs on that path.
+- Run heavy/long DR **serially** — concurrent DR + codex jobs on one account
+  cause HTTP 429 on the conversation poll. See the deep-research skill's
+  "Account limits & concurrency" note.
+
 ## [0.0.2] - 2026-05-26
 
 ### Renamed — `openai-mcp` → `gpt2agent`

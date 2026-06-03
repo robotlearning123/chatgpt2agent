@@ -81,18 +81,19 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
                     md = ev.get("data") or {}
                     meta_data.append(md)
                 elif et == "done":
-                    if not seen_first_done:
-                        seen_first_done = True
-                        light_final_text = ev.get("text", "")
-                        light_refs = ev.get("content_references", []) or []
-                        light_groups = ev.get("search_result_groups", []) or []
-                        if ev.get("connector_failed"):
-                            connector_failed = True
-                    elif mode == "heavy":
-                        # Second done (rare but possible) — overwrite with real result.
-                        light_final_text = ev.get("text", "") or light_final_text
+                    txt = ev.get("text", "") or ""
+                    if ev.get("connector_failed"):
+                        connector_failed = True
+                    # Pick the LONGEST done as the real report. The research model
+                    # often emits a short tool-dispatch JSON as the FIRST done
+                    # (e.g. {"queries": [...], "source_filter": [...]}); the real
+                    # report is a later, longer done. Taking the first done here
+                    # silently discarded the actual report (observed 2026-06-03).
+                    if not seen_first_done or len(txt) > len(light_final_text):
+                        light_final_text = txt
                         light_refs = ev.get("content_references", []) or light_refs
                         light_groups = ev.get("search_result_groups", []) or light_groups
+                    seen_first_done = True
                 elif et == "progress":
                     txt = ev.get("text", "")
                     (progress_after_done if seen_first_done else progress_before_done).append(txt)
@@ -109,7 +110,7 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
         if not body and light_final_text:
             body = light_final_text  # Fallback: maybe wrapper actually delivered the real report.
     else:
-        body = light_final_text or "".join(progress_before_done) or "(empty)"
+        body = light_final_text or "".join(progress_before_done + progress_after_done) or "(empty)"
 
     # --- Sources (light mode only; heavy loses URLs upstream) ---
     sources = ""
