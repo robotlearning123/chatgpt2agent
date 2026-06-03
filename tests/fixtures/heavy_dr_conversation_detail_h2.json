@@ -1,0 +1,96 @@
+{
+  "title": "Heavy DR Citation Fixture",
+  "mapping": {
+    "user-node": {
+      "message": {
+        "id": "user-node",
+        "author": {"role": "user"},
+        "create_time": 1780500000.0,
+        "content": {"content_type": "text", "parts": ["Brief research request"]},
+        "status": "finished_successfully",
+        "metadata": {
+          "deep_research_version": "standard",
+          "venus_model_variant": "standard",
+          "system_hints": ["connector:connector_openai_deep_research"],
+          "working_turn_id": "turn-1",
+          "turn_exchange_id": "turn-1"
+        },
+        "recipient": "all"
+      }
+    },
+    "citation-node": {
+      "message": {
+        "id": "citation-node",
+        "author": {"role": "assistant"},
+        "create_time": 1780500010.0,
+        "content": {"content_type": "text", "parts": [""]},
+        "status": "finished_successfully",
+        "metadata": {
+          "content_references": [
+            {
+              "matched_text": "OpenAI",
+              "prefix": "",
+              "start_idx": 0,
+              "end_idx": 6,
+              "safe_urls": ["https://openai.com/"],
+              "refs": [],
+              "alt": null,
+              "prompt_text": null,
+              "type": "webpage",
+              "items": [
+                {
+                  "title": "OpenAI",
+                  "url": "https://openai.com/",
+                  "attribution": "openai.com",
+                  "pub_date": null,
+                  "snippet": "OpenAI homepage"
+                }
+              ],
+              "fallback_items": [],
+              "status": "done",
+              "error": null,
+              "style": null
+            }
+          ],
+          "search_result_groups": [
+            {
+              "type": "search_result_group",
+              "domain": "openai.com",
+              "entries": [
+                {
+                  "type": "search_result",
+                  "url": "https://openai.com/",
+                  "title": "OpenAI",
+                  "snippet": "OpenAI homepage",
+                  "ref_id": "turn0search0"
+                }
+              ]
+            }
+          ],
+          "working_turn_id": "turn-1",
+          "turn_exchange_id": "turn-1"
+        },
+        "recipient": "all"
+      }
+    },
+    "final-node": {
+      "message": {
+        "id": "final-node",
+        "author": {"role": "assistant"},
+        "create_time": 1780500020.0,
+        "content": {
+          "content_type": "text",
+          "parts": ["# Heavy DR Report\n\nOpenAI is cited in this report."]
+        },
+        "status": "finished_successfully",
+        "metadata": {
+          "content_references": [],
+          "search_result_groups": [],
+          "working_turn_id": "turn-1",
+          "turn_exchange_id": "turn-1"
+        },
+        "recipient": "all"
+      }
+    }
+  }
+}
