@@ -109,3 +109,34 @@ heavy calls:
 
 Refuse to fire `--heavy` if remaining < 10 unless the user explicitly
 acknowledges the consumption.
+
+## Account limits & concurrency (IMPORTANT — read before launching)
+
+The DR *quota* (≈248/cycle) is NOT the only limit. The ChatGPT backend also
+rate-limits the conversation endpoints per account.
+
+**Run heavy DR SERIALLY — never concurrently.** One heavy DR at a time. While a
+heavy DR is running (it polls `/backend-api/conversation/{id}` every ~15s during
+its 5–30 min Phase-2 wait), do NOT launch anything else that hits the same
+account's chatgpt.com backend — a second heavy/light DR, `codex`/`cx` exec jobs,
+agent mode, or `get_conversation`/`list_conversations` polling. Two pollers on
+one account collide.
+
+**Observed failure (2026-06-03):** running a heavy DR concurrently with several
+`codex` jobs caused sustained **HTTP 429** on the poll for ~30 min, then the run
+died with `ERROR  RuntimeError: DR polling timed out after 1800.0s waiting for
+conv <id>` and `events.jsonl` had only the initial `meta` event. The exact
+per-account request-rate limit is not officially documented — do not assume a
+number; just keep account access serial.
+
+**Recovery from a 429 / poll-timeout (no extra quota):** the run almost always
+*completed server-side* — only the local poll failed. The `conv_id` is in the
+error line. Recover the finished report instead of re-running `--heavy` (which
+would burn another quota): GET `/backend-api/conversation/<conv_id>` via
+`BackendClient` (or the `get_conversation` MCP tool), then walk
+`mapping[*].message` for the newest assistant text node with status
+`finished_successfully` — its `metadata.content_references` holds the citation
+URLs. NOTE: heavy DR via the connector may render an "embedded UI experience"
+and never write a fetchable report node back; in that case there is nothing to
+recover and the run must be redone in a quiet window. Wait for the rate limit to
+ease first — repeated GETs while rate-limited keep it hot.
