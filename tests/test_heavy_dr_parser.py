@@ -484,3 +484,70 @@ def test_chat_payload_supports_gizmo_id() -> None:
         "type": "custom_gpt",
         "gizmo_id": "g-p-test123",
     }
+
+
+def _load_widget_fixture() -> dict:
+    return json.loads(
+        Path("tests/fixtures/heavy_dr_widget_state.json").read_text(encoding="utf-8")
+    )
+
+
+def test_widget_state_report_extracted_from_tool_text() -> None:
+    """Carrier A: report inside a "The latest state of the widget is: {…}" node."""
+    from gpt2agent import sse as sse_mod
+
+    detail = _load_widget_fixture()["carrier_a_tool_text"]
+    text, refs = sse_mod._dr_report_from_widget_state(detail)
+    assert text.startswith("# Report A")
+    assert refs  # content_references preserved
+
+
+def test_widget_state_report_extracted_from_chatgpt_sdk_metadata() -> None:
+    """Carrier B: report under message.metadata.chatgpt_sdk.widget_state (JSON str)."""
+    from gpt2agent import sse as sse_mod
+
+    detail = _load_widget_fixture()["carrier_b_metadata"]
+    text, refs = sse_mod._dr_report_from_widget_state(detail)
+    assert text.startswith("# Report B")
+    assert refs
+
+
+def test_widget_state_absent_returns_empty() -> None:
+    from gpt2agent import sse as sse_mod
+
+    detail = _load_widget_fixture()["no_report"]
+    text, refs = sse_mod._dr_report_from_widget_state(detail)
+    assert text == ""
+    assert refs == []
+
+
+def test_poll_completion_recovers_widget_report() -> None:
+    """The Deep Research App report (no assistant text node) is emitted as done.
+
+    Regression for the connector-widget architecture: the final report lives in
+    ``widget_state.report_message``, never as an assistant text node, so the
+    legacy assistant-text-only poll timed out. _poll_dr_completion must emit it.
+    """
+    from gpt2agent import sse as sse_mod
+
+    detail = _load_widget_fixture()["carrier_a_tool_text"]
+
+    class _FixtureBackend(_FakeBackend):
+        def get(self, *_: Any, **__: Any) -> dict:
+            return detail
+
+    client = sse_mod.ConversationClient(_FixtureBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        out: list[dict] = []
+        async for ev in client._poll_dr_completion(
+            "fixture-conv", interval=0, max_wait=1
+        ):
+            out.append(ev)
+        return out
+
+    events = asyncio.run(_go())
+    done = [e for e in events if e.get("type") == "done"]
+    assert done, events
+    assert done[-1]["text"].startswith("# Report A")
+    assert not done[-1].get("terminated_abnormally")

@@ -4,6 +4,31 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.4] - 2026-06-11
+
+### Fixed
+
+- **Heavy Deep Research returns the real report (connector-widget architecture).**
+  ChatGPT moved heavy DR to the "Deep Research App" connector
+  (`connectors://connector_openai_deep_research`), which renders the report in an
+  embedded widget and **never** writes it as an assistant text node — so the old
+  `_poll_dr_completion` (which only scanned assistant text) timed out at 1800s
+  with an empty report even though the research finished server-side. The report
+  actually lives in the hidden widget state (`widget_state.report_message`).
+  `_poll_dr_completion` now fetches the conversation with
+  `?include_visually_hidden_messages=true&include_widget_state=true` and recovers
+  the report (text + `content_references`) from either widget-state carrier (a
+  `"The latest state of the widget is: {…}"` tool node, or
+  `message.metadata.chatgpt_sdk.widget_state`) via the new
+  `_dr_report_from_widget_state` helper. Verified by recovering three real
+  completed reports headlessly (45.6K / 52.4K / 51.5K chars, with citations).
+
+### Notes
+
+- Light `deep_research` (`model=research`, SearchGPT backend) is a separate
+  mechanism and is **not** changed here; its longest-`done` mitigation from 0.0.3
+  remains. A dedicated light-mode fix is tracked as a follow-up.
+
 ## [0.0.3] - 2026-06-03
 
 ### Fixed

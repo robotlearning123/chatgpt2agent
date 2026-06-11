@@ -1,10 +1,10 @@
 ---
 name: deep-research
-version: 0.1.0
+version: 0.1.1
 description: |
   ChatGPT Pro Deep Research via gpt2agent. Two modes: light (model=research,
   30-120s, citations preserved) and heavy (gpt-5-5-pro + connector, 5-30 min,
-  long-form report, citations currently lost due to upstream wrapper bug).
+  long-form report recovered from the connector widget state, citations included).
   Reuses ~/.codex/auth.json — no extra login. Costs 1 quota per call out of
   Pro monthly budget (248/cycle). Output saved as Markdown.
   Use when asked to "deep research", "DR", "ChatGPT deep research",
@@ -37,10 +37,11 @@ test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
 ```
 
 - Default mode: **light** (`deep_research`, ~1 min, citations included).
-- `--heavy`: **deep_research_heavy** (5-30 min, gpt-5-5-pro + connector). NOTE:
-  the connector renders an embedded-UI experience and does NOT write a fetchable
-  report back over the API — heavy runs currently time out empty. Prefer light
-  mode for programmatic cited research. See "Known limitation" below.
+- `--heavy`: **deep_research_heavy** (5-30 min, gpt-5-5-pro + connector). The
+  connector renders an embedded-UI widget; the report is recovered from the
+  hidden widget state (`widget_state.report_message`) via
+  `?include_visually_hidden_messages=true&include_widget_state=true` — see
+  "Heavy DR retrieval" below.
 - `-o OUT_DIR`: output directory (default: `./research/dr-YYYYMMDD-HHMM/`).
 - Query can be inline string, `-` for stdin, or `@file.md` to read from file.
 
@@ -86,28 +87,39 @@ explicitly wants you to handle locally, anything covered by `context7`
 5. After completion: Read `report.md`, summarize key findings in 5-8
    bullets for the user, point to the full file path.
 
-## Known limitation — heavy DR does not return a fetchable report (verified 2026-06-03)
+## Heavy DR retrieval — connector widget state (fixed 2026-06-11)
 
-`deep_research_heavy` dispatches the `connector_openai_deep_research` connector,
-which renders an **"embedded UI experience" widget**. The actual report runs
-inside that connector experience and is **NOT written back** into the
-conversation as a fetchable assistant text node. Verified on a clean Pro account:
-a full 30-minute run left the conversation's report node empty
-(`content_references: []`, 0-char text), `async_status` went `7 → None`, and no
-`done` event was ever emitted — the poll timed out with no report. The report is
-visible only in the chatgpt.com web UI's deep-research experience.
+`deep_research_heavy` dispatches the `connector_openai_deep_research` connector
+(the "Deep Research App", pineapple URI
+`connectors://connector_openai_deep_research`), which renders an embedded-UI
+widget. The connector **never** writes its report as an assistant text node in
+the conversation `mapping` (the assistant text node stays 0-char), so the legacy
+poll — which only scanned for assistant text — timed out at 1800s even though
+the research completed server-side.
 
-**Practical guidance: use light mode (`deep_research`) for programmatic, cited
-research.** It returns the report + `content_references` directly over SSE.
+**The report lives in the hidden widget state.** Fetching the conversation with
+`?include_visually_hidden_messages=true&include_widget_state=true` exposes a node
+carrying `widget_state.report_message.content.parts[0]` (the full Markdown
+report) plus `report_message.metadata.content_references` (the source URLs). The
+widget state is delivered via two carriers, both handled by
+`_dr_report_from_widget_state`:
 
-The wrapper retains *best-effort* heavy citation extraction (`_emit_done` /
-`_poll_dr_completion` pull refs from nested `/message/metadata/...` patches or a
-same-turn conversation-detail node) — dormant until/unless the backend exposes
-refs on that path. Set `GPT2AGENT_RAW_DUMP=<path>` to capture the raw heavy
-stream + polls for further reverse-engineering.
+1. a tool text node whose part starts with `"The latest state of the widget is: {…}"`, and
+2. `message.metadata.chatgpt_sdk.widget_state` (a JSON string).
+
+`_poll_dr_completion` now checks the widget state each poll and emits the report
+as a `done` event the moment it appears. Verified by recovering three real
+completed reports headlessly (45.6K / 52.4K / 51.5K chars). Set
+`GPT2AGENT_RAW_DUMP=<path>` to capture the raw heavy stream + polls.
+
+> **Light mode TODO:** the light `deep_research` (`model=research`) path uses the
+> SearchGPT web-search backend, a *different* mechanism. It can still save the
+> search-dispatch JSON (`{"queries": […]}`) as the body when the real report is a
+> later/longer `done`; the bin script mitigates by picking the longest `done`.
+> A dedicated light-mode fix is tracked separately.
 
 Upstream tracking: see `gpt2agent/sse.py` (https://github.com/robotlearning123/gpt2agent/blob/main/gpt2agent/sse.py)
-around `_emit_done` / `_poll_dr_completion`.
+around `_dr_report_from_widget_state` / `_poll_dr_completion`.
 
 ## Quota management
 
