@@ -138,7 +138,7 @@ calls don't 401 mid-flight.
 
 | Tool | What it does |
 |---|---|
-| `account_status` | Plan, country, MFA, feature count, subscription expiry |
+| `account_status` | Plan, country, groups, feature count, subscription expiry |
 | `list_models` | All models on your account (slug, max_tokens, reasoning_type, capabilities, enabled_tools) |
 | `list_conversations` | Recent ChatGPT conversations (titles: emails/phones redacted) |
 | `get_conversation` | Full message history for a specific conversation (multimodal, code, images) |

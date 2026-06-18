@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --no-register)  REGISTER=0; shift ;;
     --source)       SOURCE="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) err "Unknown option: $1"; exit 2 ;;
@@ -70,7 +70,9 @@ ok "Python: $($PYTHON --version) ($(command -v "$PYTHON"))"
 
 if ! command -v pipx >/dev/null 2>&1; then
   info "pipx not found; installing via $PYTHON -m pip install --user pipx"
-  "$PYTHON" -m pip install --user --quiet pipx
+  # `|| true` so a PEP-668 'externally-managed-environment' failure (Ubuntu/
+  # Debian/Fedora) doesn't abort under `set -e` before the fallback hint below.
+  "$PYTHON" -m pip install --user --quiet pipx || true
   "$PYTHON" -m pipx ensurepath >/dev/null 2>&1 || true
   # Refresh PATH for this shell so the next call finds pipx.
   case ":$PATH:" in
@@ -80,7 +82,11 @@ if ! command -v pipx >/dev/null 2>&1; then
 fi
 
 if ! command -v pipx >/dev/null 2>&1; then
-  err "pipx still not on PATH. Open a new shell (PATH refresh) and re-run, or install pipx manually."
+  err "pipx still not on PATH. Install it via your distro and re-run:"
+  err "  Debian/Ubuntu:  sudo apt install pipx && pipx ensurepath"
+  err "  Fedora:         sudo dnf install pipx && pipx ensurepath"
+  err "  macOS:          brew install pipx && pipx ensurepath"
+  err "  other:          python3 -m pip install --user pipx   (then open a new shell)"
   exit 1
 fi
 ok "pipx: $(pipx --version 2>/dev/null || echo present)"

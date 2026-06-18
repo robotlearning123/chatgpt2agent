@@ -163,6 +163,11 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
         When `auto_confirm` is True (default), an imperative prefix is prepended
         so the model proceeds without asking "Do you want me to start?".
+
+        Returns the report text with a Sources section appended. Citations are
+        recovered from the connector's widget state; grouped source URLs are
+        usually present but not guaranteed — if absent, the model may have cited
+        sources inline in the body. Returns "(no response)" on timeout.
         """
         q = _DR_IMPERATIVE_PREFIX + query if auto_confirm else query
         final_text = ""
@@ -210,13 +215,15 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
     @mcp.tool()
     async def gpt_chat(gizmo_id: str, prompt: str) -> str:
-        """Chat through one of your private Custom GPTs (g-p-* IDs).
+        """Chat through one of your private Custom GPTs.
 
-        Use `list_custom_gpts` to enumerate available gizmo IDs and their names.
+        `gizmo_id`: pass the `short_url` returned by `list_custom_gpts` (call it
+        first to discover your Custom GPTs). The gizmo's instructions, files, and
+        memory_scope apply to the reply.
 
         EXPERIMENTAL: passes `gizmo_id` into the conversation payload via the
         `conversation_origin` field reverse-engineered from chatgpt.com web
-        bundles. The gizmo's instructions, files, and memory_scope apply.
+        bundles. Returns "(no response)" on timeout.
         """
         text = await conv.complete(
             chat_model,
@@ -261,9 +268,14 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
 
 def main() -> None:
+    from gpt2agent import __version__
+
     parser = argparse.ArgumentParser(
         prog="gpt2agent",
         description="Use your ChatGPT Plus/Pro in Claude Code and other AI agents.",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"gpt2agent {__version__}"
     )
     sub = parser.add_subparsers(dest="command")
 

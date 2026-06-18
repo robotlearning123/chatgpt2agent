@@ -10,11 +10,20 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICES.md"]
 requires-python = ">=3.10"
-keywords = ["mcp", "chatgpt", "claude", "openai", "agent", "llm"]
+keywords = ["mcp", "model-context-protocol", "chatgpt", "claude", "openai", "codex", "agent", "llm", "deep-research"]
+authors = [{ name = "robotlearning123" }]
+maintainers = [{ name = "robotlearning123" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "mcp>=1.26.0",
@@ -24,7 +33,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-asyncio>=0.21"]
+dev = ["pytest>=7", "pytest-asyncio>=0.21", "ruff>=0.6"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+# Default rule set (E/F) — matches the `ruff check` the CI/PR checklist expects.
 
 [project.scripts]
 gpt2agent = "gpt2agent.server:main"
@@ -46,5 +60,6 @@ gpt2agent = [
 [project.urls]
 Homepage = "https://github.com/robotlearning123/gpt2agent"
 Repository = "https://github.com/robotlearning123/gpt2agent"
+Documentation = "https://github.com/robotlearning123/gpt2agent#readme"
 Changelog = "https://github.com/robotlearning123/gpt2agent/blob/main/CHANGELOG.md"
 Issues = "https://github.com/robotlearning123/gpt2agent/issues"
