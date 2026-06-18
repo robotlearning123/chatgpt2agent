@@ -140,7 +140,7 @@ calls don't 401 mid-flight.
 |---|---|
 | `account_status` | Plan, country, MFA, feature count, subscription expiry |
 | `list_models` | All models on your account (slug, max_tokens, reasoning_type, capabilities, enabled_tools) |
-| `list_conversations` | Recent ChatGPT conversations (PII redacted) |
+| `list_conversations` | Recent ChatGPT conversations (titles: emails/phones redacted) |
 | `get_conversation` | Full message history for a specific conversation (multimodal, code, images) |
 | `list_tasks` | Scheduled / completed ChatGPT tasks |
 | `list_apps` | Connected apps + connectors |
@@ -150,7 +150,7 @@ calls don't 401 mid-flight.
 
 | Tool | What it does |
 |---|---|
-| `memory_list` | List all ChatGPT memory entries (PII redacted) |
+| `memory_list` | List all ChatGPT memory entries (emails/phones redacted) |
 | `memory_search` | Keyword filter over memories |
 | `memory_create_via_chat` | Add a memory (model-initiated workaround — POST `/memories` is 405) |
 | `custom_instructions_get` | Read your current `about_user` / `about_model` |
@@ -195,7 +195,7 @@ Optional `~/.gpt2agent/config.toml` or `./config.toml`:
 
 ```toml
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"   # loopback only; the HTTP transport is UNAUTHENTICATED
 port = 9000
 
 [models]
@@ -208,13 +208,51 @@ heavy_dr = "gpt-5-5-pro"    # override slug for deep_research_heavy
 
 ## Limitations
 
-- **Deep Research quota:** ~248 requests / monthly cycle on Pro; lower on Plus.
-- **Account-tier features unavailable in 0.0.2:** Sora video, Operator/CUA, voice
+- **Deep Research quota:** roughly ~248 heavy requests / monthly cycle on Pro,
+  lower on Plus — approximate and account/region-dependent, not a guaranteed number.
+- **Account-tier features not yet supported:** Sora video, Operator/CUA, voice
   sessions. These use HTTP endpoints that return 404 or haven't yet been
   reverse-engineered out of the chatgpt.com web bundle.
 - **`gpt_chat`** is experimental — `gizmo_id` payload field verified against
   web traffic but not load-tested across all g-p-* types.
 - Requires an active ChatGPT Plus or Pro subscription.
+
+---
+
+## Security & risk — read before you run this
+
+gpt2agent talks to ChatGPT's **private** backend the way the web app does. That
+has real consequences; please understand them before pointing it at your account.
+
+- **It impersonates the chatgpt.com web client.** It uses `curl_cffi` TLS
+  fingerprint impersonation and vendored Proof-of-Work + Cloudflare Turnstile
+  solvers to pass the OpenAI Sentinel challenge. This is **very likely against
+  the OpenAI Terms of Service**, and automated/abnormal traffic can get your
+  account **rate-limited, challenged, suspended, or banned**. Use an account you
+  can afford to lose, keep volume human-scale, and don't rely on it for anything
+  critical. This is a reverse-engineering / research tool, not an official API.
+- **The HTTP transport is UNAUTHENTICATED.** It proxies your *entire* account —
+  read all conversations, spend Deep Research quota, overwrite custom
+  instructions, launch Codex cloud tasks. Anyone who can reach the port controls
+  your account. Therefore:
+  - **Use stdio** (the default for `gpt2agent install`) for local clients like
+    Claude Code and Codex. It is not network-exposed.
+  - The server **binds `127.0.0.1` by default** and **refuses** to start the HTTP
+    transport on a non-loopback host unless you explicitly set
+    `GPT2AGENT_ALLOW_REMOTE=1`. Only do that behind your own auth proxy / firewall.
+- **Your token stays local.** It is read from `~/.codex/auth.json` (or
+  `~/.gpt2agent/token.json`, chmod `600`) and sent only to `chatgpt.com`.
+  gpt2agent never transmits it anywhere else. Token/secret values are redacted
+  from error messages and logs (best-effort).
+- **PII redaction is limited.** Tools that return conversation/memory data strip
+  only **emails and phone numbers** from text — names, addresses, IDs, and the
+  full message bodies of `get_conversation` are returned verbatim. Don't treat
+  the output as anonymized.
+- **`GPT2AGENT_RAW_DUMP`** (debug) writes raw, unredacted SSE/poll traffic —
+  including prompts, responses, and resume tokens — to the path you give it.
+  Use only for debugging and delete the dumps after.
+
+Found a security issue? See [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -229,23 +267,31 @@ pytest
 
 ### Release
 
-Tagged releases auto-publish to PyPI and create a GitHub Release with the
-matching CHANGELOG section:
+Tagged releases are configured to publish to PyPI and create a GitHub Release
+with the matching CHANGELOG section:
 
 ```bash
 # bump version
-$EDITOR pyproject.toml             # e.g. "0.0.2" → "0.0.3"
-$EDITOR CHANGELOG.md               # add ## [0.0.3] - YYYY-MM-DD ...
-git commit -am "release: 0.0.3"
-git tag v0.0.3
+$EDITOR pyproject.toml             # e.g. "0.0.3" → "0.0.4"
+$EDITOR CHANGELOG.md               # add ## [0.0.4] - YYYY-MM-DD ...
+git commit -am "release: 0.0.4"
+git tag v0.0.4
 git push origin main --tags        # release workflow fires on the tag
 ```
 
 The release workflow (`.github/workflows/release.yml`) verifies the tag
 matches `pyproject.toml`, runs the test matrix, builds wheel + sdist, publishes
-to PyPI via OIDC trusted publishing (no token in secrets — one-time setup at
-[pypi.org/manage/account/publishing](https://pypi.org/manage/account/publishing/)),
-and posts a GitHub Release with that version's CHANGELOG body.
+to PyPI via OIDC trusted publishing, and posts a GitHub Release with that
+version's CHANGELOG body.
+
+> **One-time PyPI setup required before the first publish succeeds.** PyPI's
+> OIDC exchange needs a Trusted Publisher registered for this repo (project
+> `gpt2agent`, owner `robotlearning123`, workflow `release.yml`, environment
+> `pypi`) at
+> [pypi.org → Publishing](https://pypi.org/manage/account/publishing/) — or a
+> first manual `twine upload` to create the project. Until that is done the
+> release job fails with `invalid-publisher` and the package is not on PyPI;
+> the `install.sh` one-liner falls back to a `git+https` install in the meantime.
 
 ---
 

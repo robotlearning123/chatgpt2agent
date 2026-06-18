@@ -10,6 +10,8 @@ from typing import Any
 
 from curl_cffi import requests
 
+from gpt2agent._log_redact import redact_error
+
 
 _BASE = "https://chatgpt.com"
 _CLIENT_VERSION = "prod-be885abbfcfe7b1f511e88b3003d9ee44757fbad"
@@ -190,7 +192,7 @@ class BackendClient:
         if r.status_code == 405:
             raise RuntimeError(f"405 Method Not Allowed: {path}")
         if not (200 <= r.status_code < 300):
-            raise RuntimeError(f"HTTP {r.status_code} for {path}: {r.text[:200]}")
+            raise RuntimeError(f"HTTP {r.status_code} for {path}: {redact_error(r.text)}")
 
         if not r.text.strip():
             return None
@@ -199,5 +201,5 @@ class BackendClient:
         except Exception as exc:
             raise RuntimeError(
                 f"Expected JSON from {path} but got non-JSON 2xx response: "
-                f"{r.text[:200]!r}"
+                f"{redact_error(r.text)}"
             ) from exc

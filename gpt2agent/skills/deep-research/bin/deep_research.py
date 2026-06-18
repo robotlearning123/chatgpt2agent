@@ -2,8 +2,8 @@
 
 Two modes:
   light  -> conv.deep_research(query)        ~1 min,  citations preserved
-  heavy  -> conv.deep_research_heavy(query)  5-30 min, citations LOST due to
-            gpt2agent 0.0.1 wrapper bug — reconstructed from progress events
+  heavy  -> conv.deep_research_heavy(query)  5-30 min, report + citations
+            recovered from the connector widget state (gpt2agent >=0.0.4)
 
 Outputs (in --out-dir):
   report.md   final markdown report
@@ -132,7 +132,7 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
     if tool_error_msg:
         notes_block += f"\n\n> **Tool error:** {tool_error_msg}\n"
     if mode == "heavy" and not lines:
-        notes_block += "\n\n> **Citations:** Not recovered (gpt2agent 0.0.1 heavy DR wrapper limitation). To get URLs, open the corresponding chatgpt.com conversation.\n"
+        notes_block += "\n\n> **Citations:** No grouped source list in this report's widget state; the model may have written source URLs inline in the body instead.\n"
 
     header = (
         f"# Deep Research Report\n\n"
