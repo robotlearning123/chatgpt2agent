@@ -4,6 +4,42 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.5] - 2026-06-18
+
+### Security
+
+- **Default bind is now `127.0.0.1` (was `0.0.0.0`).** The HTTP transport is
+  unauthenticated and proxies a full ChatGPT account; the server now refuses to
+  start HTTP on a non-loopback host unless `GPT2AGENT_ALLOW_REMOTE=1` is set, and
+  prints a loud warning when it does. `config.example.toml` ships loopback. Use
+  the stdio transport (the `install` default) for local clients.
+- **Broader secret redaction.** `redact_error` now also strips bare `Bearer`
+  tokens, named JSON token fields (`access_token`/`session_token`/…), auth/session
+  cookies, and token query params. `backend.py` and the streaming SSE error paths
+  now route bodies through it (previously raw `r.text`/`body[:500]`).
+- Removed internal agent-orchestration notes (`docs/goals/*.md`) from the repo.
+
+### Fixed
+
+- **Heavy DR widget parser hardening.** `_dr_report_from_widget_state` now only
+  trusts `tool`/`assistant` nodes, requires the widget prefix to *start* the part
+  (not appear anywhere), and emits only a *finished* report — closing a
+  DR-report-spoofing vector (a user message could fake the final report) and a
+  premature-`done` on in-progress drafts.
+- `agent`/`chat`/`gpt_chat`/`memory_create_via_chat` return `"(no response)"`
+  instead of an empty string on timeout. `stream()` is typed `AsyncIterator[str | dict]`.
+- `CODEX_HOME` is now honored in `auth.py`/`setup.py` (was already in `backend.py`).
+- `install.sh` falls back to a `git+https` install when PyPI returns 404, so the
+  one-line installer works before the package is published.
+
+### Docs / project
+
+- README: new **Security & risk** section (ToS/account-ban, unauthenticated HTTP,
+  redaction limits); honest "(emails/phones redacted)" wording; reconciled the
+  PyPI auto-publish claim with the required one-time Trusted Publisher setup.
+- Added `SECURITY.md`, issue templates, and a PR template. Lint clean; test suite
+  60 passed / 9 skipped (+14 hardening tests).
+
 ## [0.0.4] - 2026-06-11
 
 ### Fixed
