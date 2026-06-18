@@ -4,6 +4,44 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+## [0.0.6] - 2026-06-18
+
+### Added
+
+- **More MCP hosts auto-install.** `gpt2agent install` now registers Cursor,
+  Windsurf, Claude Desktop, and Zed (in addition to Claude Code and Codex) via a
+  shared idempotent JSON registrar; `detect_clients()` finds them for `--client all`.
+- **`gpt2agent --version`.**
+- **User docs** under `docs/` (quickstart, clients, configuration, troubleshooting,
+  FAQ, how-it-works) and a CI badge in the README.
+- **CODE_OF_CONDUCT.md**; ruff added to the `dev` extra with a `[tool.ruff]` config;
+  richer pyproject classifiers/authors.
+
+### Changed
+
+- **`gpt2agent setup` no longer starts a background HTTP daemon / macOS LaunchAgent
+  or registers the legacy `mcpServers.openai` HTTP entry.** It now pastes the token
+  and registers clients over **stdio**, matching `gpt2agent install`.
+- Tool docstrings clarified for agents: `gpt_chat` takes the `short_url` from
+  `list_custom_gpts` (not a `g-p-*` id); `list_models` documents `slug` as the
+  `chat(model=)` input; `account_status`/`deep_research_heavy` document returns +
+  the citation caveat. README no longer claims a non-existent `account_status` "MFA".
+
+### Fixed
+
+- `install.sh` no longer aborts under `set -e` on PEP-668 Linux when bootstrapping
+  pipx (and prints distro install commands); `-h` no longer leaks shell lines.
+- Bundled `gpt2agent` skill config example: `host` `0.0.0.0` → `127.0.0.1`.
+- Removed the dead `gpt2agent login --browser` hint; `CONTRIBUTING.md` stale test count.
+
+### Tests
+
+- New `tests/test_tools.py` (27 hermetic tests) covering the entire MCP tool layer +
+  server SSE handlers + the PII-redaction and `temporary=False` invariants (was zero
+  coverage). Plus install tests for the new hosts. Suite: 96 passed, 9 skipped.
+
 ## [0.0.5] - 2026-06-18
 
 ### Security
