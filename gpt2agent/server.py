@@ -283,15 +283,18 @@ def main() -> None:
     sub.add_parser("setup", help="First-time setup wizard (login + register)")
 
     # install subcommand — register gpt2agent with one or more MCP clients
+    from gpt2agent.install import SUPPORTED_CLIENTS
+
     install_p = sub.add_parser(
         "install",
-        help="Register gpt2agent with an MCP client (claude-code, codex, all)",
+        help="Register gpt2agent with an MCP client (or 'all' to auto-detect)",
     )
     install_p.add_argument(
         "--client",
-        choices=["claude-code", "codex", "all"],
+        choices=[*SUPPORTED_CLIENTS, "all"],
         default="all",
-        help="Target MCP client (default: auto-detect installed clients)",
+        help="Target MCP client: " + ", ".join(SUPPORTED_CLIENTS) + ", or all "
+        "(default: auto-detect installed clients)",
     )
     install_p.add_argument(
         "--transport",

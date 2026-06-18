@@ -300,6 +300,123 @@ def install_codex(
     return {"path": cfg_path, "backup": backup, "changed": True}
 
 
+# ── Other MCP hosts (JSON, mcpServers-style) ───────────────────────────────
+#
+# Cursor, Windsurf, Claude Desktop and friends all use the same
+# ``{"<top_key>": {"<server>": {command, args}}}`` JSON shape Claude Code uses —
+# only the file path (and, for VS Code/Zed, the top-level key + entry shape)
+# differ. ``_install_json_host`` is the shared, idempotent writer; the per-host
+# functions just supply path + key + entry.
+
+
+def _mcp_entry() -> dict[str, Any]:
+    """stdio server entry for the mcpServers-style hosts (Cursor/Windsurf/…)."""
+    return {"command": "gpt2agent", "args": ["run", "--stdio"]}
+
+
+def _zed_entry() -> dict[str, Any]:
+    """Zed nests the command and uses a ``context_servers`` top-level key."""
+    return {"command": {"path": "gpt2agent", "args": ["run", "--stdio"]}, "settings": {}}
+
+
+def _install_json_host(
+    label: str,
+    cfg_path: Path,
+    *,
+    top_key: str,
+    entry: dict[str, Any],
+    server_name: str = "gpt2agent",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Register gpt2agent in a JSON MCP config file under ``top_key.<server>``.
+
+    Idempotent; preserves every other field; writes a ``.bak-gpt2agent`` backup.
+    Used for Cursor, Windsurf, Claude Desktop, VS Code, Zed (see callers).
+    """
+    if cfg_path.exists():
+        try:
+            data = json.loads(cfg_path.read_text() or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"{cfg_path} is not valid JSON ({exc}). Refusing to overwrite — "
+                "repair it or move it aside, then re-run."
+            )
+        if not isinstance(data, dict):
+            raise RuntimeError(f"{cfg_path} is not a JSON object; refusing to overwrite.")
+    else:
+        data = {}
+
+    servers = data.setdefault(top_key, {})
+    if not isinstance(servers, dict):
+        raise RuntimeError(f"{cfg_path}: '{top_key}' is not an object; refusing to overwrite.")
+    prior = servers.get(server_name)
+    servers[server_name] = entry
+
+    if prior == entry:
+        _info(f"{label}: {cfg_path} already has {top_key}.{server_name} (no-op)")
+        return {"path": cfg_path, "backup": None, "changed": False}
+    if dry_run:
+        _info(f"{label}: would write {top_key}.{server_name} to {cfg_path}")
+        return {"path": cfg_path, "backup": None, "changed": False}
+
+    backup = _backup(cfg_path)
+    _atomic_write(cfg_path, json.dumps(data, indent=2) + "\n")
+    _ok(f"{label}: wrote {top_key}.{server_name} to {cfg_path} "
+        f"(backup: {backup.name if backup else 'none'})")
+    return {"path": cfg_path, "backup": backup, "changed": True}
+
+
+def install_cursor(*, server_name: str = "gpt2agent", dry_run: bool = False,
+                   config_path: Path | None = None) -> dict[str, Any]:
+    """Register gpt2agent in Cursor's ``~/.cursor/mcp.json`` (``mcpServers``)."""
+    cfg = config_path or Path.home() / ".cursor" / "mcp.json"
+    return _install_json_host("cursor", cfg, top_key="mcpServers", entry=_mcp_entry(),
+                              server_name=server_name, dry_run=dry_run)
+
+
+def install_windsurf(*, server_name: str = "gpt2agent", dry_run: bool = False,
+                     config_path: Path | None = None) -> dict[str, Any]:
+    """Register gpt2agent in Windsurf's ``~/.codeium/windsurf/mcp_config.json``."""
+    cfg = config_path or Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
+    return _install_json_host("windsurf", cfg, top_key="mcpServers", entry=_mcp_entry(),
+                              server_name=server_name, dry_run=dry_run)
+
+
+def install_claude_desktop(*, server_name: str = "gpt2agent", dry_run: bool = False,
+                           config_path: Path | None = None) -> dict[str, Any]:
+    """Register gpt2agent in the Claude Desktop config (``mcpServers``)."""
+    cfg = config_path or _claude_desktop_config_path()
+    return _install_json_host("claude-desktop", cfg, top_key="mcpServers", entry=_mcp_entry(),
+                              server_name=server_name, dry_run=dry_run)
+
+
+def install_zed(*, server_name: str = "gpt2agent", dry_run: bool = False,
+                config_path: Path | None = None) -> dict[str, Any]:
+    """Register gpt2agent in Zed's ``~/.config/zed/settings.json`` (``context_servers``)."""
+    cfg = config_path or Path.home() / ".config" / "zed" / "settings.json"
+    return _install_json_host("zed", cfg, top_key="context_servers", entry=_zed_entry(),
+                              server_name=server_name, dry_run=dry_run)
+
+
+def _claude_desktop_config_path() -> Path:
+    """Platform-specific Claude Desktop config path."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(appdata) / "Claude" / "claude_desktop_config.json"
+    return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+
+# Registry of the JSON hosts beyond claude-code/codex: name → (installer, detect path).
+_EXTRA_HOSTS: dict[str, Any] = {
+    "cursor": (install_cursor, lambda: Path.home() / ".cursor"),
+    "windsurf": (install_windsurf, lambda: Path.home() / ".codeium" / "windsurf"),
+    "claude-desktop": (install_claude_desktop, lambda: _claude_desktop_config_path().parent),
+    "zed": (install_zed, lambda: Path.home() / ".config" / "zed"),
+}
+
+
 # ── Claude Code skill bundle ───────────────────────────────────────────────
 
 
@@ -376,7 +493,14 @@ def detect_clients() -> list[str]:
         detected.append("claude-code")
     if (Path.home() / ".codex").exists():
         detected.append("codex")
+    for name, (_installer, detect) in _EXTRA_HOSTS.items():
+        if detect().exists():
+            detected.append(name)
     return detected
+
+
+# All client names install supports (for --client choices and docs).
+SUPPORTED_CLIENTS = ["claude-code", "codex", *_EXTRA_HOSTS.keys()]
 
 
 # ── top-level entry point ──────────────────────────────────────────────────
@@ -414,6 +538,8 @@ def run_install(
                 )
             elif target == "codex":
                 install_codex(dry_run=dry_run)
+            elif target in _EXTRA_HOSTS:
+                _EXTRA_HOSTS[target][0](dry_run=dry_run)
             else:
                 _err(f"Unknown client: {target}")
                 failures += 1
