@@ -104,10 +104,11 @@ args = ["run", "--stdio"]
 gpt2agent setup
 ```
 
-Prompts for a ChatGPT session token and saves it to `~/.gpt2agent/token.json`.
-The `codex login` flow is preferred when available because codex auto-refreshes
-its token; gpt2agent reloads `~/.codex/auth.json` on mtime change so long
-calls don't 401 mid-flight.
+Prompts for a ChatGPT session token (saved to `~/.gpt2agent/token.json`, mode
+`600`), detects your plan, and registers gpt2agent with your detected MCP clients
+over **stdio** — the same wiring as `gpt2agent install`. The `codex login` flow is
+preferred when available because codex auto-refreshes its token; gpt2agent reloads
+`~/.codex/auth.json` on mtime change so long calls don't 401 mid-flight.
 
 ---
 
