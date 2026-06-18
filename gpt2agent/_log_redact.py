@@ -29,7 +29,9 @@ _TOKEN_FIELD_RE = re.compile(
 )
 
 # 3. Bare `Bearer <token>` not wrapped in a JSON key (e.g. echoed plain in a body).
-_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
+#    Char class covers JWT (`-_.`) plus classic base64 (`+/`) and `=` padding so an
+#    RFC-style token like `Bearer abc+def/ghi==` is fully redacted, not partially.
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/\-]+=*", re.IGNORECASE)
 
 # 4. Auth/session cookies, e.g. `__Secure-next-auth.session-token=…`.
 _COOKIE_RE = re.compile(
@@ -37,9 +39,10 @@ _COOKIE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# 5. Token-bearing query params, e.g. `?access_token=…` / `&token=…`.
+# 5. Token-bearing query params, e.g. `?access_token=…` / `&token=…` / `&accessToken=…`.
 _QUERY_TOKEN_RE = re.compile(
-    r"([?&](?:access_token|id_token|refresh_token|token|sig|signature)=)[^&\s\"]+",
+    r"([?&](?:access[_-]?token|accessToken|session[_-]?token|sessionToken|auth[_-]?token"
+    r"|id_token|refresh_token|token|sig|signature)=)[^&\s\"]+",
     re.IGNORECASE,
 )
 

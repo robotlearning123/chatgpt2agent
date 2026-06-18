@@ -47,6 +47,20 @@ def test_redact_query_token_keeps_other_params() -> None:
     assert "file=report.md" in out  # non-secret params preserved
 
 
+def test_redact_base64_bearer_fully() -> None:
+    # classic base64 token with +, /, and = padding must be fully masked, not partial
+    out = redact_error("Authorization failed for Bearer abc+def/ghi==jkl", max_len=500)
+    assert "abc+def/ghi==jkl" not in out
+    assert "def" not in out and "ghi" not in out
+    assert "Bearer <REDACTED>" in out
+
+
+def test_redact_camelcase_query_token() -> None:
+    out = redact_error("/cb?accessToken=SEKRET&sessionToken=ALSOSEKRET&ok=1", max_len=500)
+    assert "SEKRET" not in out and "ALSOSEKRET" not in out
+    assert "ok=1" in out
+
+
 def test_redact_quoted_authorization_header() -> None:
     out = redact_error('{"Authorization": "Bearer eyJsecret"}', max_len=500)
     assert "eyJsecret" not in out
