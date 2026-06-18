@@ -140,7 +140,9 @@ MCP_PORT = 9000
 def write_mcp_config(plan: str) -> None:
     chat_model = "gpt-5-5-pro" if plan == "pro" else "gpt-5-3"
     cfg = f"""[server]
-host = "0.0.0.0"
+# Loopback only — the HTTP transport is unauthenticated and proxies your full
+# ChatGPT account. To expose it, set host explicitly AND GPT2AGENT_ALLOW_REMOTE=1.
+host = "127.0.0.1"
 port = {MCP_PORT}
 
 [models]

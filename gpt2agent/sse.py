@@ -146,8 +146,8 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
         parts = (msg.get("content") or {}).get("parts") or []
         if parts and isinstance(parts[0], str) and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX):
             carriers.append(parts[0])
-        sdk = (msg.get("metadata") or {}).get("chatgpt_sdk") or {}
-        if sdk.get("widget_state"):
+        sdk = (msg.get("metadata") or {}).get("chatgpt_sdk")
+        if isinstance(sdk, dict) and sdk.get("widget_state"):
             carriers.append(sdk["widget_state"])
         for carrier in carriers:
             state = _coerce_widget_state(carrier)

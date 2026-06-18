@@ -124,6 +124,24 @@ def test_widget_in_progress_draft_rejected() -> None:
     assert text == ""
 
 
+def test_widget_malformed_chatgpt_sdk_scalar_ignored() -> None:
+    """A non-dict `chatgpt_sdk` (e.g. a stray string) must be ignored, not crash."""
+    detail = {
+        "mapping": {
+            "n": {
+                "message": {
+                    "author": {"role": "tool"},
+                    "content": {"content_type": "code", "parts": [None]},
+                    "metadata": {"chatgpt_sdk": "not-a-dict"},
+                }
+            }
+        }
+    }
+    text, refs = sse_mod._dr_report_from_widget_state(detail)  # must not raise
+    assert text == ""
+    assert refs == []
+
+
 def test_widget_prefix_must_start_the_part() -> None:
     """Prefix embedded mid-string (e.g. inside a pasted blob) must not match."""
     detail = _carrier(
