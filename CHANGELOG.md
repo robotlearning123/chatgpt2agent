@@ -15,9 +15,11 @@ versioning: [SemVer](https://semver.org/).
   (after `/plugin marketplace add robotlearning123/gpt2agent`). Validated with
   `claude plugin validate --strict`. Schemas verified against the official Claude
   Code plugin docs.
-- **MCP registry descriptor**: `server.json` (schema `2025-12-11`) declares the PyPI
-  package `gpt2agent` as a stdio server for the official MCP registry. Verified
-  against the modelcontextprotocol/registry reference.
+- **MCP registry descriptor**: `server.json` declares the PyPI package `gpt2agent`
+  as a stdio server (with `run --stdio` packageArguments) for the official MCP
+  registry. Validates against the live `2025-12-11/server.schema.json`. The README
+  carries the `mcp-name` ownership marker. (Registry is in preview; publishing is an
+  owner step via `mcp-publisher`.)
 
 ### Added
 
