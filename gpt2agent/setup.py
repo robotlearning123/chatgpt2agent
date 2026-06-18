@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -39,7 +40,8 @@ def h1(msg):
 
 
 def _token_from_codex() -> str | None:
-    p = Path.home() / ".codex" / "auth.json"
+    codex_home = os.environ.get("CODEX_HOME")
+    p = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
     if not p.exists():
         return None
     try:

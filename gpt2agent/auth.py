@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import webbrowser
@@ -15,8 +16,13 @@ from pathlib import Path
 
 
 def _from_codex() -> dict | None:
-    """Reuse token from Codex CLI (~/.codex/auth.json)."""
-    p = Path.home() / ".codex" / "auth.json"
+    """Reuse token from Codex CLI ($CODEX_HOME/auth.json or ~/.codex/auth.json).
+
+    Honors ``CODEX_HOME`` so a multi-account user (e.g. ``CODEX_HOME=~/.codex-cx2``)
+    reads the same login that ``backend.py`` will use, instead of the default one.
+    """
+    codex_home = os.environ.get("CODEX_HOME")
+    p = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
     if not p.exists():
         return None
     try:

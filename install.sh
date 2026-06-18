@@ -96,9 +96,13 @@ elif [[ "$SOURCE" == git+* || "$SOURCE" == http* ]]; then
 else
   info "Installing $SOURCE from PyPI"
   if ! pipx install --force "$SOURCE" 2>&1; then
-    err "PyPI install failed. If the release isn't published yet, run:"
-    err "  $0 --source git+https://github.com/robotlearning123/gpt2agent.git"
-    exit 1
+    GIT_FALLBACK="git+https://github.com/robotlearning123/gpt2agent.git"
+    info "PyPI install failed (package may not be published yet) — falling back to $GIT_FALLBACK"
+    if ! pipx install --force "$GIT_FALLBACK" 2>&1; then
+      err "Both PyPI and git install failed. Check your network and Python toolchain, then retry:"
+      err "  pipx install --force $GIT_FALLBACK"
+      exit 1
+    fi
   fi
 fi
 
