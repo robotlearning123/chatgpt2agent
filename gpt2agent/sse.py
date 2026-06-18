@@ -13,14 +13,13 @@ from uuid import uuid4
 
 from curl_cffi.requests import AsyncSession
 
+from gpt2agent._log_redact import redact_error as _redact_error
 from gpt2agent.backend import BackendClient, _BASE
 from gpt2agent.sentinel import SentinelGate  # noqa: F401  (used in stream)
 
 _log = logging.getLogger(__name__)
 
 _CONV_URL = _BASE + "/backend-api/conversation"
-
-from gpt2agent._log_redact import redact_error as _redact_error  # noqa: F401
 
 
 def _safe_body(resp: object) -> str:
@@ -118,7 +117,19 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
     text lives in ``widget_state.report_message`` and renders client-side. This
     walks the mapping for either widget-state carrier (see
     :func:`_coerce_widget_state`) and returns ``(report_text, content_references)``
-    for the longest report found, or ``("", [])`` if none is present.
+    for the longest *completed* report found, or ``("", [])`` if none is present.
+
+    Hardening (audit 2026-06-18):
+
+    * Only the connector's own ``tool``/``assistant`` nodes are trusted carriers.
+      A ``user`` (or otherwise authored) message that merely contains the widget
+      prefix cannot spoof the final report — the query is stored verbatim and is
+      otherwise attacker/page-controlled in agentic research flows.
+    * The text carrier must *start with* the prefix, not merely contain it.
+    * An in-progress draft is ignored: the report is accepted only when its
+      ``report_message.status`` is ``finished_successfully`` (or, when that field
+      is absent, the top-level widget ``status`` is not a non-completed state),
+      so polling never emits a half-written report as the final answer.
     """
     mapping = (detail or {}).get("mapping") or {}
     best_text = ""
@@ -127,9 +138,13 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
         msg = (node or {}).get("message")
         if not isinstance(msg, dict):
             continue
+        # Trust only the connector's own nodes — never a user-authored message.
+        role = (msg.get("author") or {}).get("role")
+        if role not in ("tool", "assistant"):
+            continue
         carriers: list[object] = []
         parts = (msg.get("content") or {}).get("parts") or []
-        if parts and isinstance(parts[0], str) and _WIDGET_STATE_TEXT_PREFIX in parts[0]:
+        if parts and isinstance(parts[0], str) and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX):
             carriers.append(parts[0])
         sdk = (msg.get("metadata") or {}).get("chatgpt_sdk") or {}
         if sdk.get("widget_state"):
@@ -138,6 +153,13 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
             state = _coerce_widget_state(carrier)
             report = (state or {}).get("report_message")
             if not isinstance(report, dict):
+                continue
+            # Only emit a finished report — never an in-progress draft.
+            report_status = report.get("status")
+            if report_status is not None:
+                if report_status != "finished_successfully":
+                    continue
+            elif (state or {}).get("status") not in (None, "completed"):
                 continue
             rparts = (report.get("content") or {}).get("parts") or []
             text = rparts[0] if rparts and isinstance(rparts[0], str) else ""
@@ -382,7 +404,10 @@ class ConversationClient:
         *,
         gizmo_id: str | None = None,
         temporary: bool = True,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[str | dict]:
+        # Yields text chunks (str). As the final item it may yield a single
+        # ``{"_conversation_id": ...}`` dict sentinel for ``complete()`` to detect
+        # agent-mode async runs — callers that join chunks must skip non-str items.
         self._backend._reload_token_if_stale()
         headers = dict(self._backend._session.headers)
         headers["Accept"] = "text/event-stream"
@@ -536,10 +561,11 @@ class ConversationClient:
         chunks: list[str] = []
         conv_id: str | None = None
         async for event in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
-            if isinstance(event, dict) and event.get("_conversation_id"):
-                conv_id = event["_conversation_id"]
-            else:
-                chunks.append(event)
+            if isinstance(event, dict):
+                if event.get("_conversation_id"):
+                    conv_id = event["_conversation_id"]
+                continue  # never let a non-str sentinel reach "".join(chunks)
+            chunks.append(event)
         text = "".join(chunks)
 
         # Agent mode: stream ends immediately with async_status, response arrives later
@@ -816,7 +842,6 @@ class ConversationClient:
         tool_calls: list[dict] = []
         tool_responses: list[dict] = []
         multimodal_assets: list[dict] = []
-        done = False
 
         async with AsyncSession(impersonate="chrome131", verify=True) as s:
             resp = await s.post(
@@ -864,7 +889,6 @@ class ConversationClient:
                     str_parts = [p for p in parts if isinstance(p, str)]
                     if str_parts and status == "finished_successfully":
                         last_text = str_parts[0]
-                        done = True
                     elif str_parts:
                         new = str_parts[0]
                         if new.startswith(last_text):
@@ -914,7 +938,6 @@ class ConversationClient:
                         "parts": resp_parts,
                     })
                     multimodal_assets.extend(img_assets)
-                    done = True
 
         final_text = last_text or "".join(text_parts)
 
@@ -1004,7 +1027,8 @@ class ConversationClient:
                         if len(body) > 500:
                             break
                     raise RuntimeError(
-                        f"HTTP {resp.status_code} from /backend-api/conversation: {body[:500]}"
+                        f"HTTP {resp.status_code} from /backend-api/conversation: "
+                        f"{_redact_error(body, max_len=500)}"
                     )
 
                 last_text = ""
@@ -1426,7 +1450,8 @@ class ConversationClient:
                     if len(body) > 500:
                         break
                 raise RuntimeError(
-                    f"HTTP {resp.status_code} from {_F_CONV_URL}: {body[:500]}"
+                    f"HTTP {resp.status_code} from {_F_CONV_URL}: "
+                    f"{_redact_error(body, max_len=500)}"
                 )
 
             async for raw_line in resp.aiter_lines():

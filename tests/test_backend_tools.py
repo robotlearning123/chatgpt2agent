@@ -21,6 +21,7 @@ def test_account_status_has_subscription() -> None:
 
     # call the raw backend methods directly — no MCP runtime needed
     me = client.get("/backend-api/me", target_path="/backend-api/me")
+    assert isinstance(me, dict) and me, "/backend-api/me returned no account info"
     check = client.get(
         "/backend-api/accounts/check/v4-2023-04-27",
         target_path="/backend-api/accounts/check/v4-2023-04-27",

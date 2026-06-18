@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,9 +24,28 @@ _CONFIG_SEARCH = [
 ]
 
 _DEFAULTS: dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 9000},
+    # Loopback by default: the HTTP transport has no authentication and proxies a
+    # full ChatGPT account, so binding all interfaces would expose the account to
+    # the LAN/WAN. Set host explicitly (and GPT2AGENT_ALLOW_REMOTE=1) to opt in.
+    "server": {"host": "127.0.0.1", "port": 9000},
     "models": {"chat": "gpt-5-3"},
 }
+
+# Hosts that keep the unauthenticated HTTP transport reachable only from the
+# local machine. Anything else requires an explicit GPT2AGENT_ALLOW_REMOTE opt-in.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"})
+
+
+def _http_bind_decision(host: str, allow_remote: bool) -> str:
+    """Classify an HTTP bind request: ``ok-loopback`` | ``ok-remote`` | ``refuse``.
+
+    The HTTP transport is unauthenticated and proxies a full ChatGPT account, so
+    binding a non-loopback interface is refused unless the operator explicitly
+    opts in via ``GPT2AGENT_ALLOW_REMOTE=1`` (``allow_remote``).
+    """
+    if host in _LOOPBACK_HOSTS:
+        return "ok-loopback"
+    return "ok-remote" if allow_remote else "refuse"
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
@@ -56,7 +76,7 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
 
     mcp = FastMCP(
         "gpt2agent",
-        host=str(srv.get("host", "0.0.0.0")),
+        host=str(srv.get("host", "127.0.0.1")),
         port=int(srv.get("port", 9000)),
         log_level="WARNING",
     )
@@ -81,17 +101,24 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         Set `temporary=False` to allow tool-based features (image gen, code
         interpreter, canvas). Temporary chats (default) cannot use these tools.
         """
-        return await conv.complete(
+        text = await conv.complete(
             model, [{"role": "user", "content": prompt}], temporary=temporary
         )
+        return text or "(no response)"
 
     @mcp.tool()
     async def agent(prompt: str) -> str:
         """ChatGPT Agent Mode — 262K context with autonomous browsing, code
         execution, and tool use. Best for multi-step tasks (literature gathering,
         document workflows, browser automation). SSE-only (no REST endpoint).
+
+        Returns "(no response)" if the agent run times out rather than an empty
+        string, so callers can tell a timeout apart from a real empty answer.
         """
-        return await conv.complete(agent_model, [{"role": "user", "content": prompt}], temporary=False)
+        text = await conv.complete(
+            agent_model, [{"role": "user", "content": prompt}], temporary=False
+        )
+        return text or "(no response)"
 
     @mcp.tool()
     async def deep_research(query: str, auto_confirm: bool = True) -> str:
@@ -107,7 +134,6 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         final_text = ""
         tool_calls: list[str] = []
         refs: list = []
-        groups: list = []
 
         async for event in conv.deep_research(q):
             if event["type"] == "tool":
@@ -115,7 +141,6 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             elif event["type"] == "done":
                 final_text = event["text"]
                 refs = event.get("content_references", [])
-                groups = event.get("search_result_groups", [])
 
         # Append a brief sources section if citations were returned
         if refs:
@@ -142,7 +167,6 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         q = _DR_IMPERATIVE_PREFIX + query if auto_confirm else query
         final_text = ""
         refs: list = []
-        groups: list = []
         connector_failed = False
         tool_error_msg = ""
 
@@ -151,7 +175,6 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             if etype == "done":
                 final_text = event["text"]
                 refs = event.get("content_references", [])
-                groups = event.get("search_result_groups", [])
                 if event.get("connector_failed"):
                     connector_failed = True
             elif etype == "tool_error":
@@ -195,12 +218,13 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         `conversation_origin` field reverse-engineered from chatgpt.com web
         bundles. The gizmo's instructions, files, and memory_scope apply.
         """
-        return await conv.complete(
+        text = await conv.complete(
             chat_model,
             [{"role": "user", "content": prompt}],
             gizmo_id=gizmo_id,
             temporary=False,
         )
+        return text or "(no response)"
 
     @mcp.tool()
     async def memory_create_via_chat(content: str) -> str:
@@ -215,7 +239,10 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             "Please commit the following to memory verbatim. "
             "Do not summarize, paraphrase, or ask for confirmation:\n\n" + content
         )
-        return await conv.complete(chat_model, [{"role": "user", "content": prompt}], temporary=False)
+        text = await conv.complete(
+            chat_model, [{"role": "user", "content": prompt}], temporary=False
+        )
+        return text or "(no response)"
 
     try:
         from gpt2agent.tools import register_all
@@ -329,6 +356,30 @@ def main() -> None:
     else:
         host = cfg["server"]["host"]
         port = cfg["server"]["port"]
+        # The HTTP transport has NO authentication and proxies a full ChatGPT
+        # account (read history, spend DR quota, overwrite custom instructions,
+        # launch Codex tasks). Refuse to bind a non-loopback interface unless the
+        # operator explicitly opts in, so a stray `gpt2agent run` can't expose the
+        # account to the LAN/WAN.
+        decision = _http_bind_decision(
+            host, os.environ.get("GPT2AGENT_ALLOW_REMOTE") == "1"
+        )
+        if decision == "refuse":
+            raise SystemExit(
+                f"Refusing to start the unauthenticated HTTP server on non-loopback "
+                f"host {host!r}: this would expose your full ChatGPT account to the "
+                f"network with no auth.\n"
+                f"  • For local clients (Claude Code/Codex) use stdio: gpt2agent run --stdio\n"
+                f"  • To bind {host!r} anyway (e.g. behind your own auth proxy), set "
+                f"GPT2AGENT_ALLOW_REMOTE=1."
+            )
+        if decision == "ok-remote":
+            print(
+                f"⚠ gpt2agent: serving an UNAUTHENTICATED account proxy on {host}:{port} "
+                f"(GPT2AGENT_ALLOW_REMOTE=1). Anyone who can reach this port controls "
+                f"your ChatGPT account. Put it behind your own auth/firewall.",
+                flush=True,
+            )
         print(f"gpt2agent  http://{host}:{port}/mcp  [{', '.join(tools)}]", flush=True)
         mcp.run(transport="streamable-http")
 

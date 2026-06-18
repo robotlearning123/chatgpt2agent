@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
+from gpt2agent._log_redact import redact_error as _redact_error
 from gpt2agent._vendored import pow as _pow
 from gpt2agent._vendored import turnstile as _turn
 
@@ -20,8 +21,6 @@ _CHAT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
-
-from gpt2agent._log_redact import redact_error as _redact_error  # noqa: F401
 
 
 class SentinelGate:
