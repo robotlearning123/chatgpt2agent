@@ -30,8 +30,10 @@ _TOKEN_FIELD_RE = re.compile(
 
 # 3. Bare `Bearer <token>` not wrapped in a JSON key (e.g. echoed plain in a body).
 #    Char class covers JWT (`-_.`) plus classic base64 (`+/`) and `=` padding so an
-#    RFC-style token like `Bearer abc+def/ghi==` is fully redacted, not partially.
-_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/\-]+=*", re.IGNORECASE)
+#    RFC-style token like `Bearer eyJ…+ab/cd==` is fully redacted, not partially.
+#    The {16,} floor avoids mangling ordinary prose after the word "Bearer"
+#    (e.g. "Bearer of bad news") — real bearer tokens are far longer.
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/\-]{16,}=*", re.IGNORECASE)
 
 # 4. Auth/session cookies, e.g. `__Secure-next-auth.session-token=…`.
 _COOKIE_RE = re.compile(

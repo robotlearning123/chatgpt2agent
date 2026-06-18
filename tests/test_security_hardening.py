@@ -48,11 +48,18 @@ def test_redact_query_token_keeps_other_params() -> None:
 
 
 def test_redact_base64_bearer_fully() -> None:
-    # classic base64 token with +, /, and = padding must be fully masked, not partial
-    out = redact_error("Authorization failed for Bearer abc+def/ghi==jkl", max_len=500)
-    assert "abc+def/ghi==jkl" not in out
-    assert "def" not in out and "ghi" not in out
+    # realistic base64 token (+, /, and trailing = padding) must be fully masked
+    tok = "eyJhbGci0iJ.payLoad+ab/cd9z=="
+    out = redact_error(f"Authorization failed for Bearer {tok}", max_len=500)
+    assert tok not in out
+    assert "payLoad" not in out and "ab/cd9z" not in out
     assert "Bearer <REDACTED>" in out
+
+
+def test_redact_bearer_does_not_eat_short_prose() -> None:
+    # "Bearer of bad news" must NOT be redacted — the {16,} floor preserves prose
+    out = redact_error("the Bearer of bad news arrived", max_len=500)
+    assert out == "the Bearer of bad news arrived"
 
 
 def test_redact_camelcase_query_token() -> None:
