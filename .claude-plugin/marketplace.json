@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "gpt2agent",
-      "source": ".",
+      "source": "./",
       "description": "ChatGPT Plus/Pro account as 25 MCP tools + the deep-research and gpt2agent skills. Requires `pipx install gpt2agent`.",
       "author": { "name": "robotlearning123" },
       "license": "MIT",
