@@ -186,7 +186,13 @@ def run_setup() -> None:
         write_mcp_config(plan)
         from gpt2agent.install import run_install
 
-        run_install(client="all", transport="stdio")
+        rc = run_install(client="all", transport="stdio")
+        if rc != 0:
+            print()
+            print(f"{RED}  Token saved, but client registration did not fully "
+                  f"succeed (see messages above).{RESET}")
+            print("  Fix the reported client(s) and re-run:  gpt2agent install")
+            sys.exit(rc)
         print_summary(plan)
 
     except KeyboardInterrupt:

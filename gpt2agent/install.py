@@ -331,7 +331,8 @@ def _install_json_host(
     """Register gpt2agent in a JSON MCP config file under ``top_key.<server>``.
 
     Idempotent; preserves every other field; writes a ``.bak-gpt2agent`` backup.
-    Used for Cursor, Windsurf, Claude Desktop, VS Code, Zed (see callers).
+    Used for Cursor, Windsurf, Claude Desktop, and Zed (see callers). VS Code and
+    Cline use the same shape but are documented as manual setup (docs/clients.md).
     """
     if cfg_path.exists():
         try:

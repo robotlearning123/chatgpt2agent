@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from gpt2agent.tools import account, apps, codex, conversations, gpts, images
-from gpt2agent.tools import instructions, memory, writes
+from gpt2agent.tools import instructions, memory, tools_features, writes
 from gpt2agent.tools._redact import redact
 
 
@@ -59,11 +59,28 @@ class FakeClient:
 
 def _reg(module, client: FakeClient, conv: Any = None) -> FakeMCP:
     mcp = FakeMCP()
-    if module in (images,):
+    if module in (images, tools_features):
         module.register(mcp, client, conv)
     else:
         module.register(mcp, client)
     return mcp
+
+
+class _ToolConv:
+    """Records ConversationClient.tool_call / image_gen calls for the SSE-backed tools."""
+
+    def __init__(self) -> None:
+        self.tool_calls: list[dict] = []
+        self.image_gen_calls: list[dict] = []
+
+    async def tool_call(self, prompt, *, model="gpt-5-3", temporary=True):
+        self.tool_calls.append({"prompt": prompt, "model": model, "temporary": temporary})
+        return {"conversation_id": "c", "text": "ran", "tool_calls": [], "tool_responses": []}
+
+    async def image_gen(self, prompt, *, model="gpt-5-3"):
+        self.image_gen_calls.append({"prompt": prompt, "model": model})
+        return {"conversation_id": "c", "assets": [
+            {"file_id": "f1", "asset_pointer": "sediment://file-1", "width": 4, "height": 2}]}
 
 
 # --------------------------------------------------------------------------- #
@@ -323,6 +340,39 @@ def test_custom_instructions_set_preserves_unsupplied_fields() -> None:
     assert payload["enabled"] is True
     assert payload["disabled_tools"] == ["t"]
     assert payload["about_model_message"] == "new"  # overridden
+
+
+# --------------------------------------------------------------------------- #
+#  tools/tools_features + images.generate_image (SSE-backed; temporary=False)
+# --------------------------------------------------------------------------- #
+
+
+def test_code_interpreter_runs_temporary_false() -> None:
+    conv = _ToolConv()
+    fn = _reg(tools_features, FakeClient(), conv).tools["code_interpreter"]
+    out = asyncio.run(fn("print(1)"))
+    assert conv.tool_calls[-1]["temporary"] is False
+    assert conv.tool_calls[-1]["prompt"] == "print(1)"
+    assert out["text"] == "ran"
+
+
+def test_canvas_execute_temporary_false_and_prefixes_prompt() -> None:
+    conv = _ToolConv()
+    fn = _reg(tools_features, FakeClient(), conv).tools["canvas_execute"]
+    asyncio.run(fn("make a chart"))
+    assert conv.tool_calls[-1]["temporary"] is False
+    assert conv.tool_calls[-1]["prompt"].startswith("Use Canvas to:")
+
+
+def test_generate_image_enriches_assets_with_download_url() -> None:
+    conv = _ToolConv()
+    client = FakeClient(routes={
+        "/backend-api/files/f1/download": {"download_url": "https://dl/img", "file_name": "img.png"},
+        "/backend-api/files/f1": {"name": "img.png"}})
+    fn = _reg(images, client, conv).tools["generate_image"]
+    out = asyncio.run(fn("a cat"))
+    assert conv.image_gen_calls[-1]["prompt"] == "a cat"
+    assert out["assets"][0]["download_url"] == "https://dl/img"
 
 
 # --------------------------------------------------------------------------- #
