@@ -49,6 +49,26 @@ Zed nests the command under `context_servers`:
 }
 ```
 
+## Claude Code plugin
+
+Instead of `gpt2agent install --client claude-code`, you can install via the plugin
+marketplace (bundles the MCP server registration + both skills):
+
+```text
+/plugin marketplace add robotlearning123/gpt2agent
+/plugin install gpt2agent@gpt2agent
+```
+
+You still need the `gpt2agent` CLI on PATH (`pipx install gpt2agent`) — the plugin
+wires `gpt2agent run --stdio` and the skills, not the Python package.
+
+## MCP registries
+
+`server.json` (repo root) is the [official MCP registry](https://registry.modelcontextprotocol.io)
+descriptor (PyPI package `gpt2agent`, stdio). Glama / mcp.so / PulseMCP auto-index
+from GitHub (topics + README). Publishing to the official registry is an owner step
+(`mcp-publisher` with GitHub auth).
+
 ## Manual setup
 
 ### VS Code (GitHub Copilot MCP)

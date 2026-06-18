@@ -1,5 +1,7 @@
 # gpt2agent
 
+<!-- mcp-name: io.github.robotlearning123/gpt2agent -->
+
 > **MCP server for your ChatGPT account: `codex login` → ChatGPT Plus/Pro inside any MCP client.**
 
 An **MCP server** that puts your **ChatGPT Plus or Pro** subscription — every model
@@ -57,6 +59,17 @@ gpt2agent install --client claude-code   # or: codex, cursor, windsurf, claude-d
 # HTTP transport instead of stdio?
 gpt2agent install --transport http --http-port 9000
 ```
+
+### Or as a Claude Code plugin
+
+```text
+/plugin marketplace add robotlearning123/gpt2agent
+/plugin install gpt2agent@gpt2agent
+```
+
+This bundles the MCP server registration + both skills in one step. You still need
+the `gpt2agent` CLI on PATH (`pipx install gpt2agent`) — the plugin wires the server
+(`gpt2agent run --stdio`) and skills, not the Python package itself.
 
 ### Per-client config
 

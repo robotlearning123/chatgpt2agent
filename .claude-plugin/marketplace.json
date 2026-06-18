@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "gpt2agent",
+  "owner": {
+    "name": "robotlearning123",
+    "url": "https://github.com/robotlearning123"
+  },
+  "metadata": {
+    "description": "gpt2agent — your ChatGPT Plus/Pro account as MCP tools for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "gpt2agent",
+      "source": ".",
+      "description": "ChatGPT Plus/Pro account as 25 MCP tools + the deep-research and gpt2agent skills. Requires `pipx install gpt2agent`.",
+      "author": { "name": "robotlearning123" },
+      "license": "MIT",
+      "keywords": ["mcp", "chatgpt", "openai", "deep-research"]
+    }
+  ]
+}
