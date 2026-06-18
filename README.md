@@ -1,5 +1,7 @@
 # gpt2agent
 
+<!-- mcp-name: io.github.robotlearning123/gpt2agent -->
+
 > **MCP server for your ChatGPT account: `codex login` → ChatGPT Plus/Pro inside any MCP client.**
 
 An **MCP server** that puts your **ChatGPT Plus or Pro** subscription — every model
