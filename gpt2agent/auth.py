@@ -68,7 +68,7 @@ def _from_browser() -> dict | None:
     print("    Application → Cookies → __Secure-next-auth.session-token")
     print()
     print("  Then paste the token below.")
-    print("  (Alternatively run: gpt2agent login --browser for automatic extraction)")
+    print("  (Tip: running `codex login` once lets gpt2agent reuse that token automatically.)")
     print()
     webbrowser.open("https://chat.openai.com")
     token = input("  Paste access_token (or session token): ").strip()

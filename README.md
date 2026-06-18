@@ -1,13 +1,17 @@
 # gpt2agent
 
-> **Your `codex login` → full ChatGPT Plus/Pro account inside any MCP client.**
+> **MCP server for your ChatGPT account: `codex login` → ChatGPT Plus/Pro inside any MCP client.**
 
-Use your **ChatGPT Plus or Pro** subscription — every model, every account-tier
-feature — inside Claude Code, Codex, and any MCP client.
+An **MCP server** that puts your **ChatGPT Plus or Pro** subscription — every model
+and the account-tier features below — inside Claude Code, Codex, Cursor, Windsurf,
+Zed, and any MCP client.
 
 [![PyPI version](https://img.shields.io/pypi/v/gpt2agent)](https://pypi.org/project/gpt2agent/)
+[![CI](https://github.com/robotlearning123/gpt2agent/actions/workflows/ci.yml/badge.svg)](https://github.com/robotlearning123/gpt2agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/gpt2agent/)
+
+📖 **[Quickstart](./docs/quickstart.md)** · **[Client setup](./docs/clients.md)** · **[Troubleshooting](./docs/troubleshooting.md)** · **[FAQ](./docs/faq.md)** · **[Docs index](./docs/README.md)**
 
 ---
 
@@ -32,10 +36,10 @@ curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/ins
 ```
 
 That command:
-1. Installs `gpt2agent` via pipx (creates an isolated env).
+1. Installs `gpt2agent` via pipx (creates an isolated env; falls back to a git install if PyPI is unreachable).
 2. Reuses your existing `~/.codex/auth.json` if you've run `codex login` — no separate ChatGPT token paste needed.
-3. Detects which MCP clients you have (Claude Code, Codex) and writes the right config snippet for each.
-4. Drops the `deep-research` Claude Code skill into `~/.claude/skills/`.
+3. Detects which MCP clients you have (Claude Code, Codex, Cursor, Windsurf, Claude Desktop, Zed) and writes the right config for each.
+4. Drops the Claude Code skills (`deep-research` + `gpt2agent`) into `~/.claude/skills/`.
 
 ### Or step-by-step
 
@@ -47,8 +51,8 @@ pipx install gpt2agent
 gpt2agent install                          # auto-detect everything
 
 # Want only one client?
-gpt2agent install --client claude-code
-gpt2agent install --client codex
+gpt2agent install --client claude-code   # or: codex, cursor, windsurf, claude-desktop, zed
+# (VS Code & Cline: see docs/clients.md for the manual snippet)
 
 # HTTP transport instead of stdio?
 gpt2agent install --transport http --http-port 9000
@@ -100,10 +104,11 @@ args = ["run", "--stdio"]
 gpt2agent setup
 ```
 
-Prompts for a ChatGPT session token and saves it to `~/.gpt2agent/token.json`.
-The `codex login` flow is preferred when available because codex auto-refreshes
-its token; gpt2agent reloads `~/.codex/auth.json` on mtime change so long
-calls don't 401 mid-flight.
+Prompts for a ChatGPT session token (saved to `~/.gpt2agent/token.json`, mode
+`600`), detects your plan, and registers gpt2agent with your detected MCP clients
+over **stdio** — the same wiring as `gpt2agent install`. The `codex login` flow is
+preferred when available because codex auto-refreshes its token; gpt2agent reloads
+`~/.codex/auth.json` on mtime change so long calls don't 401 mid-flight.
 
 ---
 
@@ -138,7 +143,7 @@ calls don't 401 mid-flight.
 
 | Tool | What it does |
 |---|---|
-| `account_status` | Plan, country, MFA, feature count, subscription expiry |
+| `account_status` | Plan, country, groups, feature count, subscription expiry |
 | `list_models` | All models on your account (slug, max_tokens, reasoning_type, capabilities, enabled_tools) |
 | `list_conversations` | Recent ChatGPT conversations (titles: emails/phones redacted) |
 | `get_conversation` | Full message history for a specific conversation (multimodal, code, images) |
@@ -191,7 +196,8 @@ refresh propagates transparently. See [NOTICES](./NOTICES.md) for attribution.
 
 ## Configuration
 
-Optional `~/.gpt2agent/config.toml` or `./config.toml`:
+Optional, searched in order: `~/.gpt2agent/config.toml`, `./config.toml`,
+`~/.config/gpt2agent/config.toml`. Full reference: [docs/configuration.md](./docs/configuration.md).
 
 ```toml
 [server]

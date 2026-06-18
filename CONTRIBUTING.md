@@ -20,7 +20,8 @@ pip install -e ".[dev]"
 pytest
 ```
 
-38 tests, 9 skipped. All must pass before merging.
+The offline suite must pass before merging (live tests are gated by `SKIP_LIVE`
+and skipped by default). Also run `ruff check gpt2agent tests` (clean).
 
 ## Code style
 

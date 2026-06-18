@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import platform
-import shutil
-import subprocess
 import sys
-import time
 import webbrowser
 from pathlib import Path
 
@@ -151,104 +147,6 @@ chat = "{chat_model}"
     MCP_CONFIG_PATH.write_text(cfg)
 
 
-def _port_open(port: int) -> bool:
-    import socket
-
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1):
-            return True
-    except OSError:
-        return False
-
-
-def ensure_mcp_server() -> None:
-    h1("Step 2 — Start MCP server")
-
-    if _port_open(MCP_PORT):
-        ok(f"MCP server already running on :{MCP_PORT}")
-        return
-
-    log = open(Path.home() / ".gpt2agent" / "mcp.log", "w")
-    subprocess.Popen(
-        [sys.executable, "-m", "gpt2agent.server", "--config", str(MCP_CONFIG_PATH)],
-        stdout=log,
-        stderr=log,
-        start_new_session=True,
-    )
-
-    for _ in range(15):
-        if _port_open(MCP_PORT):
-            ok(f"MCP server started on :{MCP_PORT}")
-            return
-        time.sleep(1)
-
-    raise SystemExit("MCP server failed to start. Check ~/.gpt2agent/mcp.log")
-
-
-def ensure_launchagent() -> None:
-    """Install macOS LaunchAgent for persistence."""
-    if platform.system() != "Darwin":
-        return
-
-    label = "com.user.gpt2agent"
-    plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
-    binary = shutil.which("gpt2agent") or sys.executable
-
-    cmd = (
-        f"        <string>{binary}</string>\n"
-        f"        <string>--config</string>\n"
-        f"        <string>{MCP_CONFIG_PATH}</string>"
-    )
-
-    plist.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-    <key>Label</key><string>{label}</string>
-    <key>ProgramArguments</key><array>
-{cmd}
-    </array>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{Path.home()}/.gpt2agent/mcp.log</string>
-    <key>StandardErrorPath</key><string>{Path.home()}/.gpt2agent/mcp.log</string>
-</dict></plist>""")
-
-    subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
-    subprocess.run(["launchctl", "load", str(plist)], capture_output=True)
-
-
-# ── agent CLI registration ───────────────────────────────────────────────────
-
-
-def register_claude_code() -> bool:
-    claude_json = Path.home() / ".claude.json"
-    if not shutil.which("claude") and not claude_json.exists():
-        return False
-
-    try:
-        data = json.loads(claude_json.read_text()) if claude_json.exists() else {}
-    except Exception:
-        data = {}
-
-    data.setdefault("mcpServers", {})
-    data["mcpServers"]["openai"] = {
-        "type": "url",
-        "url": f"http://localhost:{MCP_PORT}/mcp",
-    }
-    claude_json.write_text(json.dumps(data, indent=2))
-    return True
-
-
-def register_agents() -> None:
-    h1("Step 3 — Register with agent CLIs")
-
-    if register_claude_code():
-        ok("Claude Code → ~/.claude.json updated")
-        info("Restart Claude Code to activate tools")
-    else:
-        info("Claude Code not found (skipped)")
-
-
 # ── final summary ────────────────────────────────────────────────────────────
 
 
@@ -258,18 +156,11 @@ def print_summary(plan: str) -> None:
     print(f"{GREEN}{BOLD}  Done!{RESET}  ChatGPT {plan.capitalize()} is ready.")
     print(f"{'─' * 50}")
     print()
-    print(f"  Plan:   ChatGPT {plan.capitalize()}")
-    print(f"  URL:    http://localhost:{MCP_PORT}/mcp")
+    print(f"  Plan:      ChatGPT {plan.capitalize()}")
+    print("  Transport: stdio (local subprocess; not network-exposed)")
     print()
-    print("  Tools available in your agent:")
-    print("    chat, deep_research, deep_research_heavy")
-    print("    account_status, list_models")
-    print("    memory_list, memory_search, custom_instructions_get")
-    print("    custom_instructions_set, codex_task_create")
-    print("    list_codex_envs, list_codex_tasks")
-    print("    list_custom_gpts, list_conversations, list_tasks, list_apps")
-    print()
-    print("  Logs:   ~/.gpt2agent/mcp.log")
+    print("  Restart your MCP client (Claude Code / Cursor / …) to load the tools.")
+    print("  Then try the `account_status` or `chat` tool from your agent.")
     print()
 
 
@@ -288,13 +179,20 @@ def run_setup() -> None:
         plan = detect_plan()
         ok(f"ChatGPT {plan.capitalize()} detected")
 
+        # Persist a model default, then register over stdio — the same safe path
+        # as `gpt2agent install`. (No background HTTP daemon / LaunchAgent / legacy
+        # `openai` URL entry: the stdio transport is what every MCP client wants and
+        # avoids exposing an unauthenticated account proxy.)
         write_mcp_config(plan)
-        ensure_mcp_server()
-        if platform.system() == "Darwin":
-            ensure_launchagent()
-            ok("Auto-start enabled (LaunchAgent)")
+        from gpt2agent.install import run_install
 
-        register_agents()
+        rc = run_install(client="all", transport="stdio")
+        if rc != 0:
+            print()
+            print(f"{RED}  Token saved, but client registration did not fully "
+                  f"succeed (see messages above).{RESET}")
+            print("  Fix the reported client(s) and re-run:  gpt2agent install")
+            sys.exit(rc)
         print_summary(plan)
 
     except KeyboardInterrupt:

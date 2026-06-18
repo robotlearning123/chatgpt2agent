@@ -143,7 +143,7 @@ Config file locations (checked in order):
 Key settings:
 ```toml
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"   # loopback only; HTTP transport is unauthenticated
 port = 9000
 
 [models]

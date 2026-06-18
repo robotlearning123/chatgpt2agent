@@ -13,11 +13,15 @@ from pathlib import Path
 import pytest
 
 from gpt2agent.install import (
+    SUPPORTED_CLIENTS,
     _replace_or_append_toml_section,
     detect_clients,
     install_claude_code,
     install_claude_skill,
     install_codex,
+    install_cursor,
+    install_windsurf,
+    install_zed,
 )
 
 
@@ -333,3 +337,71 @@ def test_detect_clients_with_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     detected = detect_clients()
     assert "claude-code" in detected
     assert "codex" in detected
+
+
+# ── Other MCP hosts (Cursor / Windsurf / Zed) ───────────────────────────────
+
+
+def test_cursor_new_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "cursor.json"
+    install_cursor(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    assert data["mcpServers"]["gpt2agent"] == {
+        "command": "gpt2agent",
+        "args": ["run", "--stdio"],
+    }
+
+
+def test_cursor_preserves_other_servers(tmp_path: Path) -> None:
+    cfg = tmp_path / "cursor.json"
+    cfg.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}, "misc": 1}))
+    install_cursor(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    assert data["mcpServers"]["other"] == {"command": "x"}
+    assert data["misc"] == 1
+    assert "gpt2agent" in data["mcpServers"]
+
+
+def test_cursor_idempotent_and_backup(tmp_path: Path) -> None:
+    cfg = tmp_path / "cursor.json"
+    install_cursor(config_path=cfg)
+    r2 = install_cursor(config_path=cfg)
+    assert r2["changed"] is False
+    # second run over an existing file would have produced a backup on change;
+    # here it's a no-op so no backup is created
+    assert r2["backup"] is None
+
+
+def test_windsurf_new_config(tmp_path: Path) -> None:
+    cfg = tmp_path / "mcp_config.json"
+    install_windsurf(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    assert data["mcpServers"]["gpt2agent"]["args"] == ["run", "--stdio"]
+
+
+def test_zed_uses_context_servers_with_nested_command(tmp_path: Path) -> None:
+    cfg = tmp_path / "settings.json"
+    install_zed(config_path=cfg)
+    data = json.loads(cfg.read_text())
+    entry = data["context_servers"]["gpt2agent"]
+    assert entry["command"] == {"path": "gpt2agent", "args": ["run", "--stdio"]}
+    assert entry["settings"] == {}
+    assert "mcpServers" not in data
+
+
+def test_json_host_rejects_broken_json(tmp_path: Path) -> None:
+    cfg = tmp_path / "cursor.json"
+    cfg.write_text("{not valid json")
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        install_cursor(config_path=cfg)
+
+
+def test_json_host_dry_run_no_write(tmp_path: Path) -> None:
+    cfg = tmp_path / "cursor.json"
+    install_cursor(config_path=cfg, dry_run=True)
+    assert not cfg.exists()
+
+
+def test_supported_clients_lists_all_hosts() -> None:
+    for name in ("claude-code", "codex", "cursor", "windsurf", "claude-desktop", "zed"):
+        assert name in SUPPORTED_CLIENTS
