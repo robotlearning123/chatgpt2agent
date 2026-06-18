@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.robotlearning123/gpt2agent",
+  "description": "MCP server exposing a ChatGPT Plus/Pro account (chat, deep research, image gen, code interpreter, agent mode) as 25 tools, reusing your codex login.",
+  "version": "0.0.6",
+  "repository": {
+    "url": "https://github.com/robotlearning123/gpt2agent",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "gpt2agent",
+      "version": "0.0.6",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

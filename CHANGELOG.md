@@ -8,6 +8,17 @@ versioning: [SemVer](https://semver.org/).
 
 ## [0.0.6] - 2026-06-18
 
+### Packaging / distribution
+
+- **Claude Code plugin**: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json`
+  bundle the MCP server + both skills as one `/plugin install gpt2agent@gpt2agent`
+  (after `/plugin marketplace add robotlearning123/gpt2agent`). Validated with
+  `claude plugin validate --strict`. Schemas verified against the official Claude
+  Code plugin docs.
+- **MCP registry descriptor**: `server.json` (schema `2025-12-11`) declares the PyPI
+  package `gpt2agent` as a stdio server for the official MCP registry. Verified
+  against the modelcontextprotocol/registry reference.
+
 ### Added
 
 - **More MCP hosts auto-install.** `gpt2agent install` now registers Cursor,
