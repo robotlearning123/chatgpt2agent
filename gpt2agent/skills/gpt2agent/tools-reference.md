@@ -104,7 +104,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   - Takes 5-30 minutes. Use `run_in_background` for shell integration.
   - Uses `/backend-api/f/conversation` (frontend endpoint), not the standard `/backend-api/conversation`.
   - Model slug configurable via `[models].heavy_dr` in `config.toml` (default: `gpt-5-5-pro`).
-  - **Known limitation**: Citation URLs may not be recovered due to an upstream wrapper bug. The `done` event fires on the first assistant message (connector-call JSON), not the final report. View citations in the chatgpt.com web UI of the same conversation.
+  - **Report + citations recovered from the connector widget state** (fixed in 0.0.4): the connector never writes the report as an assistant text node, so the poll fetches the conversation with `include_widget_state=true` and recovers `widget_state.report_message` (text + `content_references`). Grouped source URLs are usually present but not guaranteed; if absent, the model may have cited sources inline in the body.
   - If the DR connector is unavailable, a warning is appended explaining how to enable it in chatgpt.com Settings > Connectors.
 
 ---
@@ -113,16 +113,16 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 
 - **Purpose**: Chat through a private Custom GPT, applying its instructions, files, and memory scope.
 - **Parameters**:
-  - `gizmo_id` (str, required) -- the Custom GPT identifier (format: `g-p-*`). Use `list_custom_gpts` to enumerate available IDs.
+  - `gizmo_id` (str, required) -- pass the `short_url` returned by `list_custom_gpts` (format: `g-*`). Call `list_custom_gpts` first to enumerate them.
   - `prompt` (str, required) -- the user message.
 - **Returns**: `str` -- the Custom GPT's response text.
 - **When to use**: When you need a specialized GPT's persona, knowledge base, or tool access.
 - **Example**:
   ```python
   # First, find available GPTs
-  gpts = list_custom_gpts()
-  # Then use one
-  gpt_chat("g-p-abc123def456", "Analyze this dataset for seasonal trends.")
+  gpts = list_custom_gpts()                  # each has {name, short_url}
+  # Then use one's short_url as the gizmo_id
+  gpt_chat(gpts[0]["short_url"], "Analyze this dataset for seasonal trends.")
   ```
 - **Notes**:
   - **EXPERIMENTAL**: passes `gizmo_id` via the `conversation_origin` field, reverse-engineered from chatgpt.com web bundles.
@@ -663,7 +663,7 @@ results = memory_search("keyword from new fact")
 
 5. **Heavy DR quota**: ~248 calls/month on Pro plan. Check before dispatching. The quota resets around the 21st of each month.
 
-6. **Heavy DR citation bug**: Citation URLs may not be recovered due to an upstream wrapper bug. View citations in the chatgpt.com web UI.
+6. **Heavy DR citations**: Recovered from the connector's hidden widget state (`widget_state.report_message`) since 0.0.4. Grouped source URLs are usually present but not guaranteed; if absent, the model may have cited sources inline in the report body.
 
 7. **Codex label resolution**: `codex_task_create` resolves `environment_id` from `repo_label` by fetching all environments. Raises `ValueError` on no match or ambiguous match.
 
