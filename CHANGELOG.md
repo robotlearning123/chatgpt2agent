@@ -6,6 +6,32 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-06-18
+
+Patch release: fixes surfaced by a large-scale cx/cx2/ccz parallel verification of 0.0.6.
+
+### Security
+
+- **Broader secret redaction.** `redact_error` now masks base64 bearer tokens
+  (`Bearer …+ab/cd==`, previously the tail leaked) and more token query-param names
+  (`accessToken`, `session_token`, …). A `{16,}` length floor avoids mangling ordinary
+  prose after the word "Bearer".
+
+### Fixed
+
+- **`.claude-plugin/marketplace.json`** plugin `source` `"."` → `"./"` to satisfy the
+  canonical claude-code-marketplace JSON schema (the lenient CLI had accepted `"."`).
+- **Skill docs corrected to match shipped behavior** (the skills install to
+  `~/.claude/skills/` and ship in the wheel): the deep-research SKILL.md 429/poll-timeout
+  recovery section, and `tools-reference.md`'s `deep_research_heavy` "Known limitation" +
+  Gotcha #6 now describe the connector widget-state recovery (not a "citation bug");
+  `gpt_chat` documents passing the `short_url` from `list_custom_gpts` (not a `g-p-*` id).
+
+### Tests
+
+- +3 redaction regression tests (base64 bearer, camelCase query token, prose preservation).
+  Suite: 102 passed, 9 skipped.
+
 ## [0.0.6] - 2026-06-18
 
 ### Packaging / distribution
