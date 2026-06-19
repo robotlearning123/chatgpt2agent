@@ -155,11 +155,12 @@ number; just keep account access serial.
 **Recovery from a 429 / poll-timeout (no extra quota):** the run almost always
 *completed server-side* — only the local poll failed. The `conv_id` is in the
 error line. Recover the finished report instead of re-running `--heavy` (which
-would burn another quota): GET `/backend-api/conversation/<conv_id>` via
-`BackendClient` (or the `get_conversation` MCP tool), then walk
-`mapping[*].message` for the newest assistant text node with status
-`finished_successfully` — its `metadata.content_references` holds the citation
-URLs. NOTE: heavy DR via the connector may render an "embedded UI experience"
-and never write a fetchable report node back; in that case there is nothing to
-recover and the run must be redone in a quiet window. Wait for the rate limit to
-ease first — repeated GETs while rate-limited keep it hot.
+would burn another quota): GET the conversation **with the hidden-widget flags**
+`/backend-api/conversation/<conv_id>?include_visually_hidden_messages=true&include_widget_state=true`
+via `BackendClient`, then read the connector's hidden widget state — the report
+lives in `widget_state.report_message.content.parts[0]` (text) with
+`report_message.metadata.content_references` (citation URLs). This is exactly what
+`sse._dr_report_from_widget_state` does; heavy DR via the connector does **not**
+write the report as an assistant text node, so walking `mapping` for assistant
+text alone will miss it. Wait for the rate limit to ease first — repeated GETs
+while rate-limited keep it hot.
