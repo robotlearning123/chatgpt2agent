@@ -497,9 +497,12 @@ class ConversationClient:
                             last_text += v
                         continue
                     if isinstance(v, dict):
-                        msg_id = v.get("message", {}).get("id")
+                        # `{"v":{"message":null}}` makes .get("message", {}) return
+                        # None (key present), so chained .get() would AttributeError.
+                        vmsg = v.get("message") or {}
+                        msg_id = vmsg.get("id")
                         is_new = _reset_if_new_msg(msg_id)
-                        parts = v.get("message", {}).get("content", {}).get("parts", [])
+                        parts = (vmsg.get("content") or {}).get("parts") or []
                         if parts and isinstance(parts[0], str):
                             new = parts[0]
                             if is_new:
@@ -557,6 +560,7 @@ class ConversationClient:
         *,
         gizmo_id: str | None = None,
         temporary: bool = True,
+        poll_async: bool = False,
     ) -> str:
         chunks: list[str] = []
         conv_id: str | None = None
@@ -568,8 +572,12 @@ class ConversationClient:
             chunks.append(event)
         text = "".join(chunks)
 
-        # Agent mode: stream ends immediately with async_status, response arrives later
-        if not text and conv_id:
+        # Agent mode: the stream ends immediately with async_status and the real
+        # response arrives later, so we poll the conversation for up to 5 min.
+        # This MUST be opt-in (poll_async): conv_id is captured on nearly every
+        # stream, so an unconditional "not text and conv_id" poll would make an
+        # ordinary chat that returns empty text hang for the full poll window.
+        if poll_async and not text and conv_id:
             text = await self._poll_async_response(conv_id)
 
         return text
@@ -1471,6 +1479,18 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                # Capture conversation_id from ANY frame that carries it at top
+                # level. _apply_patch only sets it from a few typed events
+                # (resume_conversation_token / message_marker /
+                # message_stream_complete); the regular stream() captures it
+                # generically. Without this, an async heavy-DR stream that closes
+                # before one of those markers leaves state["conversation_id"]
+                # None, so the Phase-2 poll gate below never fires and the report
+                # is silently lost.
+                if not state["conversation_id"]:
+                    cid = obj.get("conversation_id")
+                    if cid:
+                        state["conversation_id"] = cid
                 _raw_dump(obj, phase="heavy_sse")
 
                 events: list[dict] = []

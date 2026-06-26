@@ -21,10 +21,13 @@ _SENSITIVE_KEY_RE = re.compile(
 )
 
 # 2. JSON token fields by name — `"access_token":"…"`, `"accessToken":"…"`,
-#    `"session_token":"…"`, `"id_token":"…"`, `"refresh_token":"…"`. Covers the
-#    nested `"tokens":{"access_token":"…"}` shape too (the pair is matched directly).
+#    `"session_token":"…"`, `"id_token":"…"`, `"refresh_token":"…"`, and the bare
+#    `"token":"…"` (the shape ~/.gpt2agent/token.json and sentinel chat-requirements
+#    responses use). Covers the nested `"tokens":{"access_token":"…"}` shape too
+#    (the pair is matched directly). Constrained to the JSON value form so it
+#    cannot mangle the word "token" in ordinary prose.
 _TOKEN_FIELD_RE = re.compile(
-    r'"((?:access|session|id|refresh|bearer)[_-]?token|accessToken)"\s*:\s*"[^"]*"',
+    r'"((?:access|session|id|refresh|bearer)[_-]?token|accessToken|token)"\s*:\s*"[^"]*"',
     re.IGNORECASE,
 )
 

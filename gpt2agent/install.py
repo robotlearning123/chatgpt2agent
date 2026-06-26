@@ -50,11 +50,33 @@ def _h1(msg: str) -> None:
 
 
 def _backup(path: Path) -> Path | None:
-    """Snapshot ``path`` to ``path.bak-gpt2agent`` so the user can undo."""
+    """Snapshot ``path`` to ``path.bak-gpt2agent`` so the user can undo.
+
+    Preserves the source file's mode. Agent configs (~/.claude.json,
+    ~/.codex/config.toml) hold MCP server commands and can hold secrets; a
+    plain ``write_bytes`` would create the backup with the process umask
+    (often world-readable), exposing a ``0600`` config in its ``.bak`` copy.
+    """
     if not path.exists():
         return None
     bak = path.with_name(path.name + ".bak-gpt2agent")
-    bak.write_bytes(path.read_bytes())
+    data = path.read_bytes()
+    try:
+        mode = path.stat().st_mode & 0o777
+    except OSError:
+        mode = 0o600
+    # Create at 0o600 (never wider than needed) then match the source mode.
+    fd = os.open(str(bak), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:
+            os.chmod(bak, mode)
+        except OSError:
+            pass  # non-POSIX filesystem
+    except BaseException:
+        bak.unlink(missing_ok=True)
+        raise
     return bak
 
 
@@ -68,16 +90,23 @@ def _atomic_write(path: Path, content: str) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
-    tmp.write_text(content)
+    # Open the temp file at 0o600 up front so a secret-bearing config is never
+    # briefly world-readable under a permissive umask between write and chmod.
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        if path.exists():
-            tmp.chmod(path.stat().st_mode)
-        else:
-            tmp.chmod(0o600)
-    except OSError:
-        # Best-effort — Windows / non-POSIX filesystems may reject chmod.
-        pass
-    tmp.replace(path)
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        try:
+            # Preserve an existing file's mode; new files stay 0o600.
+            if path.exists():
+                os.chmod(tmp, path.stat().st_mode)
+        except OSError:
+            # Best-effort — Windows / non-POSIX filesystems may reject chmod.
+            pass
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _stdio_entry() -> dict[str, Any]:
@@ -176,7 +205,11 @@ def _remove_toml_section(content: str, section_name: str) -> str:
     end-of-file. Other sections are preserved verbatim.
     """
     header = f"[{section_name}]"
-    section_header_re = re.compile(r"^\s*\[[^\[\]]+\]\s*$")
+    # Match both standard table headers `[x]` and array-of-table headers `[[x]]`.
+    # Missing the `[[...]]` form made the body-skip loop swallow a following
+    # array-of-table section as if it were part of the replaced/removed block,
+    # deleting unrelated valid TOML.
+    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*$")
     out: list[str] = []
     skipping = False
     for line in content.splitlines():
@@ -227,7 +260,11 @@ def _replace_or_append_toml_section(
     out: list[str] = []
     i = 0
     found = False
-    section_header_re = re.compile(r"^\s*\[[^\[\]]+\]\s*$")
+    # Match both standard table headers `[x]` and array-of-table headers `[[x]]`.
+    # Missing the `[[...]]` form made the body-skip loop swallow a following
+    # array-of-table section as if it were part of the replaced/removed block,
+    # deleting unrelated valid TOML.
+    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*$")
 
     while i < len(lines):
         line = lines[i]

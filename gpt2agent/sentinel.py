@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -47,11 +48,25 @@ class SentinelGate:
                 f"{_redact_error(body)}"
             )
 
-        resp = r.json()
+        try:
+            resp = r.json()
+        except Exception as exc:
+            body = r.text if hasattr(r, "text") else str(r.content)
+            raise RuntimeError(
+                f"sentinel/chat-requirements non-JSON 200: {_redact_error(body)}"
+            ) from exc
+        if not isinstance(resp, dict):
+            raise RuntimeError(
+                "sentinel/chat-requirements unexpected response shape: "
+                f"{_redact_error(json.dumps(resp, ensure_ascii=False))}"
+            )
         chat_token = resp.get("token")
         if not chat_token:
+            # Redact json.dumps(...) not str(dict): the latter uses single
+            # quotes and would bypass the JSON-key redaction regexes.
             raise RuntimeError(
-                f"sentinel/chat-requirements no token: {_redact_error(str(resp))}"
+                "sentinel/chat-requirements no token: "
+                f"{_redact_error(json.dumps(resp, ensure_ascii=False))}"
             )
 
         out: dict[str, str] = {"chat-requirements": chat_token}

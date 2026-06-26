@@ -165,7 +165,18 @@ class BackendClient:
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code} for {path}")
 
-        return r.json()
+        # Mirror post()'s guard: an HTML/empty 2xx (Cloudflare interstitial,
+        # gateway page) must surface a clean redacted RuntimeError, not a raw
+        # JSONDecodeError stack trace into the MCP client.
+        if not r.text.strip():
+            return None
+        try:
+            return r.json()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Expected JSON from {path} but got non-JSON 2xx response: "
+                f"{redact_error(r.text)}"
+            ) from exc
 
     def post(
         self,

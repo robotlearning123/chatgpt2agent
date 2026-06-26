@@ -24,7 +24,12 @@ def register(mcp, client: BackendClient) -> None:
                 "id": a.get("id"),
                 "type": _classify(a.get("id") or ""),
                 "enabled": a.get("enabled"),
-                "connected": a.get("is_connected") or a.get("connected"),
+                # Check key presence, not truthiness: `is_connected: False` (a
+                # disconnected app) must report False, not fall through to
+                # `connected` or None.
+                "connected": (
+                    a["is_connected"] if "is_connected" in a else a.get("connected")
+                ),
             }
             for a in (data.get("apps") or [])
             if isinstance(a, dict)
