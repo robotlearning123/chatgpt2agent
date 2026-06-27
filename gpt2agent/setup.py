@@ -56,7 +56,11 @@ def _token_from_saved() -> str | None:
         return None
     try:
         d = json.loads(p.read_text())
-        return d.get("access_token")
+        return (
+            d.get("access_token")
+            or d.get("token")
+            or (d.get("tokens") or {}).get("access_token")
+        )
     except Exception:
         return None
 
@@ -101,8 +105,17 @@ def save_token(token: str) -> None:
     d = Path.home() / ".gpt2agent"
     d.mkdir(exist_ok=True)
     p = d / "token.json"
-    p.write_text(json.dumps({"access_token": token}))
-    p.chmod(0o600)
+    # Open 0o600 up front so the bearer token is never briefly world-readable
+    # between write and chmod under a permissive umask.
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        # O_CREAT's mode is ignored if the file already exists; tighten an
+        # existing 0644 token.json explicitly (after O_TRUNC, before writing).
+        os.fchmod(fd, 0o600)
+    except (OSError, AttributeError):
+        pass  # non-POSIX (e.g. Windows lacks fchmod)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"access_token": token}, f)
 
 
 # ── plan detection ──────────────────────────────────────────────────────────

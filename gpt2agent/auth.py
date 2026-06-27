@@ -46,7 +46,14 @@ def _from_saved() -> dict | None:
         return None
     try:
         data = json.loads(p.read_text())
-        token = data.get("access_token")
+        # Accept every shape backend._load_token_with_source() accepts, so a
+        # valid saved token isn't missed (forcing browser setup) just because it
+        # was stored as {"token": …} or nested {"tokens": {"access_token": …}}.
+        token = (
+            data.get("access_token")
+            or data.get("token")
+            or (data.get("tokens") or {}).get("access_token")
+        )
         if token:
             return {"access_token": token, "source": "saved"}
     except Exception:
@@ -139,7 +146,10 @@ def _from_browser_use() -> dict | None:
 
 def get_token(interactive: bool = True) -> str:
     """Return a valid ChatGPT access token, trying sources in priority order."""
-    for fn in [_from_saved, _from_codex, _from_browser_use]:
+    # Prefer Codex for parity with BackendClient/setup/docs: it honors CODEX_HOME
+    # and auto-refreshes, while ~/.gpt2agent/token.json can be stale or from a
+    # different account.
+    for fn in [_from_codex, _from_saved, _from_browser_use]:
         result = fn()
         if result:
             print(f"  ✓ Token found ({result['source']})")
@@ -152,11 +162,20 @@ def get_token(interactive: bool = True) -> str:
     if not result:
         raise RuntimeError("Token acquisition cancelled.")
 
-    # Save for future use
+    # Save for future use. Create the file 0o600 up front (os.open) so the
+    # bearer token is never briefly world-readable between write and chmod.
     save_dir = Path.home() / ".gpt2agent"
     save_dir.mkdir(exist_ok=True)
     tp = save_dir / "token.json"
-    tp.write_text(json.dumps(result, indent=2))
-    tp.chmod(0o600)
+    fd = os.open(tp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        # O_CREAT's mode is ignored when the file already exists, so tighten it
+        # explicitly (fchmod on the fd, after O_TRUNC) before writing the token —
+        # this fixes a pre-existing 0644 token.json staying world-readable.
+        os.fchmod(fd, 0o600)
+    except (OSError, AttributeError):
+        pass  # non-POSIX (e.g. Windows lacks fchmod)
+    with os.fdopen(fd, "w") as f:
+        json.dump(result, f, indent=2)
     print("  Token saved to ~/.gpt2agent/token.json")
     return result["access_token"]

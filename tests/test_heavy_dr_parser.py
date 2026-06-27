@@ -281,6 +281,127 @@ def test_nested_metadata_patch_preserves_citation_payload(
     assert done["search_result_groups"] == [group]
 
 
+def test_array_metadata_patch_preserves_citation_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ref = {
+        "matched_text": "OpenAI",
+        "items": [{"title": "OpenAI", "url": "https://openai.com/"}],
+        "type": "webpage",
+    }
+    group = {
+        "type": "search_result_group",
+        "entries": [{"title": "OpenAI", "url": "https://openai.com/"}],
+    }
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-report",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": ["Report"]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+                "c": 1,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/metadata/content_references/0",
+                "o": "replace",
+                "v": ref,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/metadata/search_result_groups/0",
+                "o": "replace",
+                "v": group,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
+        ),
+        "data: [DONE]",
+    ]
+    events = _run_heavy_dr_with_frames(monkeypatch, frames)
+    done = [e for e in events if e.get("type") == "done"][-1]
+
+    assert done["content_references"] == [ref]
+    assert done["search_result_groups"] == [group]
+
+
+def test_connector_dispatch_replaced_by_real_report_can_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-dispatch",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": [_DISPATCH_TEXT]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+                "c": 1,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/content/parts/0",
+                "o": "replace",
+                "v": _REAL_REPORT,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
+        ),
+        "data: [DONE]",
+    ]
+    events = _run_heavy_dr_with_frames(monkeypatch, frames)
+    dones = [e for e in events if e.get("type") == "done"]
+
+    assert len(dones) == 1
+    assert dones[0]["text"] == _REAL_REPORT
+    assert not dones[0].get("terminated_abnormally")
+
+
+def test_heavy_dr_in_band_sse_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "type": "error",
+                "message": "upstream failed with Bearer eyJ" + "a" * 30,
+            }
+        ),
+        "data: [DONE]",
+    ]
+
+    with pytest.raises(RuntimeError) as exc:
+        _run_heavy_dr_with_frames(monkeypatch, frames)
+
+    message = str(exc.value)
+    assert "ChatGPT SSE error" in message
+    assert "eyJ" + "a" * 30 not in message
+    assert "Bearer <REDACTED>" in message
+
+
 def test_poll_completion_uses_citation_metadata_from_same_turn_fixture() -> None:
     from gpt2agent import sse as sse_mod
 
@@ -435,6 +556,69 @@ def test_progress_excludes_dispatch_json(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert _DISPATCH_TEXT not in progress_text
     assert _REAL_REPORT in progress_text
+
+
+def test_dispatch_patch_progress_suppressed_until_real_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "msg-report",
+                        "author": {"role": "assistant"},
+                        "recipient": "all",
+                        "content": {"content_type": "text", "parts": [""]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+                "c": 1,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/content/parts/0",
+                "o": "append",
+                "v": _DISPATCH_TEXT,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/content/parts/0",
+                "o": "append",
+                "v": " hidden-dispatch-tail",
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "p": "/message/content/parts/0",
+                "o": "replace",
+                "v": _REAL_REPORT,
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
+        ),
+        "data: [DONE]",
+    ]
+
+    events = _run_heavy_dr_with_frames(monkeypatch, frames)
+    progress_text = "".join(
+        e["text"] for e in events if e.get("type") == "progress"
+    )
+    done = [e for e in events if e.get("type") == "done"][-1]
+
+    assert _DISPATCH_TEXT not in progress_text
+    assert "hidden-dispatch-tail" not in progress_text
+    assert _REAL_REPORT in progress_text
+    assert done["text"] == _REAL_REPORT
 
 
 def test_dr_payloads_disable_temp_chat() -> None:

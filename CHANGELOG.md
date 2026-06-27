@@ -6,6 +6,49 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-06-27
+
+Patch release: follow-up hardening from the 2026-06-26 cross-model audit of 0.0.7.
+
+### Security
+
+- **Secret-bearing config and token writes are tighter.** Installer backups preserve
+  source file modes, atomic temp files are created at `0600`, and setup/auth token
+  saves tighten existing `~/.gpt2agent/token.json` files that were previously wider.
+- **More user-returned secrets are redacted.** Tool output redaction now masks common
+  JWT, bearer, API-key, and GitHub-token shapes in conversation, memory, task, and
+  instruction surfaces, including fine-grained `github_pat_` tokens. SSE in-band
+  error frames are now raised with redacted text.
+
+### Fixed
+
+- `backend.get()` now handles empty/non-JSON 2xx responses like `post()`, returning
+  `None` for empty bodies and raising a clean redacted error for HTML/gateway pages.
+- Heavy Deep Research captures top-level `conversation_id` frames before polling,
+  supports array-index metadata patches for citations, and can finish when a real
+  report replaces a connector-dispatch placeholder in the same message. Dispatch
+  JSON delivered through content patches is no longer emitted as progress.
+- `chat` no longer waits through the agent-mode async poll window on a real empty
+  response; only `agent` opts into async polling.
+- Stream parsers tolerate `{"message": null}` patch frames and surface common
+  in-band SSE error frames instead of silently ignoring them.
+- `gpt2agent setup` now recognizes every saved token shape accepted by the runtime
+  backend (`access_token`, `token`, or nested `tokens.access_token`).
+- `auth.get_token()` now prefers Codex auth before saved `~/.gpt2agent/token.json`,
+  matching the backend/setup/docs and avoiding stale-token or wrong-account drift.
+- Codex TOML install replacement preserves following `[[array-of-table]]` sections.
+- `get_conversation` follows the active `current_node` branch instead of raw mapping
+  order, keeps the newest turns when `max_messages` is capped, and `list_apps`
+  preserves explicit `is_connected: false`.
+- Codex TOML section editing now treats `[section] # comment` and
+  `[[array]] # comment` as section boundaries, preserving following sections.
+- Explicit missing `--config` paths now fail loudly instead of falling back to defaults.
+
+### Tests
+
+- Added focused regressions for the audit fixes and parser edge cases. Offline suite:
+  129 passed, 9 skipped. `ruff check gpt2agent tests` is clean.
+
 ## [0.0.7] - 2026-06-18
 
 Patch release: fixes surfaced by a large-scale cx/cx2/ccz parallel verification of 0.0.6.

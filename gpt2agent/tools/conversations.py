@@ -37,8 +37,31 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(f"/backend-api/conversation/{conversation_id}")
         if not data:
             return {}
+        mapping = data.get("mapping") or {}
+        # Walk the active branch from the leaf (`current_node`) up to the root via
+        # parent pointers, then reverse to chronological order. Raw `mapping`
+        # iteration order interleaves sibling branches of an edited/regenerated
+        # conversation and, combined with the max_messages cap, can drop visible
+        # turns. Fall back to a create_time sort when current_node is missing.
+        ordered_nodes: list = []
+        current = data.get("current_node")
+        if current and current in mapping:
+            seen_ids: set[str] = set()
+            nid = current
+            while nid and nid in mapping and nid not in seen_ids:
+                seen_ids.add(nid)
+                ordered_nodes.append(mapping[nid])
+                nid = (mapping[nid] or {}).get("parent")
+            ordered_nodes.reverse()
+        else:
+            ordered_nodes = sorted(
+                (n for n in mapping.values() if isinstance(n, dict)),
+                key=lambda n: ((n.get("message") or {}).get("create_time") or 0),
+            )
+        ordered_nodes = ordered_nodes[-max_messages:] if max_messages > 0 else []
+
         messages = []
-        for node_id, node in (data.get("mapping") or {}).items():
+        for node in ordered_nodes:
             msg = (node or {}).get("message")
             if not isinstance(msg, dict):
                 continue

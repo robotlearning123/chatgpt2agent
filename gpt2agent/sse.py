@@ -30,6 +30,23 @@ def _safe_body(resp: object) -> str:
     return _redact_error(text) if text else ""
 
 
+def _raise_for_sse_error(obj: dict) -> None:
+    """Surface in-band SSE error frames instead of silently dropping them."""
+    raw: object = None
+    err = obj.get("error")
+    if isinstance(err, dict):
+        raw = err.get("message") or err.get("detail") or err.get("code") or err
+    elif isinstance(err, str):
+        raw = err
+    elif obj.get("type") in {"error", "conversation_error"}:
+        raw = obj.get("message") or obj.get("detail") or obj.get("code") or obj
+    if raw is None:
+        return
+    if not isinstance(raw, str):
+        raw = json.dumps(raw, ensure_ascii=False)
+    raise RuntimeError(f"ChatGPT SSE error: {_redact_error(raw, max_len=500)}")
+
+
 # /backend-api/f/conversation — the frontend-facing endpoint used by the web app.
 # Required for Deep Research heavy path; regular /conversation also works for normal chat.
 _F_CONV_URL = _BASE + "/backend-api/f/conversation"
@@ -176,6 +193,24 @@ def _pointer_parts(path: str, prefix: str) -> list[str]:
     return [p.replace("~1", "/").replace("~0", "~") for p in tail.split("/")]
 
 
+def _new_container(next_part: str) -> list | dict:
+    return [] if next_part == "-" or next_part.isdigit() else {}
+
+
+def _ensure_list_slot(seq: list, part: str, value_factory):
+    if part == "-":
+        seq.append(value_factory())
+        return seq[-1]
+    if not part.isdigit():
+        return None
+    idx = int(part)
+    while len(seq) <= idx:
+        seq.append(None)
+    if not isinstance(seq[idx], (dict, list)):
+        seq[idx] = value_factory()
+    return seq[idx]
+
+
 def _merge_metadata_path(meta: dict, path: str, op: str, value) -> dict:
     if path == "/message/metadata":
         if op in ("append", "patch") and isinstance(value, dict):
@@ -192,28 +227,48 @@ def _merge_metadata_path(meta: dict, path: str, op: str, value) -> dict:
     if not parts:
         return out
 
-    cur = out
-    for part in parts[:-1]:
-        nxt = cur.get(part)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[part] = nxt
-        cur = nxt
+    cur: dict | list = out
+    for i, part in enumerate(parts[:-1]):
+        next_part = parts[i + 1]
+        if isinstance(cur, dict):
+            nxt = cur.get(part)
+            if not isinstance(nxt, (dict, list)):
+                nxt = _new_container(next_part)
+                cur[part] = nxt
+            cur = nxt
+        elif isinstance(cur, list):
+            nxt = _ensure_list_slot(cur, part, lambda: _new_container(next_part))
+            if nxt is None:
+                return out
+            cur = nxt
 
     key = parts[-1]
-    if op == "append":
-        existing = cur.get(key)
-        if isinstance(existing, list):
-            cur[key] = [*existing, value]
-        elif isinstance(existing, str) and isinstance(value, str):
-            cur[key] = existing + value
+    if isinstance(cur, dict):
+        if op == "append":
+            existing = cur.get(key)
+            if isinstance(existing, list):
+                cur[key] = [*existing, value]
+            elif isinstance(existing, str) and isinstance(value, str):
+                cur[key] = existing + value
+            else:
+                cur[key] = value
+        elif op == "patch" and isinstance(value, dict) and isinstance(cur.get(key), dict):
+            cur[key] = {**cur[key], **value}
         else:
             cur[key] = value
-    elif op == "patch" and isinstance(value, dict) and isinstance(cur.get(key), dict):
-        cur[key] = {**cur[key], **value}
-    else:
-        cur[key] = value
+    elif isinstance(cur, list):
+        if key == "-" or op == "append":
+            cur.append(value)
+        elif key.isdigit():
+            idx = int(key)
+            while len(cur) <= idx:
+                cur.append(None)
+            cur[idx] = value
     return out
+
+
+def _is_connector_dispatch_text(text: str) -> bool:
+    return text.startswith('{"path":') and "connector_openai_deep_research" in text
 
 
 def _build_payload(
@@ -481,6 +536,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 # Capture conversation_id from any event that carries it
                 cid = obj.get("conversation_id")
@@ -497,9 +553,12 @@ class ConversationClient:
                             last_text += v
                         continue
                     if isinstance(v, dict):
-                        msg_id = v.get("message", {}).get("id")
+                        # `{"v":{"message":null}}` makes .get("message", {}) return
+                        # None (key present), so chained .get() would AttributeError.
+                        vmsg = v.get("message") or {}
+                        msg_id = vmsg.get("id")
                         is_new = _reset_if_new_msg(msg_id)
-                        parts = v.get("message", {}).get("content", {}).get("parts", [])
+                        parts = (vmsg.get("content") or {}).get("parts") or []
                         if parts and isinstance(parts[0], str):
                             new = parts[0]
                             if is_new:
@@ -557,6 +616,7 @@ class ConversationClient:
         *,
         gizmo_id: str | None = None,
         temporary: bool = True,
+        poll_async: bool = False,
     ) -> str:
         chunks: list[str] = []
         conv_id: str | None = None
@@ -568,8 +628,12 @@ class ConversationClient:
             chunks.append(event)
         text = "".join(chunks)
 
-        # Agent mode: stream ends immediately with async_status, response arrives later
-        if not text and conv_id:
+        # Agent mode: the stream ends immediately with async_status and the real
+        # response arrives later, so we poll the conversation for up to 5 min.
+        # This MUST be opt-in (poll_async): conv_id is captured on nearly every
+        # stream, so an unconditional "not text and conv_id" poll would make an
+        # ordinary chat that returns empty text hang for the full poll window.
+        if poll_async and not text and conv_id:
             text = await self._poll_async_response(conv_id)
 
         return text
@@ -693,6 +757,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 cid = obj.get("conversation_id")
                 if cid and not conversation_id:
@@ -869,6 +934,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 cid = obj.get("conversation_id")
                 if cid and not conversation_id:
@@ -1051,6 +1117,7 @@ class ConversationClient:
                             continue
                         if not isinstance(obj, dict):
                             continue
+                        _raise_for_sse_error(obj)
 
                         # Capture conversation_id for multi-turn continuation.
                         cid = obj.get("conversation_id")
@@ -1297,10 +1364,7 @@ class ConversationClient:
                 state["asst_metadata"] = msg.get("metadata") or {}
                 if _has_citation_payload(state["asst_metadata"]):
                     state["citation_metadata"] = state["asst_metadata"]
-                state["is_connector_dispatch"] = (
-                    initial.startswith('{"path":')
-                    and "connector_openai_deep_research" in initial
-                )
+                state["is_connector_dispatch"] = _is_connector_dispatch_text(initial)
                 if initial and not state["is_connector_dispatch"]:
                     events.append({"type": "progress", "text": initial})
                 # Suppress _emit_done on:
@@ -1341,17 +1405,23 @@ class ConversationClient:
         def _apply_path(path: str, op: str, value, events: list) -> None:
             if path == "/message/content/parts/0":
                 if op == "append" and isinstance(value, str):
-                    state["asst_text"] += value
-                    if value:
+                    next_text = state["asst_text"] + value
+                    was_dispatch = bool(state["is_connector_dispatch"])
+                    next_is_dispatch = was_dispatch or _is_connector_dispatch_text(next_text)
+                    state["asst_text"] = next_text
+                    state["is_connector_dispatch"] = next_is_dispatch
+                    if value and not next_is_dispatch:
                         events.append({"type": "progress", "text": value})
                 elif op == "replace" and isinstance(value, str):
-                    if value.startswith(state["asst_text"]):
+                    new_is_dispatch = _is_connector_dispatch_text(value)
+                    if not new_is_dispatch and value.startswith(state["asst_text"]):
                         delta = value[len(state["asst_text"]) :]
                         if delta:
                             events.append({"type": "progress", "text": delta})
-                    elif value:
+                    elif value and not new_is_dispatch:
                         events.append({"type": "progress", "text": value})
                     state["asst_text"] = value
+                    state["is_connector_dispatch"] = new_is_dispatch
             elif path == "/message/status":
                 if op == "replace" and isinstance(value, str):
                     state["asst_status"] = value
@@ -1471,6 +1541,19 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
+                # Capture conversation_id from ANY frame that carries it at top
+                # level. _apply_patch only sets it from a few typed events
+                # (resume_conversation_token / message_marker /
+                # message_stream_complete); the regular stream() captures it
+                # generically. Without this, an async heavy-DR stream that closes
+                # before one of those markers leaves state["conversation_id"]
+                # None, so the Phase-2 poll gate below never fires and the report
+                # is silently lost.
+                if not state["conversation_id"]:
+                    cid = obj.get("conversation_id")
+                    if cid:
+                        state["conversation_id"] = cid
                 _raw_dump(obj, phase="heavy_sse")
 
                 events: list[dict] = []

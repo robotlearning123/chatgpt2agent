@@ -49,6 +49,10 @@ def _http_bind_decision(host: str, allow_remote: bool) -> str:
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
+    # An explicitly-requested config that doesn't exist is a user error (likely a
+    # typo) — fail loudly instead of silently falling back to defaults.
+    if path is not None and not path.exists():
+        raise FileNotFoundError(f"config file not found: {path}")
     candidates = [path] if path else _CONFIG_SEARCH
     for p in candidates:
         if p and p.exists():
@@ -116,7 +120,10 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         string, so callers can tell a timeout apart from a real empty answer.
         """
         text = await conv.complete(
-            agent_model, [{"role": "user", "content": prompt}], temporary=False
+            agent_model,
+            [{"role": "user", "content": prompt}],
+            temporary=False,
+            poll_async=True,  # agent mode runs async — poll the conversation
         )
         return text or "(no response)"
 

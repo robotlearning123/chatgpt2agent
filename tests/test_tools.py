@@ -387,9 +387,11 @@ class _RecordConv:
         self.dr_events: list[dict] = []
         self.heavy_events: list[dict] = []
 
-    async def complete(self, model, messages, *, temporary=True, gizmo_id=None):
+    async def complete(self, model, messages, *, temporary=True, gizmo_id=None,
+                       poll_async=False):
         self.complete_calls.append({"model": model, "messages": messages,
-                                    "temporary": temporary, "gizmo_id": gizmo_id})
+                                    "temporary": temporary, "gizmo_id": gizmo_id,
+                                    "poll_async": poll_async})
         return self.reply
 
     def deep_research(self, q):
@@ -425,6 +427,16 @@ def test_agent_always_temporary_false(monkeypatch) -> None:
     asyncio.run(tools["agent"].fn("do stuff"))
     assert conv.complete_calls[-1]["temporary"] is False
     assert conv.complete_calls[-1]["model"] == "agent-mode"
+    # Agent mode must opt into async polling; plain chat must not (else an empty
+    # chat response would hang on the 5-min poll window).
+    assert conv.complete_calls[-1]["poll_async"] is True
+
+
+def test_chat_does_not_poll_async(monkeypatch) -> None:
+    conv = _RecordConv()
+    tools = _build_with_conv(monkeypatch, conv)
+    asyncio.run(tools["chat"].fn("hi"))
+    assert conv.complete_calls[-1]["poll_async"] is False
 
 
 def test_gpt_chat_temporary_false_and_passes_gizmo(monkeypatch) -> None:

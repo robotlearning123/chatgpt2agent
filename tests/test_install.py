@@ -14,6 +14,7 @@ import pytest
 
 from gpt2agent.install import (
     SUPPORTED_CLIENTS,
+    _remove_toml_section,
     _replace_or_append_toml_section,
     detect_clients,
     install_claude_code,
@@ -321,6 +322,30 @@ def test_replace_toml_section_replaces_body() -> None:
     assert '[other]' in out
     assert 'k = 2' in out
     assert out.count("[mcp_servers.x]") == 1
+
+
+def test_toml_section_editors_preserve_commented_headers() -> None:
+    src = (
+        "[mcp_servers.x]\n"
+        'command = "old"\n'
+        "\n"
+        "[model] # keep this section\n"
+        'name = "gpt"\n'
+        "\n"
+        "[[profiles]] # keep this array table\n"
+        'name = "work"\n'
+    )
+    replaced = _replace_or_append_toml_section(src, "mcp_servers.x", ['command = "new"'])
+    assert 'command = "old"' not in replaced
+    assert "[model] # keep this section" in replaced
+    assert 'name = "gpt"' in replaced
+    assert "[[profiles]] # keep this array table" in replaced
+    assert 'name = "work"' in replaced
+
+    removed = _remove_toml_section(src, "mcp_servers.x")
+    assert "[mcp_servers.x]" not in removed
+    assert "[model] # keep this section" in removed
+    assert "[[profiles]] # keep this array table" in removed
 
 
 # ── detect ─────────────────────────────────────────────────────────────────
