@@ -30,6 +30,23 @@ def _safe_body(resp: object) -> str:
     return _redact_error(text) if text else ""
 
 
+def _raise_for_sse_error(obj: dict) -> None:
+    """Surface in-band SSE error frames instead of silently dropping them."""
+    raw: object = None
+    err = obj.get("error")
+    if isinstance(err, dict):
+        raw = err.get("message") or err.get("detail") or err.get("code") or err
+    elif isinstance(err, str):
+        raw = err
+    elif obj.get("type") in {"error", "conversation_error"}:
+        raw = obj.get("message") or obj.get("detail") or obj.get("code") or obj
+    if raw is None:
+        return
+    if not isinstance(raw, str):
+        raw = json.dumps(raw, ensure_ascii=False)
+    raise RuntimeError(f"ChatGPT SSE error: {_redact_error(raw, max_len=500)}")
+
+
 # /backend-api/f/conversation — the frontend-facing endpoint used by the web app.
 # Required for Deep Research heavy path; regular /conversation also works for normal chat.
 _F_CONV_URL = _BASE + "/backend-api/f/conversation"
@@ -176,6 +193,24 @@ def _pointer_parts(path: str, prefix: str) -> list[str]:
     return [p.replace("~1", "/").replace("~0", "~") for p in tail.split("/")]
 
 
+def _new_container(next_part: str) -> list | dict:
+    return [] if next_part == "-" or next_part.isdigit() else {}
+
+
+def _ensure_list_slot(seq: list, part: str, value_factory):
+    if part == "-":
+        seq.append(value_factory())
+        return seq[-1]
+    if not part.isdigit():
+        return None
+    idx = int(part)
+    while len(seq) <= idx:
+        seq.append(None)
+    if not isinstance(seq[idx], (dict, list)):
+        seq[idx] = value_factory()
+    return seq[idx]
+
+
 def _merge_metadata_path(meta: dict, path: str, op: str, value) -> dict:
     if path == "/message/metadata":
         if op in ("append", "patch") and isinstance(value, dict):
@@ -192,28 +227,48 @@ def _merge_metadata_path(meta: dict, path: str, op: str, value) -> dict:
     if not parts:
         return out
 
-    cur = out
-    for part in parts[:-1]:
-        nxt = cur.get(part)
-        if not isinstance(nxt, dict):
-            nxt = {}
-            cur[part] = nxt
-        cur = nxt
+    cur: dict | list = out
+    for i, part in enumerate(parts[:-1]):
+        next_part = parts[i + 1]
+        if isinstance(cur, dict):
+            nxt = cur.get(part)
+            if not isinstance(nxt, (dict, list)):
+                nxt = _new_container(next_part)
+                cur[part] = nxt
+            cur = nxt
+        elif isinstance(cur, list):
+            nxt = _ensure_list_slot(cur, part, lambda: _new_container(next_part))
+            if nxt is None:
+                return out
+            cur = nxt
 
     key = parts[-1]
-    if op == "append":
-        existing = cur.get(key)
-        if isinstance(existing, list):
-            cur[key] = [*existing, value]
-        elif isinstance(existing, str) and isinstance(value, str):
-            cur[key] = existing + value
+    if isinstance(cur, dict):
+        if op == "append":
+            existing = cur.get(key)
+            if isinstance(existing, list):
+                cur[key] = [*existing, value]
+            elif isinstance(existing, str) and isinstance(value, str):
+                cur[key] = existing + value
+            else:
+                cur[key] = value
+        elif op == "patch" and isinstance(value, dict) and isinstance(cur.get(key), dict):
+            cur[key] = {**cur[key], **value}
         else:
             cur[key] = value
-    elif op == "patch" and isinstance(value, dict) and isinstance(cur.get(key), dict):
-        cur[key] = {**cur[key], **value}
-    else:
-        cur[key] = value
+    elif isinstance(cur, list):
+        if key == "-" or op == "append":
+            cur.append(value)
+        elif key.isdigit():
+            idx = int(key)
+            while len(cur) <= idx:
+                cur.append(None)
+            cur[idx] = value
     return out
+
+
+def _is_connector_dispatch_text(text: str) -> bool:
+    return text.startswith('{"path":') and "connector_openai_deep_research" in text
 
 
 def _build_payload(
@@ -481,6 +536,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 # Capture conversation_id from any event that carries it
                 cid = obj.get("conversation_id")
@@ -701,6 +757,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 cid = obj.get("conversation_id")
                 if cid and not conversation_id:
@@ -877,6 +934,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
 
                 cid = obj.get("conversation_id")
                 if cid and not conversation_id:
@@ -1059,6 +1117,7 @@ class ConversationClient:
                             continue
                         if not isinstance(obj, dict):
                             continue
+                        _raise_for_sse_error(obj)
 
                         # Capture conversation_id for multi-turn continuation.
                         cid = obj.get("conversation_id")
@@ -1305,10 +1364,7 @@ class ConversationClient:
                 state["asst_metadata"] = msg.get("metadata") or {}
                 if _has_citation_payload(state["asst_metadata"]):
                     state["citation_metadata"] = state["asst_metadata"]
-                state["is_connector_dispatch"] = (
-                    initial.startswith('{"path":')
-                    and "connector_openai_deep_research" in initial
-                )
+                state["is_connector_dispatch"] = _is_connector_dispatch_text(initial)
                 if initial and not state["is_connector_dispatch"]:
                     events.append({"type": "progress", "text": initial})
                 # Suppress _emit_done on:
@@ -1360,6 +1416,7 @@ class ConversationClient:
                     elif value:
                         events.append({"type": "progress", "text": value})
                     state["asst_text"] = value
+                    state["is_connector_dispatch"] = _is_connector_dispatch_text(value)
             elif path == "/message/status":
                 if op == "replace" and isinstance(value, str):
                     state["asst_status"] = value
@@ -1479,6 +1536,7 @@ class ConversationClient:
                     continue
                 if not isinstance(obj, dict):
                     continue
+                _raise_for_sse_error(obj)
                 # Capture conversation_id from ANY frame that carries it at top
                 # level. _apply_patch only sets it from a few typed events
                 # (resume_conversation_token / message_marker /

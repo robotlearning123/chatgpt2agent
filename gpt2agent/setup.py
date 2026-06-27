@@ -56,7 +56,11 @@ def _token_from_saved() -> str | None:
         return None
     try:
         d = json.loads(p.read_text())
-        return d.get("access_token")
+        return (
+            d.get("access_token")
+            or d.get("token")
+            or (d.get("tokens") or {}).get("access_token")
+        )
     except Exception:
         return None
 

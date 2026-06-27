@@ -5,7 +5,7 @@ MCP server exposing full ChatGPT Plus/Pro account features to any MCP client.
 ## Build & Test
 
 ```bash
-pytest                    # 102 passed, 9 skipped (live tests gated by SKIP_LIVE)
+pytest                    # 126 passed, 9 skipped (live tests gated by SKIP_LIVE)
 python -m gpt2agent run   # start MCP server (stdio)
 ```
 

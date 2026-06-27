@@ -9,9 +9,16 @@ Cross-model bug hunt + fix on `gpt2agent` v0.0.7 (branch `fix/audit-2026-06-26`)
 - **Opus** (me) — full ~4700 LOC read; independent findings, high overlap.
 
 ## Verification (commands run, real output)
-- `pytest tests/` → **120 passed, 9 skipped** (baseline was 102; +17 regression + 1 chat-poll).
-- Regression proof: stashed production fixes, ran new tests on unfixed tree → **14/16 failed**
+- `pytest tests/` → **126 passed, 9 skipped** (baseline was 102; +23 regression + 1 chat-poll).
+- `ruff check gpt2agent tests` → **All checks passed**.
+- `python -m build --outdir /tmp/gpt2agent-dist.CHzfEg` + `twine check` → **sdist and wheel built as 0.0.8; both PASSED**.
+- Isolated wheel smoke in `/tmp/gpt2agent-venv.I3gsIe/venv` → **imports 0.0.8, console script reports 0.0.8, bundled skills present**.
+- `shellcheck -e SC2086 -e SC2155 install.sh` → **clean**.
+- `python -m compileall -q gpt2agent tests` + JSON parse of `server.json` / plugin manifests → **clean**.
+- Prior regression proof: stashed production fixes, ran new tests on unfixed tree → **14/16 failed**
   (the 2 that passed were a parametrization that always worked + a mode test later strengthened).
+- Codex follow-up regression proof: focused new tests for setup token shape, metadata array patches,
+  dispatch replacement, and in-band SSE errors → **5/6 failed before patch; 6/6 passed after patch**.
 - Import sanity: all 12 changed modules import clean.
 - **cx final verdict (independent):** first pass FAIL — caught a permission regression I introduced
   (`os.open(O_CREAT,0o600)` ignores mode on an existing file). Fixed with `os.fchmod`. Re-verify:
@@ -19,7 +26,7 @@ Cross-model bug hunt + fix on `gpt2agent` v0.0.7 (branch `fix/audit-2026-06-26`)
   verified pytest tests/test_audit_2026_06_26.py → 17 passed."
 - **Opus verdict:** all changes reviewed; minimal, scoped; tests green.
 
-## Fixes (15) — file:finding
+## Fixes (20) — file:finding
 Security
 - install.py `_backup` — preserve source mode (was umask → secret-bearing config backups world-readable). [cx2 P0]
 - install.py `_atomic_write` — open tmp 0o600 up front (no umask window). [cx2 P1]
@@ -37,15 +44,17 @@ Correctness / robustness
 - install.py — section regex matches `[[array-of-table]]` (else replacing gpt2agent section deletes a following table). [cx2 P1]
 - conversations.py `get_conversation` — follow `current_node` active chain (fallback create_time) instead of raw mapping order. [cx2 P1]
 - auth.py `_from_saved` — accept token / nested tokens.access_token (align with backend). [cx P2]
+- setup.py `_token_from_saved` — accept token / nested tokens.access_token (align setup wizard with backend/auth). [Codex follow-up]
 - apps.py — preserve explicit `is_connected: False`. [cx2 P2]
 - server.py `load_config` — raise on explicit-but-missing `--config`. [cx2 P2]
-- CLAUDE.md — stale test count 60 → 102.
+- sse.py metadata patches — support JSON-pointer array indexes for citation metadata (`/content_references/0`, `/search_result_groups/0`). [Codex follow-up]
+- sse.py in-band SSE errors — raise redacted `RuntimeError` for common `type=error` / `error` frames instead of silently ignoring them. [Codex follow-up]
+- sse.py connector dispatch — a real report that replaces the connector-dispatch placeholder now clears the dispatch flag and can finish normally. [Codex follow-up]
+- CLAUDE.md — stale test count 60 → 126.
 
-## Deferred (noted, not fixed — would need real frame data / over-redaction risk)
-- sse.py metadata JSON-pointer array support (cx P1) — observed traffic uses whole-list replace; speculative.
-- sse.py in-band SSE error-frame surfacing (ccz P1) — needs real error-frame samples; the worst symptom
-  (5-min hang) is removed by the `complete()` poll-gating fix.
-- sse.py sticky `is_connector_dispatch` (ccz P2) — observed traffic resets it via a fresh envelope.
+## Deferred
+- No known open P0/P1/P2 from the 2026-06-26 audit remains deferred in this branch.
+- Live heavy-DR frame-shape drift remains an operational watch item because ChatGPT private backend traffic is not a stable public API.
 
 ## State
-- Committed to local branch `fix/audit-2026-06-26`. NOT pushed (no PR; outward-facing action not authorized).
+- Local branch `fix/audit-2026-06-26`; Codex follow-up changes are present in this worktree. NOT pushed (no PR; outward-facing action not authorized).

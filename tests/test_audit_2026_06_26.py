@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import stat
 
 import pytest
@@ -397,6 +396,24 @@ def test_auth_from_saved_accepts_all_shapes(tmp_path, monkeypatch, blob):
 
     res = auth._from_saved()
     assert res is not None and res["access_token"] == "T"
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        {"access_token": "T"},
+        {"token": "T"},
+        {"tokens": {"access_token": "T"}},
+    ],
+)
+def test_setup_from_saved_accepts_all_shapes(tmp_path, monkeypatch, blob):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    p = tmp_path / ".gpt2agent" / "token.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(blob))
+    from gpt2agent import setup
+
+    assert setup._token_from_saved() == "T"
 
 
 # ── C8: apps preserves explicit is_connected=False ────────────────────────────
