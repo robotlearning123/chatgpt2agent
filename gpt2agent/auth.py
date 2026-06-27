@@ -146,7 +146,10 @@ def _from_browser_use() -> dict | None:
 
 def get_token(interactive: bool = True) -> str:
     """Return a valid ChatGPT access token, trying sources in priority order."""
-    for fn in [_from_saved, _from_codex, _from_browser_use]:
+    # Prefer Codex for parity with BackendClient/setup/docs: it honors CODEX_HOME
+    # and auto-refreshes, while ~/.gpt2agent/token.json can be stale or from a
+    # different account.
+    for fn in [_from_codex, _from_saved, _from_browser_use]:
         result = fn()
         if result:
             print(f"  ✓ Token found ({result['source']})")

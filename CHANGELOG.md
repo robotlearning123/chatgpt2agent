@@ -32,6 +32,8 @@ Patch release: follow-up hardening from the 2026-06-26 cross-model audit of 0.0.
   in-band SSE error frames instead of silently ignoring them.
 - `gpt2agent setup` now recognizes every saved token shape accepted by the runtime
   backend (`access_token`, `token`, or nested `tokens.access_token`).
+- `auth.get_token()` now prefers Codex auth before saved `~/.gpt2agent/token.json`,
+  matching the backend/setup/docs and avoiding stale-token or wrong-account drift.
 - Codex TOML install replacement preserves following `[[array-of-table]]` sections.
 - `get_conversation` follows the active `current_node` branch instead of raw mapping
   order, and `list_apps` preserves explicit `is_connected: false`.
@@ -40,7 +42,7 @@ Patch release: follow-up hardening from the 2026-06-26 cross-model audit of 0.0.
 ### Tests
 
 - Added focused regressions for the audit fixes and parser edge cases. Offline suite:
-  126 passed, 9 skipped. `ruff check gpt2agent tests` is clean.
+  127 passed, 9 skipped. `ruff check gpt2agent tests` is clean.
 
 ## [0.0.7] - 2026-06-18
 

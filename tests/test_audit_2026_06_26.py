@@ -398,6 +398,23 @@ def test_auth_from_saved_accepts_all_shapes(tmp_path, monkeypatch, blob):
     assert res is not None and res["access_token"] == "T"
 
 
+def test_auth_get_token_prefers_codex_home_over_saved(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    saved = tmp_path / ".gpt2agent" / "token.json"
+    saved.parent.mkdir(parents=True, exist_ok=True)
+    saved.write_text(json.dumps({"access_token": "STALE_SAVED"}))
+
+    codex_home = tmp_path / ".codex-alt"
+    codex_auth = codex_home / "auth.json"
+    codex_auth.parent.mkdir(parents=True, exist_ok=True)
+    codex_auth.write_text(json.dumps({"tokens": {"access_token": "CODEX_HOME_TOKEN"}}))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    from gpt2agent import auth
+
+    assert auth.get_token(interactive=False) == "CODEX_HOME_TOKEN"
+
+
 @pytest.mark.parametrize(
     "blob",
     [
