@@ -13,7 +13,7 @@ _PHONE_RE = re.compile(r"\+?\d[\d ()\-]{8,}\d")
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/\-]{16,}=*", re.IGNORECASE)
 _APIKEY_RE = re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}")
-_GH_TOKEN_RE = re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}")
+_GH_TOKEN_RE = re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})")
 
 
 def redact(s: object) -> object:

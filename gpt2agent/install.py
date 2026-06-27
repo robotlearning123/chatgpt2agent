@@ -209,7 +209,7 @@ def _remove_toml_section(content: str, section_name: str) -> str:
     # Missing the `[[...]]` form made the body-skip loop swallow a following
     # array-of-table section as if it were part of the replaced/removed block,
     # deleting unrelated valid TOML.
-    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*$")
+    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*(?:#.*)?$")
     out: list[str] = []
     skipping = False
     for line in content.splitlines():
@@ -264,7 +264,7 @@ def _replace_or_append_toml_section(
     # Missing the `[[...]]` form made the body-skip loop swallow a following
     # array-of-table section as if it were part of the replaced/removed block,
     # deleting unrelated valid TOML.
-    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*$")
+    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*(?:#.*)?$")
 
     while i < len(lines):
         line = lines[i]

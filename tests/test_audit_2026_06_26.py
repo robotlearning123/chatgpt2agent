@@ -371,6 +371,7 @@ def test_tool_redact_secrets():
     assert jwt not in redact(jwt)
     assert "<APIKEY>" in redact("sk-" + "a" * 30)
     assert "Bearer <REDACTED>" in redact("Authorization: Bearer " + "z" * 40)
+    assert "<TOKEN>" in redact("github_pat_" + "A" * 24)
     # PII still works; ordinary prose untouched.
     assert redact("ping me at a@b.com") == "ping me at <EMAIL>"
     assert redact("just some words") == "just some words"
@@ -520,3 +521,6 @@ def test_get_conversation_follows_active_chain():
     texts = [m["text"] for m in out["messages"]]
     assert texts == ["hello", "hi", "more", "done"]
     assert "STALE BRANCH" not in texts
+
+    limited = captured["get_conversation"]("c1", max_messages=2)
+    assert [m["text"] for m in limited["messages"]] == ["more", "done"]

@@ -58,6 +58,7 @@ def register(mcp, client: BackendClient) -> None:
                 (n for n in mapping.values() if isinstance(n, dict)),
                 key=lambda n: ((n.get("message") or {}).get("create_time") or 0),
             )
+        ordered_nodes = ordered_nodes[-max_messages:] if max_messages > 0 else []
 
         messages = []
         for node in ordered_nodes:

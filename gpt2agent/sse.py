@@ -1405,18 +1405,23 @@ class ConversationClient:
         def _apply_path(path: str, op: str, value, events: list) -> None:
             if path == "/message/content/parts/0":
                 if op == "append" and isinstance(value, str):
-                    state["asst_text"] += value
-                    if value:
+                    next_text = state["asst_text"] + value
+                    was_dispatch = bool(state["is_connector_dispatch"])
+                    next_is_dispatch = was_dispatch or _is_connector_dispatch_text(next_text)
+                    state["asst_text"] = next_text
+                    state["is_connector_dispatch"] = next_is_dispatch
+                    if value and not next_is_dispatch:
                         events.append({"type": "progress", "text": value})
                 elif op == "replace" and isinstance(value, str):
-                    if value.startswith(state["asst_text"]):
+                    new_is_dispatch = _is_connector_dispatch_text(value)
+                    if not new_is_dispatch and value.startswith(state["asst_text"]):
                         delta = value[len(state["asst_text"]) :]
                         if delta:
                             events.append({"type": "progress", "text": delta})
-                    elif value:
+                    elif value and not new_is_dispatch:
                         events.append({"type": "progress", "text": value})
                     state["asst_text"] = value
-                    state["is_connector_dispatch"] = _is_connector_dispatch_text(value)
+                    state["is_connector_dispatch"] = new_is_dispatch
             elif path == "/message/status":
                 if op == "replace" and isinstance(value, str):
                     state["asst_status"] = value
