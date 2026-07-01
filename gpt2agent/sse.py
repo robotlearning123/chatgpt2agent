@@ -361,22 +361,30 @@ _DR_AUTO_PROCEED = (
     "Do not ask further clarifying questions. Begin the research now."
 )
 
+# A genuine clarification request is a question or a short list of questions —
+# a few sentences. Anything longer is a report, even if its prose happens to
+# contain a hint phrase ("to make sure the comparison is fair, …").
+_CLARIFICATION_MAX_LEN = 1200
+
 
 def _looks_like_clarification(text: str) -> bool:
     """Heuristic: does this assistant 'done' text look like a clarification request?
 
     Matches a curated phrase list ("could you confirm", "before I start", "just
-    one key clarification", "shall I proceed", etc.). The earlier "short text
-    ending in ?" branch was removed — real reports often end with rhetorical
-    questions, and triggering an auto-proceed on a real report wastes a round
-    and can corrupt the conversation. The phrase list is conservative; if a
-    clarification slips through, the caller still gets the question text and
-    can re-invoke explicitly.
+    one key clarification", "shall I proceed", etc.), but only on short text
+    (≤ _CLARIFICATION_MAX_LEN chars). Without the length ceiling, a real
+    multi-thousand-word report containing an ordinary phrase like "to make
+    sure" anywhere in its body trips the substring match — the wrapper then
+    burns a DR round on _DR_AUTO_PROCEED and overwrites the real report with
+    the follow-up response. The earlier "short text ending in ?" branch stays
+    removed — real reports often end with rhetorical questions. The heuristic
+    is conservative; if a clarification slips through, the caller still gets
+    the question text and can re-invoke explicitly.
     """
     if not text:
         return False
     stripped = text.strip()
-    if not stripped:
+    if not stripped or len(stripped) > _CLARIFICATION_MAX_LEN:
         return False
     lower = stripped.lower()
     return any(p in lower for p in _CLARIFICATION_HINTS)

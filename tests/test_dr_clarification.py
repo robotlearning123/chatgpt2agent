@@ -223,6 +223,26 @@ def test_clarification_detection_unit() -> None:
 
     # Negative — long real report
     assert not _looks_like_clarification("Detailed report. " * 200)
+
+    # Negative — long real report whose PROSE contains a hint phrase. Without
+    # the length ceiling this false-positived, burning a DR round and letting
+    # the auto-proceed follow-up overwrite the real report.
+    report_with_phrase = (
+        "## Findings\n\nThe data shows X. To make sure the comparison is fair, "
+        "both series were normalized to 2020 baselines.\n\n" + "More analysis. " * 120
+    )
+    assert not _looks_like_clarification(report_with_phrase)
+    assert not _looks_like_clarification(
+        "Methodology note: before I begin the appendix, caveats apply. " * 40
+    )
+
+    # Positive — a genuine multi-question clarification stays under the ceiling.
+    multi_q = (
+        "Before I begin, could you confirm: 1) which regions to cover, "
+        "2) whether to include 2025 data, and 3) the preferred output format?"
+    )
+    assert _looks_like_clarification(multi_q)
+
     # Negative — empty
     assert not _looks_like_clarification("")
     assert not _looks_like_clarification("   ")
