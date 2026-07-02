@@ -380,6 +380,33 @@ def test_toml_section_editors_remove_dotted_child_subtables() -> None:
     assert 'command = "keep-me"' in replaced
 
 
+def test_toml_section_editors_commented_header_with_commented_child() -> None:
+    """Commented target header AND commented child subtable together
+    ([x] # managed + [x.env] # stale) — replace/remove must drop both
+    (cx review 2026-07-02 P2: the two cases were only covered separately)."""
+    src = (
+        "[mcp_servers.gpt2agent] # managed\n"
+        'command = "old"\n'
+        "\n"
+        "[mcp_servers.gpt2agent.env] # stale\n"
+        'KEY = "v"\n'
+        "\n"
+        "[other]\n"
+        "k = 1\n"
+    )
+    replaced = _replace_or_append_toml_section(
+        src, "mcp_servers.gpt2agent", ['command = "new"']
+    )
+    assert 'command = "old"' not in replaced
+    assert ".env" not in replaced
+    assert replaced.count("[mcp_servers.gpt2agent]") == 1
+    assert "[other]" in replaced
+
+    removed = _remove_toml_section(src, "mcp_servers.gpt2agent")
+    assert "mcp_servers.gpt2agent" not in removed
+    assert "[other]" in removed
+
+
 def test_codex_legacy_removal_covers_env_subtable(tmp_path: Path) -> None:
     """End-to-end: install_codex's legacy-openai cleanup must remove the whole
     stale entry even when it carries a [mcp_servers.openai.env] subtable,
