@@ -122,17 +122,11 @@ def _from_browser_use() -> dict | None:
                 except Exception:
                     pass
 
-        # Try cookies fallback
-        result = subprocess.run(
-            ["browser-use", "cookies", "get", "--url", "https://chat.openai.com"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        cookies = json.loads(result.stdout or "[]")
-        for c in cookies:
-            if "session-token" in c.get("name", ""):
-                return {"access_token": c["value"], "source": "browser-use-cookie"}
+        # No cookie fallback: the __Secure-next-auth.session-token cookie is a
+        # NextAuth session cookie, not the chatgpt.com-scoped access-token JWT
+        # the backend sends as `Authorization: Bearer` — saving it "succeeds"
+        # here and then every API call 401s. Better to fail visibly.
+        print("  browser-use found no access_token in localStorage.")
 
     except Exception as e:
         print(f"  browser-use extraction failed: {e}")
