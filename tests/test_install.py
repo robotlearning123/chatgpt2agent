@@ -404,6 +404,58 @@ def test_codex_legacy_removal_covers_env_subtable(tmp_path: Path) -> None:
     assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
 
 
+def test_toml_section_editors_recognize_commented_headers() -> None:
+    """The body-skip boundary regex tolerates '[x] # comment' headers, but the
+    TARGET-section find used an exact string match — a pre-existing
+    '[mcp_servers.gpt2agent] # comment' was not recognized, so replace APPENDED
+    a duplicate table (whole config becomes invalid TOML: 'Cannot declare ...
+    twice') and remove was a silent no-op."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    src = (
+        "[mcp_servers.gpt2agent] # managed by gpt2agent\n"
+        'command = "old"\n'
+        "\n"
+        "[other]\n"
+        "x = 1\n"
+    )
+    replaced = _replace_or_append_toml_section(
+        src, "mcp_servers.gpt2agent", ['command = "new"']
+    )
+    parsed = tomllib.loads(replaced)  # must stay valid TOML — no duplicate table
+    assert parsed["mcp_servers"]["gpt2agent"]["command"] == "new"
+    assert parsed["other"]["x"] == 1
+
+    removed = _remove_toml_section(src, "mcp_servers.gpt2agent")
+    assert "gpt2agent" not in removed
+    assert 'command = "old"' not in removed
+    assert "[other]" in removed
+
+
+def test_codex_legacy_removal_covers_commented_header(tmp_path: Path) -> None:
+    """_legacy_codex_openai_present detects via tomllib (comment-tolerant), so
+    removal must handle '[mcp_servers.openai] # legacy' too — previously the
+    installer PRINTED 'removed stale legacy' while the broken entry survived."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[mcp_servers.openai] # legacy openai-mcp entry\n"
+        'command = "openai-mcp"\n'
+    )
+    result = install_codex(config_path=cfg)
+    assert result["changed"] is True
+    parsed = tomllib.loads(cfg.read_text())
+    assert "openai" not in parsed.get("mcp_servers", {})
+    assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
+
+
 # ── detect ─────────────────────────────────────────────────────────────────
 
 

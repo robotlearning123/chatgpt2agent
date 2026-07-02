@@ -29,6 +29,12 @@ versioning: [SemVer](https://semver.org/).
   `[mcp_servers.openai]` cleanup no longer leaves an orphaned command-less
   half-entry Codex would spawn-and-fail on, and re-install no longer keeps a
   stale `.env` subtable from the replaced block.
+- Codex TOML section remove/replace now recognizes the target header when it
+  carries a trailing comment (`[mcp_servers.gpt2agent] # managed`). Previously
+  re-install appended a DUPLICATE table — making the whole
+  `~/.codex/config.toml` invalid TOML ("Cannot declare ... twice") — and the
+  legacy `[mcp_servers.openai] # comment` cleanup printed "removed" while
+  removing nothing.
 - Legacy Deep Research no longer misclassifies a long real report whose prose
   contains an ordinary hint phrase ("to make sure", "would you like") as a
   clarification request — that auto-proceed round overwrote the real report
