@@ -40,6 +40,24 @@ versioning: [SemVer](https://semver.org/).
   clarification request — that auto-proceed round overwrote the real report
   and burned DR quota. Clarification detection now applies only to short
   (≤ 1200 char) done-texts.
+- PII redaction no longer corrupts calendar dates: "2026-05-26" (and
+  `DD-MM-YYYY` / datetime / date-range forms) satisfied the phone-number
+  pattern and came back as `<PHONE>` in memories, tasks, and conversation
+  titles. Phone masking still applies to actual phone shapes.
+- `deep_research` / `deep_research_heavy` now append an explicit "⚠ Report
+  may be incomplete" note when the SSE stream ended without the server
+  marking the response finished (`terminated_abnormally`) or when completion
+  polling timed out — previously a truncated report was indistinguishable
+  from a complete one.
+- `gpt2agent install`: writing a symlinked agent config (dotfile-repo
+  setups) now writes through to the symlink target instead of replacing the
+  link with a plain file and stranding the real config.
+- `gpt2agent setup`: `~/.gpt2agent/config.toml` is backed up
+  (`.bak-gpt2agent`) before being overwritten and is written atomically;
+  a rewrite with identical content is a no-op.
+- Removed the `browser-use` session-cookie fallback that saved a NextAuth
+  session cookie as `access_token` — the saved "token" 401'd on every API
+  call. Extraction now fails visibly so the user can paste a real token.
 
 ## [0.0.8] - 2026-06-27
 
