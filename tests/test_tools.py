@@ -222,6 +222,43 @@ def test_get_conversation_empty_returns_empty_dict() -> None:
     assert _reg(conversations, client).tools["get_conversation"]("X") == {}
 
 
+def test_get_conversation_redacts_message_bodies() -> None:
+    """Message text/code must go through redact() like title does — a pasted
+    secret or email in a chat body must not be echoed back to the MCP client."""
+    jwt = "eyJ" + "a" * 20 + "." + "b" * 20 + "." + "c" * 20
+    mapping = {
+        "n1": {"message": {"id": "u", "author": {"role": "user"},
+                           "content": {"content_type": "text",
+                                       "parts": [f"my key {jwt} mail bob@corp.io"]}}},
+        "n2": {"message": {"id": "a", "author": {"role": "assistant"},
+                           "content": {"content_type": "code",
+                                       "parts": [f"token = '{jwt}'"]}}},
+    }
+    client = FakeClient(routes={"/backend-api/conversation/C2": {"id": "C2", "title": "t",
+                                                                 "mapping": mapping}})
+    out = _reg(conversations, client).tools["get_conversation"]("C2")
+    by_id = {m["id"]: m for m in out["messages"]}
+    assert jwt not in by_id["u"]["text"] and "<JWT>" in by_id["u"]["text"]
+    assert "bob@corp.io" not in by_id["u"]["text"] and "<EMAIL>" in by_id["u"]["text"]
+    assert jwt not in by_id["a"]["code"] and "<JWT>" in by_id["a"]["code"]
+
+
+def test_get_conversation_redacts_before_truncation() -> None:
+    """A secret straddling the 2000-char cut must not survive as a partial token."""
+    jwt = "eyJ" + "a" * 40 + "." + "b" * 40 + "." + "c" * 40
+    body = "x" * 1990 + jwt  # JWT starts before the cut, ends after it
+    mapping = {
+        "n1": {"message": {"id": "u", "author": {"role": "user"},
+                           "content": {"content_type": "text", "parts": [body]}}},
+    }
+    client = FakeClient(routes={"/backend-api/conversation/C3": {"id": "C3", "title": "t",
+                                                                 "mapping": mapping}})
+    out = _reg(conversations, client).tools["get_conversation"]("C3")
+    text = out["messages"][0]["text"]
+    assert "eyJa" not in text  # no partial-JWT prefix leaked
+    assert text.endswith("<JWT>") or "<JWT>" in text
+
+
 # --------------------------------------------------------------------------- #
 #  tools/gpts, apps, codex
 # --------------------------------------------------------------------------- #

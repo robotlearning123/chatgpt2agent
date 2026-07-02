@@ -82,7 +82,9 @@ def register(mcp, client: BackendClient) -> None:
             if ct in ("text", "multimodal_text") and parts:
                 str_parts = [p for p in parts if isinstance(p, str)]
                 if str_parts:
-                    entry["text"] = str_parts[0][:2000]
+                    # Redact BEFORE truncating so a secret straddling the cut
+                    # can't survive as a partial token (same order as _log_redact).
+                    entry["text"] = redact(str_parts[0])[:2000]
                 # Check for image assets in multimodal parts
                 img_parts = [p for p in parts if isinstance(p, dict) and p.get("content_type") == "image_asset_pointer"]
                 if img_parts:
@@ -95,7 +97,7 @@ def register(mcp, client: BackendClient) -> None:
                         for p in img_parts
                     ]
             elif ct == "code" and parts and isinstance(parts[0], str):
-                entry["code"] = parts[0][:500]
+                entry["code"] = redact(parts[0])[:500]
             messages.append(entry)
             if len(messages) >= max_messages:
                 break

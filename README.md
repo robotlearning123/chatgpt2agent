@@ -263,10 +263,11 @@ has real consequences; please understand them before pointing it at your account
   `~/.gpt2agent/token.json`, chmod `600`) and sent only to `chatgpt.com`.
   gpt2agent never transmits it anywhere else. Token/secret values are redacted
   from error messages and logs (best-effort).
-- **PII redaction is limited.** Tools that return conversation/memory data strip
-  only **emails and phone numbers** from text — names, addresses, IDs, and the
-  full message bodies of `get_conversation` are returned verbatim. Don't treat
-  the output as anonymized.
+- **PII redaction is limited.** Tools that return conversation/memory data mask
+  **emails, phone numbers, and common secret shapes** (JWTs, bearer tokens,
+  `sk-`-style API keys, GitHub tokens) from text — including `get_conversation`
+  message bodies — but names, addresses, IDs, and everything else are returned
+  verbatim. Don't treat the output as anonymized.
 - **`GPT2AGENT_RAW_DUMP`** (debug) writes raw, unredacted SSE/poll traffic —
   including prompts, responses, and resume tokens — to the path you give it.
   Use only for debugging and delete the dumps after.

@@ -6,6 +6,13 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- `get_conversation` now redacts message `text`/`code` bodies (emails, phones,
+  JWT / bearer / API-key / GitHub-token shapes), matching the already-redacted
+  `title` and the skill-doc claim. Redaction runs before truncation so a secret
+  straddling the 2000-char cut cannot leak as a partial token.
+
 ### Fixed
 
 - REST tools no longer crash with a raw `AttributeError`/`TypeError` when the
@@ -17,6 +24,16 @@ versioning: [SemVer](https://semver.org/).
 - `load_config` raises a clean, actionable `ValueError` for a top-level scalar
   key in `config.toml` (e.g. `port = 9001` missing its `[server]` header)
   instead of `TypeError: 'bool' object is not iterable`.
+- Codex TOML section remove/replace now treats dotted child subtables
+  (`[mcp_servers.x.env]`) as part of the section. The legacy
+  `[mcp_servers.openai]` cleanup no longer leaves an orphaned command-less
+  half-entry Codex would spawn-and-fail on, and re-install no longer keeps a
+  stale `.env` subtable from the replaced block.
+- Legacy Deep Research no longer misclassifies a long real report whose prose
+  contains an ordinary hint phrase ("to make sure", "would you like") as a
+  clarification request — that auto-proceed round overwrote the real report
+  and burned DR quota. Clarification detection now applies only to short
+  (≤ 1200 char) done-texts.
 
 ## [0.0.8] - 2026-06-27
 
