@@ -6,6 +6,18 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- REST tools no longer crash with a raw `AttributeError`/`TypeError` when the
+  backend returns an empty 2xx body (`backend.get()` → `None`): read tools
+  (memory, account, models, custom GPTs, apps, codex lists, instructions-get)
+  degrade to empty results, and `custom_instructions_set` now refuses to
+  overwrite when the current state is unreadable instead of silently clearing
+  the field the caller did not supply.
+- `load_config` raises a clean, actionable `ValueError` for a top-level scalar
+  key in `config.toml` (e.g. `port = 9001` missing its `[server]` header)
+  instead of `TypeError: 'bool' object is not iterable`.
+
 ## [0.0.8] - 2026-06-27
 
 Patch release: follow-up hardening from the 2026-06-26 cross-model audit of 0.0.7.

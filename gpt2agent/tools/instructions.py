@@ -11,7 +11,7 @@ def register(mcp, client: BackendClient) -> None:
         ci = client.get(
             "/backend-api/user_system_messages",
             target_path="/backend-api/user_system_messages",
-        )
+        ) or {}
         return {
             "enabled": ci.get("enabled"),
             "traits_enabled": ci.get("traits_enabled"),

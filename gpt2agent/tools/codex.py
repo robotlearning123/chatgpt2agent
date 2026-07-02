@@ -11,7 +11,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             "/backend-api/codex/environments",
             target_path="/backend-api/codex/environments",
-        )
+        ) or {}
         envs = data if isinstance(data, list) else (data.get("environments") or [])
         return [
             {
@@ -30,7 +30,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             f"/backend-api/codex/tasks?limit={limit}",
             target_path="/backend-api/codex/tasks",
-        )
+        ) or {}
         items = data.get("items") or []
         return [
             {

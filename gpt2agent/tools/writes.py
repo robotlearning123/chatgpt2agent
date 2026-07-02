@@ -14,6 +14,14 @@ def register(mcp, client: BackendClient) -> None:
             "/backend-api/user_system_messages",
             target_path="/backend-api/user_system_messages",
         )
+        # None = empty-2xx glitch (backend.get contract): the current state is
+        # UNKNOWN, so blind-posting only the supplied fields would silently
+        # clear the other one. Refuse instead. ({} = known-empty is fine.)
+        if current is None:
+            raise RuntimeError(
+                "could not read current custom instructions — refusing to "
+                "overwrite; retry in a moment"
+            )
         payload = {**current}
         if about_user is not None:
             payload["about_user_message"] = about_user
@@ -55,7 +63,7 @@ def register(mcp, client: BackendClient) -> None:
             data = client.get(
                 "/backend-api/codex/environments",
                 target_path="/backend-api/codex/environments",
-            )
+            ) or {}
             envs = data if isinstance(data, list) else (data.get("environments") or [])
             matches = [e for e in envs if e.get("label") == repo_label]
             if len(matches) == 0:

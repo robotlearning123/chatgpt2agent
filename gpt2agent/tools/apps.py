@@ -18,7 +18,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             "/backend-api/apps/list",
             target_path="/backend-api/apps/list",
-        )
+        ) or {}
         return [
             {
                 "id": a.get("id"),
