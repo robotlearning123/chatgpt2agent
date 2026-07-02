@@ -88,6 +88,11 @@ def _atomic_write(path: Path, content: str) -> None:
     contain MCP server commands that the agent will exec, so they should not
     be world-readable on shared systems.
     """
+    if path.is_symlink():
+        # Users symlink agent configs into dotfile repos; rename() over the
+        # symlink would replace the link with a plain file and strand the real
+        # target. Write through to the target instead.
+        path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
     # Open the temp file at 0o600 up front so a secret-bearing config is never
