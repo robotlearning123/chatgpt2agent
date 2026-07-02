@@ -6,7 +6,7 @@ from gpt2agent.tools._redact import redact
 
 def _fetch_memories(client: BackendClient) -> list[dict]:
     data = client.get("/backend-api/memories", target_path="/backend-api/memories")
-    return data.get("memories") or []
+    return (data or {}).get("memories") or []
 
 
 def register(mcp, client: BackendClient) -> None:

@@ -16,7 +16,7 @@ def register(mcp, client: BackendClient) -> None:
         data = client.get(
             "/backend-api/gizmos/snorlax/sidebar",
             target_path="/backend-api/gizmos/snorlax/sidebar",
-        )
+        ) or {}
         return [
             {
                 "name": redact((item.get("gizmo") or {}).get("name") or ""),

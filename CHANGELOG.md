@@ -15,6 +15,15 @@ versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- REST tools no longer crash with a raw `AttributeError`/`TypeError` when the
+  backend returns an empty 2xx body (`backend.get()` → `None`): read tools
+  (memory, account, models, custom GPTs, apps, codex lists, instructions-get)
+  degrade to empty results, and `custom_instructions_set` now refuses to
+  overwrite when the current state is unreadable instead of silently clearing
+  the field the caller did not supply.
+- `load_config` raises a clean, actionable `ValueError` for a top-level scalar
+  key in `config.toml` (e.g. `port = 9001` missing its `[server]` header)
+  instead of `TypeError: 'bool' object is not iterable`.
 - Codex TOML section remove/replace now treats dotted child subtables
   (`[mcp_servers.x.env]`) as part of the section. The legacy
   `[mcp_servers.openai]` cleanup no longer leaves an orphaned command-less

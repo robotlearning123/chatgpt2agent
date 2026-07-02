@@ -60,6 +60,14 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
                 data = tomllib.load(f)
             merged = {k: dict(v) for k, v in _DEFAULTS.items()}
             for section, values in data.items():
+                # A top-level scalar (`port = 9001` without a [server] header)
+                # is a user error — fail with an actionable message, not the
+                # bare TypeError dict.update() would raise.
+                if not isinstance(values, dict):
+                    raise ValueError(
+                        f"config {p}: top-level key {section!r} must live inside "
+                        f"a section header such as [server] or [models]"
+                    )
                 merged.setdefault(section, {}).update(values)
             return merged
     return {k: dict(v) for k, v in _DEFAULTS.items()}
