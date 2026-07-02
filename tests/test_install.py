@@ -348,6 +348,62 @@ def test_toml_section_editors_preserve_commented_headers() -> None:
     assert "[[profiles]] # keep this array table" in removed
 
 
+def test_toml_section_editors_remove_dotted_child_subtables() -> None:
+    """A section's dotted children ([x.env]) are part of the section: removing
+    or replacing [mcp_servers.openai] must not orphan [mcp_servers.openai.env]
+    — that leaves a command-less half-entry Codex spawn-and-fails on. Siblings
+    with a shared name prefix ([mcp_servers.openai2]) are NOT children."""
+    src = (
+        "[mcp_servers.openai]\n"
+        'command = "openai-mcp"\n'
+        "\n"
+        "[mcp_servers.openai.env]\n"
+        'FOO = "bar"\n'
+        "\n"
+        "[mcp_servers.openai2]\n"
+        'command = "keep-me"\n'
+    )
+    removed = _remove_toml_section(src, "mcp_servers.openai")
+    assert "[mcp_servers.openai]" not in removed
+    assert "[mcp_servers.openai.env]" not in removed
+    assert 'FOO = "bar"' not in removed
+    assert "[mcp_servers.openai2]" in removed
+    assert 'command = "keep-me"' in removed
+
+    replaced = _replace_or_append_toml_section(
+        src, "mcp_servers.openai", ['command = "new"']
+    )
+    assert 'command = "new"' in replaced
+    assert "[mcp_servers.openai.env]" not in replaced  # stale env must not survive
+    assert 'FOO = "bar"' not in replaced
+    assert "[mcp_servers.openai2]" in replaced
+    assert 'command = "keep-me"' in replaced
+
+
+def test_codex_legacy_removal_covers_env_subtable(tmp_path: Path) -> None:
+    """End-to-end: install_codex's legacy-openai cleanup must remove the whole
+    stale entry even when it carries a [mcp_servers.openai.env] subtable,
+    leaving a config that parses with no 'openai' server at all."""
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[mcp_servers.openai]\n"
+        'command = "openai-mcp"\n'
+        "\n"
+        "[mcp_servers.openai.env]\n"
+        'FOO = "bar"\n'
+    )
+    result = install_codex(config_path=cfg)
+    assert result["changed"] is True
+    parsed = tomllib.loads(cfg.read_text())
+    assert "openai" not in parsed.get("mcp_servers", {})
+    assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
+
+
 # ── detect ─────────────────────────────────────────────────────────────────
 
 

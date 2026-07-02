@@ -198,18 +198,34 @@ def _toml_quote(value: str) -> str:
     return f'"{escaped}"'
 
 
+# Match both standard table headers `[x]` and array-of-table headers `[[x]]`.
+# Missing the `[[...]]` form made the body-skip loop swallow a following
+# array-of-table section as if it were part of the replaced/removed block,
+# deleting unrelated valid TOML.
+_SECTION_HEADER_RE = re.compile(r"^\s*\[\[?([^\[\]\n]+)\]\]?\s*(?:#.*)?$")
+
+
+def _belongs_to_section(header_line: str, section_name: str) -> bool:
+    """True iff *header_line* is ``[section_name]`` itself or a dotted child
+    (``[section_name.env]``, ``[[section_name.x]]``). Child subtables are part
+    of the section for TOML semantics — removing/replacing the parent while
+    leaving a child behind resurrects the section as a headless half-entry.
+    """
+    m = _SECTION_HEADER_RE.match(header_line)
+    if not m:
+        return False
+    name = m.group(1).strip()
+    return name == section_name or name.startswith(section_name + ".")
+
+
 def _remove_toml_section(content: str, section_name: str) -> str:
     """Remove the ``[section_name]`` block from TOML content. No-op if absent.
 
-    A section runs from its ``[header]`` line up to the next ``[header]`` or
-    end-of-file. Other sections are preserved verbatim.
+    A section runs from its ``[header]`` line up to the next *unrelated*
+    ``[header]`` or end-of-file; dotted child subtables are removed with it.
+    Other sections are preserved verbatim.
     """
     header = f"[{section_name}]"
-    # Match both standard table headers `[x]` and array-of-table headers `[[x]]`.
-    # Missing the `[[...]]` form made the body-skip loop swallow a following
-    # array-of-table section as if it were part of the replaced/removed block,
-    # deleting unrelated valid TOML.
-    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*(?:#.*)?$")
     out: list[str] = []
     skipping = False
     for line in content.splitlines():
@@ -217,7 +233,7 @@ def _remove_toml_section(content: str, section_name: str) -> str:
             skipping = True
             continue
         if skipping:
-            if section_header_re.match(line):
+            if _SECTION_HEADER_RE.match(line) and not _belongs_to_section(line, section_name):
                 skipping = False
                 # fall through to keep this header line
             else:
@@ -249,9 +265,11 @@ def _replace_or_append_toml_section(
 ) -> str:
     """Replace ``[section_name]`` block in ``content`` or append it.
 
-    A section runs from its ``[header]`` line up to the next ``[header]`` or
-    end-of-file. Other sections are preserved verbatim. The new block is
-    written as ``[section_name]`` followed by ``new_section_lines``.
+    A section runs from its ``[header]`` line up to the next *unrelated*
+    ``[header]`` or end-of-file; dotted child subtables of the old block are
+    replaced with it (stale ``[section.env]`` must not outlive a replace).
+    Other sections are preserved verbatim. The new block is written as
+    ``[section_name]`` followed by ``new_section_lines``.
     """
     header = f"[{section_name}]"
     new_block = "\n".join([header, *new_section_lines]).strip("\n")
@@ -260,11 +278,6 @@ def _replace_or_append_toml_section(
     out: list[str] = []
     i = 0
     found = False
-    # Match both standard table headers `[x]` and array-of-table headers `[[x]]`.
-    # Missing the `[[...]]` form made the body-skip loop swallow a following
-    # array-of-table section as if it were part of the replaced/removed block,
-    # deleting unrelated valid TOML.
-    section_header_re = re.compile(r"^\s*\[\[?[^\[\]\n]+\]\]?\s*(?:#.*)?$")
 
     while i < len(lines):
         line = lines[i]
@@ -272,8 +285,12 @@ def _replace_or_append_toml_section(
             found = True
             out.append(new_block)
             i += 1
-            # Skip prior body until next section header or EOF
-            while i < len(lines) and not section_header_re.match(lines[i]):
+            # Skip prior body (incl. dotted child subtables) until the next
+            # unrelated section header or EOF.
+            while i < len(lines) and (
+                not _SECTION_HEADER_RE.match(lines[i])
+                or _belongs_to_section(lines[i], section_name)
+            ):
                 i += 1
             continue
         out.append(line)
