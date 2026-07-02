@@ -218,6 +218,19 @@ def _belongs_to_section(header_line: str, section_name: str) -> bool:
     return name == section_name or name.startswith(section_name + ".")
 
 
+def _is_target_header(line: str, section_name: str) -> bool:
+    """True iff *line* is the ``[section_name]`` table header itself, tolerating
+    the same whitespace / trailing-comment forms ``_SECTION_HEADER_RE`` accepts
+    as section boundaries. An exact string compare here misses
+    ``[section] # comment`` — replace then appends a DUPLICATE table (invalid
+    TOML: "Cannot declare ... twice") and remove becomes a silent no-op.
+    """
+    if line.lstrip().startswith("[["):  # array-of-table is never the target
+        return False
+    m = _SECTION_HEADER_RE.match(line)
+    return bool(m) and m.group(1).strip() == section_name
+
+
 def _remove_toml_section(content: str, section_name: str) -> str:
     """Remove the ``[section_name]`` block from TOML content. No-op if absent.
 
@@ -225,11 +238,10 @@ def _remove_toml_section(content: str, section_name: str) -> str:
     ``[header]`` or end-of-file; dotted child subtables are removed with it.
     Other sections are preserved verbatim.
     """
-    header = f"[{section_name}]"
     out: list[str] = []
     skipping = False
     for line in content.splitlines():
-        if line.strip() == header:
+        if _is_target_header(line, section_name):
             skipping = True
             continue
         if skipping:
@@ -281,7 +293,7 @@ def _replace_or_append_toml_section(
 
     while i < len(lines):
         line = lines[i]
-        if line.strip() == header:
+        if _is_target_header(line, section_name):
             found = True
             out.append(new_block)
             i += 1
