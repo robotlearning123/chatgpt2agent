@@ -6,6 +6,13 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-07-02
+
+Patch release: 2026-07-02 audit round — PII-redaction correctness, robustness
+against empty backend responses, Codex TOML config-editing fixes, and honest
+failure reporting (truncated Deep Research reports, invalid pasted tokens).
+Source-only test coverage baseline recorded at 59% (168 tests).
+
 ### Security
 
 - `get_conversation` now redacts message `text`/`code` bodies (emails, phones,
