@@ -71,17 +71,23 @@ def _from_browser() -> dict | None:
     print(
         '    copy(JSON.parse(localStorage["@@auth0spajs@@::..."] || "{}").body?.access_token'
     )
-    print("  OR go to:")
-    print("    Application → Cookies → __Secure-next-auth.session-token")
     print()
-    print("  Then paste the token below.")
+    print("  Then paste the access_token below. Browser cookies such as")
+    print("  __Secure-next-auth.session-token are NOT access tokens — the API")
+    print("  rejects them with 401, so they are not accepted here.")
     print("  (Tip: running `codex login` once lets gpt2agent reuse that token automatically.)")
     print()
     webbrowser.open("https://chat.openai.com")
-    token = input("  Paste access_token (or session token): ").strip()
-    if token:
-        return {"access_token": token, "source": "browser"}
-    return None
+    token = input("  Paste access_token: ").strip()
+    if not token:
+        return None
+    if not token.startswith("eyJ") or token.count(".") != 2:
+        # ChatGPT access tokens are 3-segment JWTs; session cookies (5-segment
+        # JWE) or random strings only produce 401s downstream — fail here.
+        print("  That does not look like a JWT access_token (expected eyJ...x.y.z);")
+        print("  not saving it. Use `codex login` for the reliable path.")
+        return None
+    return {"access_token": token, "source": "browser"}
 
 
 def _from_browser_use() -> dict | None:

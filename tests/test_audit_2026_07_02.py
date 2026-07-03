@@ -52,6 +52,21 @@ def test_redact_still_masks_phone_numbers() -> None:
     assert redact("intl +44 20 7946 0958") == "intl <PHONE>"
 
 
+def test_redact_masks_phone_after_iso_date_in_same_match() -> None:
+    # _PHONE_RE greedily spans "2026-05-26 617-555-0123" as ONE match; the date
+    # prefix must survive but the trailing phone must still be masked (cx P1).
+    assert redact("appt 2026-05-26 617-555-0123") == "appt 2026-05-26 <PHONE>"
+
+
+def test_redact_masks_phone_after_dmy_date_in_same_match() -> None:
+    assert redact("appt 26-05-2026 617-555-0123") == "appt 26-05-2026 <PHONE>"
+
+
+def test_redact_preserves_consecutive_dates() -> None:
+    s = "between 2026-05-26 2026-06-27 only"
+    assert redact(s) == s
+
+
 # ── DR tools: truncated / timed-out reports are labeled ──────────────────────
 
 
@@ -170,3 +185,27 @@ def test_browser_use_does_not_return_session_cookie(monkeypatch) -> None:
     monkeypatch.setattr(auth_mod.time, "sleep", lambda *a: None)
 
     assert auth_mod._from_browser_use() is None
+
+
+def _run_from_browser(monkeypatch, pasted: str):
+    import gpt2agent.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod.webbrowser, "open", lambda *a, **k: True)
+    monkeypatch.setattr("builtins.input", lambda *a: pasted)
+    return auth_mod._from_browser()
+
+
+def test_from_browser_rejects_non_jwt_paste(monkeypatch) -> None:
+    # A NextAuth session cookie is a 5-segment JWE, not a 3-segment JWS access
+    # token; saving it just yields 401s later (cx P2) — must be refused.
+    assert _run_from_browser(monkeypatch, "eyJa.eyJb.eyJc.eyJd.eyJe") is None
+    assert _run_from_browser(monkeypatch, "some-random-cookie-value") is None
+    assert _run_from_browser(monkeypatch, "") is None
+
+
+def test_from_browser_accepts_jwt_shaped_token(monkeypatch) -> None:
+    tok = "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl"
+    assert _run_from_browser(monkeypatch, tok) == {
+        "access_token": tok,
+        "source": "browser",
+    }

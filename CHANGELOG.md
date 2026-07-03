@@ -43,7 +43,9 @@ versioning: [SemVer](https://semver.org/).
 - PII redaction no longer corrupts calendar dates: "2026-05-26" (and
   `DD-MM-YYYY` / datetime / date-range forms) satisfied the phone-number
   pattern and came back as `<PHONE>` in memories, tasks, and conversation
-  titles. Phone masking still applies to actual phone shapes.
+  titles. Phone masking still applies to actual phone shapes — including a
+  phone that follows a date inside the same greedy match
+  ("2026-05-26 617-555-0123" keeps the date, masks the phone).
 - `deep_research` / `deep_research_heavy` now append an explicit "⚠ Report
   may be incomplete" note when the SSE stream ended without the server
   marking the response finished (`terminated_abnormally`) or when completion
@@ -58,6 +60,9 @@ versioning: [SemVer](https://semver.org/).
 - Removed the `browser-use` session-cookie fallback that saved a NextAuth
   session cookie as `access_token` — the saved "token" 401'd on every API
   call. Extraction now fails visibly so the user can paste a real token.
+  The manual paste prompt likewise no longer suggests the
+  `__Secure-next-auth.session-token` cookie and refuses to save values that
+  are not 3-segment JWTs (a pasted session cookie only produced 401s).
 
 ## [0.0.8] - 2026-06-27
 
