@@ -76,6 +76,21 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 # ── server ───────────────────────────────────────────────────────────────────
 
 
+def _dr_incomplete_note(timed_out: bool) -> str:
+    """Marker appended when a DR stream never reached finished_successfully.
+
+    Without it, a truncated or timed-out report is indistinguishable from a
+    complete one — the caller would archive partial research as final.
+    """
+    note = (
+        "\n\n---\n**⚠ Report may be incomplete** — the stream ended before the "
+        "server marked the response finished"
+    )
+    if timed_out:
+        note += " (completion polling timed out)"
+    return note + ". Retry, or use get_conversation to check for a fuller report."
+
+
 def build_server(cfg: dict[str, Any]) -> FastMCP:
     srv = cfg["server"]
     models = cfg["models"]
@@ -149,6 +164,8 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         final_text = ""
         tool_calls: list[str] = []
         refs: list = []
+        truncated = False
+        timed_out = False
 
         async for event in conv.deep_research(q):
             if event["type"] == "tool":
@@ -156,6 +173,8 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             elif event["type"] == "done":
                 final_text = event["text"]
                 refs = event.get("content_references", [])
+                truncated = bool(event.get("terminated_abnormally"))
+                timed_out = bool(event.get("timeout"))
 
         # Append a brief sources section if citations were returned
         if refs:
@@ -169,6 +188,9 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                         seen.add(url)
                         lines.append(f"- [{title}]({url})")
             final_text += "\n".join(lines)
+
+        if truncated:
+            final_text += _dr_incomplete_note(timed_out)
 
         return final_text or "(no response)"
 
@@ -189,6 +211,8 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         refs: list = []
         connector_failed = False
         tool_error_msg = ""
+        truncated = False
+        timed_out = False
 
         async for event in conv.deep_research_heavy(q, model=heavy_dr_model):
             etype = event.get("type")
@@ -197,6 +221,8 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                 refs = event.get("content_references", [])
                 if event.get("connector_failed"):
                     connector_failed = True
+                truncated = bool(event.get("terminated_abnormally"))
+                timed_out = bool(event.get("timeout"))
             elif etype == "tool_error":
                 tool_error_msg = event.get("message", "")
 
@@ -225,6 +251,9 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                 first_line = tool_error_msg.splitlines()[0][:200]
                 warning += f"\n\n*Server message:* `{first_line}`"
             final_text += warning
+
+        if truncated:
+            final_text += _dr_incomplete_note(timed_out)
 
         return final_text or "(no response)"
 

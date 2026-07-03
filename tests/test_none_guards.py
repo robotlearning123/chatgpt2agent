@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from gpt2agent.tools import account, apps, codex, gpts, instructions, memory, writes
+from gpt2agent.tools import account, apps, codex, conversations, gpts, images
+from gpt2agent.tools import instructions, memory, writes
 
 from tests.test_tools import FakeClient, FakeMCP
 
@@ -41,6 +42,21 @@ def test_memory_tools_tolerate_none() -> None:
     mcp = _tools(memory)
     assert mcp.tools["memory_list"]() == []
     assert mcp.tools["memory_search"]("anything") == []
+
+
+def test_conversation_tools_tolerate_none() -> None:
+    """cx review 2026-07-02 P2: the guarded conversation/task sites lacked the
+    same None-contract coverage the newly-guarded modules got."""
+    mcp = _tools(conversations)
+    assert mcp.tools["list_conversations"]() == []
+    assert mcp.tools["get_conversation"]("conv-1") == {}
+    assert mcp.tools["list_tasks"]() == []
+
+
+def test_file_tools_tolerate_none() -> None:
+    mcp = _tools(images)
+    assert mcp.tools["get_file_info"]("f1") == {}
+    assert mcp.tools["get_file_download_url"]("f1") == ""
 
 
 def test_custom_instructions_get_tolerates_none() -> None:

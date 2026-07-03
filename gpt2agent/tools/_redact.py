@@ -3,6 +3,21 @@ import re
 # PII patterns.
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PHONE_RE = re.compile(r"\+?\d[\d ()\-]{8,}\d")
+# Calendar dates satisfy _PHONE_RE ("2026-05-26" is 10 digit/dash chars), so a
+# phone match that *starts* with a date shape keeps the date — dates in
+# memories/tasks/conversations vastly outnumber phone numbers written with a
+# leading date. Only the date itself is preserved; the rest of the match is
+# re-scanned so "2026-05-26 617-555-0123" still masks the phone.
+_DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2}-\d{4})(?=$|[^\d])")
+
+
+def _phone_repl(m: re.Match) -> str:
+    text = m.group(0)
+    dm = _DATE_PREFIX_RE.match(text)
+    if not dm:
+        return "<PHONE>"
+    prefix = dm.group(1)
+    return prefix + _PHONE_RE.sub(_phone_repl, text[len(prefix):])
 
 # Secret patterns. Users routinely paste API keys / tokens into ChatGPT, so they
 # end up in memories, tasks, and custom instructions — which these tools return
@@ -25,5 +40,5 @@ def redact(s: object) -> object:
     s = _APIKEY_RE.sub("<APIKEY>", s)
     s = _GH_TOKEN_RE.sub("<TOKEN>", s)
     s = _EMAIL_RE.sub("<EMAIL>", s)
-    s = _PHONE_RE.sub("<PHONE>", s)
+    s = _PHONE_RE.sub(_phone_repl, s)
     return s

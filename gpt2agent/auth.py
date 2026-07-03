@@ -71,17 +71,23 @@ def _from_browser() -> dict | None:
     print(
         '    copy(JSON.parse(localStorage["@@auth0spajs@@::..."] || "{}").body?.access_token'
     )
-    print("  OR go to:")
-    print("    Application → Cookies → __Secure-next-auth.session-token")
     print()
-    print("  Then paste the token below.")
+    print("  Then paste the access_token below. Browser cookies such as")
+    print("  __Secure-next-auth.session-token are NOT access tokens — the API")
+    print("  rejects them with 401, so they are not accepted here.")
     print("  (Tip: running `codex login` once lets gpt2agent reuse that token automatically.)")
     print()
     webbrowser.open("https://chat.openai.com")
-    token = input("  Paste access_token (or session token): ").strip()
-    if token:
-        return {"access_token": token, "source": "browser"}
-    return None
+    token = input("  Paste access_token: ").strip()
+    if not token:
+        return None
+    if not token.startswith("eyJ") or token.count(".") != 2:
+        # ChatGPT access tokens are 3-segment JWTs; session cookies (5-segment
+        # JWE) or random strings only produce 401s downstream — fail here.
+        print("  That does not look like a JWT access_token (expected eyJ...x.y.z);")
+        print("  not saving it. Use `codex login` for the reliable path.")
+        return None
+    return {"access_token": token, "source": "browser"}
 
 
 def _from_browser_use() -> dict | None:
@@ -122,17 +128,11 @@ def _from_browser_use() -> dict | None:
                 except Exception:
                     pass
 
-        # Try cookies fallback
-        result = subprocess.run(
-            ["browser-use", "cookies", "get", "--url", "https://chat.openai.com"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        cookies = json.loads(result.stdout or "[]")
-        for c in cookies:
-            if "session-token" in c.get("name", ""):
-                return {"access_token": c["value"], "source": "browser-use-cookie"}
+        # No cookie fallback: the __Secure-next-auth.session-token cookie is a
+        # NextAuth session cookie, not the chatgpt.com-scoped access-token JWT
+        # the backend sends as `Authorization: Bearer` — saving it "succeeds"
+        # here and then every API call 401s. Better to fail visibly.
+        print("  browser-use found no access_token in localStorage.")
 
     except Exception as e:
         print(f"  browser-use extraction failed: {e}")
