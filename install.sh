@@ -29,6 +29,7 @@ PORT="9000"
 SKILL_FLAG=""
 REGISTER=1
 SOURCE="gpt2agent"  # default: PyPI
+SOURCE_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --port)         PORT="$2"; shift 2 ;;
     --no-skill)     SKILL_FLAG="--no-skill"; shift ;;
     --no-register)  REGISTER=0; shift ;;
-    --source)       SOURCE="$2"; shift 2 ;;
+    --source)       SOURCE="$2"; SOURCE_EXPLICIT=1; shift 2 ;;
     -h|--help)
       sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -93,22 +94,21 @@ ok "pipx: $(pipx --version 2>/dev/null || echo present)"
 
 # --- 3. install gpt2agent -------------------------------------------------
 
-if [[ -d "$SOURCE" ]]; then
+if [[ $SOURCE_EXPLICIT -eq 1 && -d "$SOURCE" ]]; then
   info "Installing (editable) from $SOURCE"
   pipx install --editable --force "$SOURCE"
-elif [[ "$SOURCE" == git+* || "$SOURCE" == http* ]]; then
+elif [[ $SOURCE_EXPLICIT -eq 1 ]]; then
   info "Installing from $SOURCE"
   pipx install --force "$SOURCE"
 else
   info "Installing $SOURCE from PyPI"
-  if ! pipx install --force "$SOURCE" 2>&1; then
-    GIT_FALLBACK="git+https://github.com/robotlearning123/gpt2agent.git"
-    info "PyPI install failed (package may not be published yet) — falling back to $GIT_FALLBACK"
-    if ! pipx install --force "$GIT_FALLBACK" 2>&1; then
-      err "Both PyPI and git install failed. Check your network and Python toolchain, then retry:"
-      err "  pipx install --force $GIT_FALLBACK"
-      exit 1
-    fi
+  if pipx install --force "$SOURCE" 2>&1; then
+    :
+  else
+    status=$?
+    err "PyPI install failed. Check your network and Python toolchain, then retry:"
+    err "  pipx install --force $SOURCE"
+    exit "$status"
   fi
 fi
 

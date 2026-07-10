@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -492,6 +493,17 @@ _EXTRA_HOSTS: dict[str, Any] = {
 # ── Claude Code skill bundle ───────────────────────────────────────────────
 
 
+_SKILL_REQUIRED_FILES = {
+    "deep-research": (
+        "SKILL.md",
+        "bin/deep_research.py",
+        "bin/quota.sh",
+        "bin/run.sh",
+    ),
+    "gpt2agent": ("SKILL.md", "tools-reference.md"),
+}
+
+
 def _install_one_skill(
     name: str,
     src: Path,
@@ -499,31 +511,60 @@ def _install_one_skill(
     *,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Copy one skill directory into *dst_dir*."""
+    """Transactionally copy one filtered skill directory into *dst_dir*."""
     dst = dst_dir / name
 
     if dry_run:
         _info(f"skill: would install {src} → {dst}")
         return {"path": dst, "changed": False}
 
-    backup: Path | None = None
-    if dst.exists():
-        backup = dst.with_name(dst.name + ".bak-gpt2agent")
-        if backup.exists():
-            shutil.rmtree(backup)
-        shutil.move(str(dst), str(backup))
-
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
-    # Ensure executable bits on shell scripts (lost on some filesystems)
-    for sh in dst.glob("bin/*.sh"):
-        sh.chmod(0o755)
+    staging = Path(tempfile.mkdtemp(prefix=f".{name}.staging-", dir=dst.parent))
+    backup: Path | None = None
+    try:
+        shutil.copytree(
+            src,
+            staging,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        required = _SKILL_REQUIRED_FILES.get(name, ("SKILL.md",))
+        missing = [relative for relative in required if not (staging / relative).is_file()]
+        if missing:
+            raise RuntimeError(
+                f"skill bundle '{name}' missing required file(s): {', '.join(missing)}"
+            )
 
-    _ok(
-        f"skill: installed {name} → {dst} "
-        f"(backup: {backup.name if backup else 'none'})"
-    )
-    return {"path": dst, "backup": backup, "changed": True}
+        had_target = dst.exists()
+        if had_target:
+            backup = dst.with_name(dst.name + ".bak-gpt2agent")
+            if backup.exists():
+                shutil.rmtree(backup)
+
+        try:
+            if backup is not None:
+                shutil.move(str(dst), str(backup))
+            shutil.move(str(staging), str(dst))
+            # Ensure executable bits on shell scripts (lost on some filesystems).
+            for sh in dst.glob("bin/*.sh"):
+                sh.chmod(0o755)
+            _ok(
+                f"skill: installed {name} → {dst} "
+                f"(backup: {backup.name if backup else 'none'})"
+            )
+        except BaseException:
+            if backup is not None and backup.exists():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.move(str(backup), str(dst))
+            elif not had_target and dst.exists():
+                shutil.rmtree(dst)
+            raise
+
+        return {"path": dst, "backup": backup, "changed": True}
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def install_claude_skill(

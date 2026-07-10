@@ -1,0 +1,355 @@
+"""Release-package regressions found during the 2026-07-09 audit.
+
+These tests are deliberately offline.  Shell entry points run against recording
+executables, skill installation uses temporary source/target trees, and the
+sdist is built and unpacked entirely below ``tmp_path``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from gpt2agent import __version__
+from gpt2agent import install as install_mod
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+INSTALLER = REPO_ROOT / "install.sh"
+DR_WRAPPER = REPO_ROOT / "gpt2agent" / "skills" / "deep-research" / "bin" / "run.sh"
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    path.chmod(0o755)
+
+
+def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    fake_bin = tmp_path / "bin"
+    log = tmp_path / "pipx-argv.jsonl"
+    fake_pipx = fake_bin / "pipx"
+    _write_executable(
+        fake_pipx,
+        textwrap.dedent(
+            f"""\
+            #!{sys.executable}
+            import json
+            import os
+            import sys
+
+            args = sys.argv[1:]
+            if args == ["--version"]:
+                print("fake-pipx 1.0")
+                raise SystemExit(0)
+
+            with open(os.environ["FAKE_PIPX_LOG"], "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(args) + "\\n")
+
+            is_git = any(arg.startswith("git+https://") for arg in args)
+            status_var = "FAKE_PIPX_GIT_STATUS" if is_git else "FAKE_PIPX_PYPI_STATUS"
+            status = int(os.environ.get(status_var, "0"))
+            if status:
+                print("simulated PyPI failure", file=sys.stderr)
+            raise SystemExit(status)
+            """
+        ),
+    )
+    _write_executable(fake_bin / "gpt2agent", "#!/bin/sh\nexit 0\n")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PIPX_LOG": str(log),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        }
+    )
+    return env, log
+
+
+def _pipx_calls(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_checkout_installer_defaults_to_named_pypi_package(tmp_path: Path) -> None:
+    env, log = _recording_installer_env(tmp_path)
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _pipx_calls(log) == [["install", "--force", "gpt2agent"]]
+
+
+def test_pypi_failure_fails_closed_without_git_fallback(tmp_path: Path) -> None:
+    env, log = _recording_installer_env(tmp_path)
+    env["FAKE_PIPX_PYPI_STATUS"] = "42"
+    env["FAKE_PIPX_GIT_STATUS"] = "0"
+    outside_checkout = tmp_path / "outside-checkout"
+    outside_checkout.mkdir()
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=outside_checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "simulated PyPI failure" in result.stdout + result.stderr
+    calls = _pipx_calls(log)
+    assert calls[0] == ["install", "--force", "gpt2agent"]
+    assert not any(arg.startswith("git+https://") for call in calls for arg in call)
+
+
+def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    python_log = tmp_path / "python-argv.txt"
+    fake_python = tmp_path / "recording-python"
+    _write_executable(
+        fake_python,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_PYTHON_LOG\"\n",
+    )
+    _write_executable(fake_bin / "gpt2agent", f"#!{fake_python}\n")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    codex_home = tmp_path / "alternate-codex"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text('{"tokens": {}}\n')
+    env = os.environ.copy()
+    env.update(
+        {
+            "CODEX_HOME": str(codex_home),
+            "FAKE_PYTHON_LOG": str(python_log),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        [str(DR_WRAPPER), "test topic"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    argv = python_log.read_text().splitlines()
+    assert Path(argv[0]).name == "deep_research.py"
+    assert argv[1:] == ["test topic"]
+
+
+def test_python_module_entry_reports_package_version() -> None:
+    expected = f"gpt2agent {__version__}"
+    result = subprocess.run(
+        [sys.executable, "-m", "gpt2agent", "--version"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+
+
+def _packaged_deep_research_skill(tmp_path: Path) -> Path:
+    src = tmp_path / "package" / "skills" / "deep-research"
+    (src / "bin" / "__pycache__").mkdir(parents=True)
+    (src / "SKILL.md").write_text("# packaged skill\n")
+    (src / "bin" / "run.sh").write_text("#!/bin/sh\n")
+    (src / "bin" / "quota.sh").write_text("#!/bin/sh\n")
+    (src / "bin" / "deep_research.py").write_text("# packaged helper\n")
+    (src / "bin" / "__pycache__" / "x.pyc").write_bytes(b"bytecode")
+    (src / "bin" / "cached.pyo").write_bytes(b"optimized-bytecode")
+    return src
+
+
+def _seed_active_skill(tmp_path: Path) -> tuple[Path, Path]:
+    skills_root = tmp_path / "installed" / "skills"
+    active = skills_root / "deep-research"
+    active.mkdir(parents=True)
+    (active / "ACTIVE_SENTINEL.txt").write_text("original active skill\n")
+    return skills_root, active
+
+
+def test_skill_copy_filters_python_bytecode(tmp_path: Path) -> None:
+    src = _packaged_deep_research_skill(tmp_path)
+    skills_root = tmp_path / "installed" / "skills"
+
+    install_mod._install_one_skill("deep-research", src, skills_root)
+
+    installed = skills_root / "deep-research"
+    assert (installed / "SKILL.md").is_file()
+    assert not any(path.name == "__pycache__" for path in installed.rglob("*"))
+    assert not list(installed.rglob("*.pyc"))
+    assert not list(installed.rglob("*.pyo"))
+
+
+def test_skill_copy_failure_keeps_original_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _packaged_deep_research_skill(tmp_path)
+    skills_root, active = _seed_active_skill(tmp_path)
+
+    def fail_copy(_src: Path, dst: Path, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        destination = Path(dst)
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "PARTIAL_COPY.txt").write_text("partial\n")
+        raise OSError("injected staged-copy failure")
+
+    monkeypatch.setattr(install_mod.shutil, "copytree", fail_copy)
+
+    with pytest.raises(OSError, match="injected staged-copy failure"):
+        install_mod._install_one_skill("deep-research", src, skills_root)
+
+    assert (active / "ACTIVE_SENTINEL.txt").read_text() == "original active skill\n"
+    assert not (active / "PARTIAL_COPY.txt").exists()
+
+
+def test_skill_swap_failure_restores_original_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _packaged_deep_research_skill(tmp_path)
+    skills_root, active = _seed_active_skill(tmp_path)
+    real_move = shutil.move
+
+    def fail_staging_swap(src_path: str, dst_path: str, *args: object, **kwargs: object):
+        source = Path(src_path)
+        destination = Path(dst_path)
+        if ".staging-" in source.name and destination == active:
+            raise OSError("injected staged-swap failure")
+        return real_move(src_path, dst_path, *args, **kwargs)
+
+    monkeypatch.setattr(install_mod.shutil, "move", fail_staging_swap)
+
+    with pytest.raises(OSError, match="injected staged-swap failure"):
+        install_mod._install_one_skill("deep-research", src, skills_root)
+
+    assert (active / "ACTIVE_SENTINEL.txt").read_text() == "original active skill\n"
+    assert not (active / "SKILL.md").exists()
+
+
+def test_skill_validation_failure_keeps_original_active(tmp_path: Path) -> None:
+    src = _packaged_deep_research_skill(tmp_path)
+    (src / "bin" / "run.sh").unlink()
+    skills_root, active = _seed_active_skill(tmp_path)
+
+    with pytest.raises(RuntimeError, match="missing required file"):
+        install_mod._install_one_skill("deep-research", src, skills_root)
+
+    assert (active / "ACTIVE_SENTINEL.txt").read_text() == "original active skill\n"
+
+
+def _python_with_build_backend() -> tuple[list[str], str]:
+    """Return an offline sdist command prefix and its backend kind.
+
+    The repository's dev extra intentionally does not add packaging tools.  Use
+    ``build`` when available, otherwise invoke the declared setuptools backend
+    directly.  A system Python is a final fallback for minimal test venvs.
+    """
+    candidates = [sys.executable]
+    system_python = shutil.which("python3")
+    # A venv executable and its base interpreter can resolve to the same inode
+    # while exposing intentionally different module paths, so compare the
+    # executable spellings rather than resolving symlinks here.
+    if system_python and Path(system_python).absolute() != Path(sys.executable).absolute():
+        candidates.append(system_python)
+
+    for python in candidates:
+        has_build = subprocess.run(
+            [python, "-c", "import build"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if has_build.returncode == 0:
+            return [python, "-m", "build", "--sdist", "--no-isolation"], "build"
+
+        has_setuptools = subprocess.run(
+            [python, "-c", "import setuptools.build_meta"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if has_setuptools.returncode == 0:
+            code = (
+                "from setuptools.build_meta import build_sdist; "
+                "import sys; print(build_sdist(sys.argv[1]))"
+            )
+            return [python, "-c", code], "setuptools"
+
+    raise RuntimeError("no local Python provides the declared setuptools build backend")
+
+
+def test_sdist_contains_heavy_parser_json_fixtures(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    shutil.copytree(
+        REPO_ROOT,
+        source,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            ".pytest_cache",
+            ".venv",
+            "__pycache__",
+            "*.pyc",
+            "*.egg-info",
+            "build",
+            "dist",
+        ),
+    )
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    command, backend = _python_with_build_backend()
+    if backend == "build":
+        command.extend(["--outdir", str(dist)])
+    else:
+        command.append(str(dist))
+
+    built = subprocess.run(
+        command,
+        cwd=source,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+
+    archives = list(dist.glob("*.tar.gz"))
+    assert len(archives) == 1
+    unpacked = tmp_path / "unpacked"
+    with tarfile.open(archives[0]) as archive:
+        if sys.version_info >= (3, 12):
+            archive.extractall(unpacked, filter="data")
+        else:  # Python 3.10/3.11 lack the extraction filter API.
+            archive.extractall(unpacked)
+    sdist_root = next(path for path in unpacked.iterdir() if path.is_dir())
+    fixture_dir = sdist_root / "tests" / "fixtures"
+    expected = {
+        "heavy_dr_conversation_detail_h2.json",
+        "heavy_dr_widget_state.json",
+    }
+    assert {path.name for path in fixture_dir.glob("*.json")} >= expected
