@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
 from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def account_status() -> dict:
+    async def account_status() -> dict:
         """Return ChatGPT account info.
 
         Returns a dict with: `email` (redacted), `country`, `groups`,
         `subscription` (plan slug, e.g. "plus"/"pro"/None), `has_active_subscription`,
         `expires_at`, and `features_count` (number of entitled features).
         """
-        me = client.get("/backend-api/me", target_path="/backend-api/me") or {}
-        check = client.get(
+        me = await async_get(client, "/backend-api/me", target_path="/backend-api/me") or {}
+        check = await async_get(
+            client,
             "/backend-api/accounts/check/v4-2023-04-27",
             target_path="/backend-api/accounts/check/v4-2023-04-27",
         ) or {}
@@ -32,7 +34,7 @@ def register(mcp, client: BackendClient) -> None:
         }
 
     @mcp.tool()
-    def list_models() -> list:
+    async def list_models() -> list:
         """List the models available on your account.
 
         Returns a list of model dicts; the `slug` field of each (e.g.
@@ -40,7 +42,8 @@ def register(mcp, client: BackendClient) -> None:
         `chat` tool. Other keys: title, description, max_tokens, reasoning_type,
         capabilities, enabled_tools.
         """
-        data = client.get(
+        data = await async_get(
+            client,
             "/backend-api/models?history_and_training_disabled=false",
             target_path="/backend-api/models",
         ) or {}

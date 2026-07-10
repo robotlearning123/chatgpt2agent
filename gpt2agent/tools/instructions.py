@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
 from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def custom_instructions_get() -> dict:
+    async def custom_instructions_get() -> dict:
         """Return ChatGPT custom instructions (PII redacted)."""
-        ci = client.get(
+        ci = await async_get(
+            client,
             "/backend-api/user_system_messages",
             target_path="/backend-api/user_system_messages",
         ) or {}

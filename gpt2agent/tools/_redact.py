@@ -13,11 +13,25 @@ _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}|\d{1,2}-\d{1,2}-\d{4})(?=$|[^
 
 def _phone_repl(m: re.Match) -> str:
     text = m.group(0)
-    dm = _DATE_PREFIX_RE.match(text)
-    if not dm:
-        return "<PHONE>"
-    prefix = dm.group(1)
-    return prefix + _PHONE_RE.sub(_phone_repl, text[len(prefix):])
+    parts = []
+    position = 0
+    while position < len(text):
+        candidate = _PHONE_RE.search(text, position)
+        if candidate is None:
+            parts.append(text[position:])
+            break
+
+        parts.append(text[position:candidate.start()])
+        date = _DATE_PREFIX_RE.match(candidate.group(0))
+        if date is None:
+            parts.append("<PHONE>")
+            position = candidate.end()
+            continue
+
+        prefix = date.group(1)
+        parts.append(prefix)
+        position = candidate.start() + len(prefix)
+    return "".join(parts)
 
 # Secret patterns. Users routinely paste API keys / tokens into ChatGPT, so they
 # end up in memories, tasks, and custom instructions — which these tools return

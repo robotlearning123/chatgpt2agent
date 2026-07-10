@@ -66,6 +66,10 @@ def _reg(module, client: FakeClient, conv: Any = None) -> FakeMCP:
     return mcp
 
 
+def _run(fn, *args: Any, **kwargs: Any) -> Any:
+    return asyncio.run(fn(*args, **kwargs))
+
+
 class _ToolConv:
     """Records ConversationClient.tool_call / image_gen calls for the SSE-backed tools."""
 
@@ -110,7 +114,7 @@ def test_account_status_redacts_email_and_counts_features() -> None:
                                 "expires_at": "2026"},
                 "features": ["a", "b", "c"]}}},
     })
-    out = _reg(account, client).tools["account_status"]()
+    out = _run(_reg(account, client).tools["account_status"])
     assert out["email"] == "<EMAIL>"
     assert out["subscription"] == "plus"
     assert out["has_active_subscription"] is True
@@ -122,7 +126,7 @@ def test_account_status_empty_accounts_no_crash() -> None:
         "/backend-api/me": {"email": "x@y.com"},
         "/backend-api/accounts/check": {"accounts": {}},
     })
-    out = _reg(account, client).tools["account_status"]()
+    out = _run(_reg(account, client).tools["account_status"])
     assert out["features_count"] == 0
     assert out["subscription"] is None
 
@@ -130,7 +134,7 @@ def test_account_status_empty_accounts_no_crash() -> None:
 def test_list_models_exposes_slug() -> None:
     client = FakeClient(routes={"/backend-api/models": {"models": [
         {"slug": "gpt-5-5-pro", "title": "Pro", "max_tokens": 410000}]}})
-    out = _reg(account, client).tools["list_models"]()
+    out = _run(_reg(account, client).tools["list_models"])
     assert out[0]["slug"] == "gpt-5-5-pro"
 
 
@@ -144,12 +148,12 @@ def test_memory_list_and_search_redact_and_filter() -> None:
         {"id": "m1", "content": "reach jane@doe.com", "created_timestamp": 1},
         {"id": "m2", "content": "weather note", "created_timestamp": 2}]}})
     mcp = _reg(memory, client)
-    listed = mcp.tools["memory_list"]()
+    listed = _run(mcp.tools["memory_list"])
     assert len(listed) == 2
     assert "<EMAIL>" in listed[0]["content"]
-    hits = mcp.tools["memory_search"]("WEATHER")  # case-insensitive
+    hits = _run(mcp.tools["memory_search"], "WEATHER")  # case-insensitive
     assert [m["id"] for m in hits] == ["m2"]
-    assert mcp.tools["memory_search"]("zzz") == []
+    assert _run(mcp.tools["memory_search"], "zzz") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -161,7 +165,7 @@ def test_custom_instructions_get_redacts_both_fields() -> None:
     client = FakeClient(routes={"/backend-api/user_system_messages": {
         "enabled": True, "traits_enabled": False, "personality_type_selection": "CHILL",
         "about_user_message": "I am bob@corp.io", "about_model_message": "be terse"}})
-    out = _reg(instructions, client).tools["custom_instructions_get"]()
+    out = _run(_reg(instructions, client).tools["custom_instructions_get"])
     assert out["about_user"] == "I am <EMAIL>"  # only the email substring is masked
     assert "bob@corp.io" not in out["about_user"]
     assert out["about_model"] == "be terse"
@@ -177,7 +181,7 @@ def test_custom_instructions_get_redacts_both_fields() -> None:
 def test_list_conversations_redacts_title() -> None:
     client = FakeClient(routes={"/backend-api/conversations": {"items": [
         {"id": "c1", "title": "ping admin@site.com", "update_time": 1}]}})
-    out = _reg(conversations, client).tools["list_conversations"]()
+    out = _run(_reg(conversations, client).tools["list_conversations"])
     assert out[0]["id"] == "c1"
     assert "<EMAIL>" in out[0]["title"]
 
@@ -186,7 +190,7 @@ def test_list_tasks_redacts_and_bool_coerces_and_slices() -> None:
     items = [{"task_id": f"t{i}", "title": "see ceo@x.com", "prompt": "call 415-555-0000",
               "image_gen_message": {"foo": 1}} for i in range(25)]
     client = FakeClient(routes={"/backend-api/tasks": {"tasks": items}})
-    out = _reg(conversations, client).tools["list_tasks"](limit=10)
+    out = _run(_reg(conversations, client).tools["list_tasks"], limit=10)
     assert len(out) == 10
     assert "<EMAIL>" in out[0]["title"]
     assert "<PHONE>" in out[0]["prompt"]
@@ -208,7 +212,7 @@ def test_get_conversation_filters_roles_truncates_and_extracts_images() -> None:
     }
     client = FakeClient(routes={"/backend-api/conversation/C1": {"id": "C1", "title": "t",
                                                                  "mapping": mapping}})
-    out = _reg(conversations, client).tools["get_conversation"]("C1")
+    out = _run(_reg(conversations, client).tools["get_conversation"], "C1")
     roles = {m["role"] for m in out["messages"]}
     assert "system" not in roles  # filtered
     by_id = {m["id"]: m for m in out["messages"]}
@@ -219,7 +223,7 @@ def test_get_conversation_filters_roles_truncates_and_extracts_images() -> None:
 
 def test_get_conversation_empty_returns_empty_dict() -> None:
     client = FakeClient(routes={"/backend-api/conversation/X": {}})
-    assert _reg(conversations, client).tools["get_conversation"]("X") == {}
+    assert _run(_reg(conversations, client).tools["get_conversation"], "X") == {}
 
 
 def test_get_conversation_redacts_message_bodies() -> None:
@@ -236,7 +240,7 @@ def test_get_conversation_redacts_message_bodies() -> None:
     }
     client = FakeClient(routes={"/backend-api/conversation/C2": {"id": "C2", "title": "t",
                                                                  "mapping": mapping}})
-    out = _reg(conversations, client).tools["get_conversation"]("C2")
+    out = _run(_reg(conversations, client).tools["get_conversation"], "C2")
     by_id = {m["id"]: m for m in out["messages"]}
     assert jwt not in by_id["u"]["text"] and "<JWT>" in by_id["u"]["text"]
     assert "bob@corp.io" not in by_id["u"]["text"] and "<EMAIL>" in by_id["u"]["text"]
@@ -253,7 +257,7 @@ def test_get_conversation_redacts_before_truncation() -> None:
     }
     client = FakeClient(routes={"/backend-api/conversation/C3": {"id": "C3", "title": "t",
                                                                  "mapping": mapping}})
-    out = _reg(conversations, client).tools["get_conversation"]("C3")
+    out = _run(_reg(conversations, client).tools["get_conversation"], "C3")
     text = out["messages"][0]["text"]
     assert "eyJa" not in text  # no partial-JWT prefix leaked
     assert text.endswith("<JWT>") or "<JWT>" in text
@@ -267,7 +271,7 @@ def test_get_conversation_redacts_before_truncation() -> None:
 def test_list_custom_gpts_redacts_name_keeps_short_url() -> None:
     client = FakeClient(routes={"/backend-api/gizmos/snorlax/sidebar": {"items": [
         {"gizmo": {"name": "reach ops@gpt.io", "short_url": "g/x"}}]}})
-    out = _reg(gpts, client).tools["list_custom_gpts"]()
+    out = _run(_reg(gpts, client).tools["list_custom_gpts"])
     assert "<EMAIL>" in out[0]["name"]
     assert out[0]["short_url"] == "g/x"
 
@@ -284,7 +288,7 @@ def test_list_apps_filters_nondict_and_connected_fallback() -> None:
         {"id": "connector_a", "enabled": True, "is_connected": True},
         {"id": "asdk_app_b", "connected": False},
         "not-a-dict"]}})
-    out = _reg(apps, client).tools["list_apps"]()
+    out = _run(_reg(apps, client).tools["list_apps"])
     assert len(out) == 2  # string filtered out
     assert out[0]["type"] == "official_connector"
     assert out[1]["connected"] is False  # `connected` fallback used
@@ -294,19 +298,19 @@ def test_list_codex_envs_repo_count_and_envelope() -> None:
     # list envelope
     c1 = FakeClient(routes={"/backend-api/codex/environments": [{"id": "e1", "label": "a/b",
                                                                  "repos": ["r1", "r2"]}]})
-    out1 = _reg(codex, c1).tools["list_codex_envs"]()
+    out1 = _run(_reg(codex, c1).tools["list_codex_envs"])
     assert out1[0]["repo_count"] == 2 and out1[0]["label"] == "a/b"
     # dict envelope
     c2 = FakeClient(routes={"/backend-api/codex/environments": {"environments": [
         {"id": "e2", "repos": []}]}})
-    assert _reg(codex, c2).tools["list_codex_envs"]()[0]["repo_count"] == 0
+    assert _run(_reg(codex, c2).tools["list_codex_envs"])[0]["repo_count"] == 0
 
 
 def test_list_codex_tasks_unwraps_redacts_and_truncates() -> None:
     items = [{"task": {"id": "t1", "title": "a@b.com"}, "turn": {"turn_status": "done"}},
              {"id": "t2", "title": "plain"}]
     client = FakeClient(routes={"/backend-api/codex/tasks": {"items": items}})
-    out = _reg(codex, client).tools["list_codex_tasks"](limit=1)
+    out = _run(_reg(codex, client).tools["list_codex_tasks"], limit=1)
     assert len(out) == 1  # truncated to limit
     assert out[0]["id"] == "t1"
     assert "<EMAIL>" in out[0]["title"]
@@ -323,11 +327,13 @@ def test_get_file_info_and_download_url() -> None:
         "/backend-api/files/f1/download": {"download_url": "https://dl/x"},
         "/backend-api/files/f1": {"id": "f1", "name": "img.png"}})
     mcp = _reg(images, client, conv=object())
-    assert mcp.tools["get_file_info"]("f1")["name"] == "img.png"
-    assert mcp.tools["get_file_download_url"]("f1") == "https://dl/x"
+    assert _run(mcp.tools["get_file_info"], "f1")["name"] == "img.png"
+    assert _run(mcp.tools["get_file_download_url"], "f1") == "https://dl/x"
     # missing download_url -> ""
     c2 = FakeClient(routes={"/backend-api/files/f2/download": {}})
-    assert _reg(images, c2, conv=object()).tools["get_file_download_url"]("f2") == ""
+    assert _run(
+        _reg(images, c2, conv=object()).tools["get_file_download_url"], "f2"
+    ) == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -340,7 +346,7 @@ def test_codex_task_create_raises_on_missing_label() -> None:
         {"id": "e1", "label": "a/b"}]}})
     fn = _reg(writes, client).tools["codex_task_create"]
     with pytest.raises(ValueError, match="No Codex environment"):
-        fn(repo_label="nope/x", prompt="hi")
+        _run(fn, repo_label="nope/x", prompt="hi")
 
 
 def test_codex_task_create_raises_on_ambiguous_label() -> None:
@@ -348,13 +354,13 @@ def test_codex_task_create_raises_on_ambiguous_label() -> None:
         {"id": "e1", "label": "a/b"}, {"id": "e2", "label": "a/b"}]}})
     fn = _reg(writes, client).tools["codex_task_create"]
     with pytest.raises(ValueError, match="Ambiguous"):
-        fn(repo_label="a/b", prompt="hi")
+        _run(fn, repo_label="a/b", prompt="hi")
 
 
 def test_codex_task_create_builds_payload_shape() -> None:
     client = FakeClient(posts={"/backend-api/codex/tasks": {"ok": True}})
     fn = _reg(writes, client).tools["codex_task_create"]
-    fn(repo_label="ignored", prompt="do it", environment_id="envXYZ", branch="dev")
+    _run(fn, repo_label="ignored", prompt="do it", environment_id="envXYZ", branch="dev")
     path, payload = client.posted[-1]
     assert path == "/backend-api/codex/tasks"
     assert payload == {
@@ -371,7 +377,7 @@ def test_custom_instructions_set_preserves_unsupplied_fields() -> None:
     client = FakeClient(routes={"/backend-api/user_system_messages": current},
                         posts={"/backend-api/user_system_messages": lambda p: p})
     fn = _reg(writes, client).tools["custom_instructions_set"]
-    fn(about_model="new")
+    _run(fn, about_model="new")
     _, payload = client.posted[-1]
     assert payload["about_user_message"] == "keep me"  # preserved
     assert payload["enabled"] is True

@@ -13,6 +13,8 @@ forgetting the [server] header) must raise a clean actionable error, not
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from gpt2agent.tools import account, apps, codex, conversations, gpts, images
@@ -35,57 +37,61 @@ def _tools(module) -> FakeMCP:
     return mcp
 
 
+def _run(fn, *args, **kwargs):
+    return asyncio.run(fn(*args, **kwargs))
+
+
 # ── read tools: None → empty result, no AttributeError ───────────────────────
 
 
 def test_memory_tools_tolerate_none() -> None:
     mcp = _tools(memory)
-    assert mcp.tools["memory_list"]() == []
-    assert mcp.tools["memory_search"]("anything") == []
+    assert _run(mcp.tools["memory_list"]) == []
+    assert _run(mcp.tools["memory_search"], "anything") == []
 
 
 def test_conversation_tools_tolerate_none() -> None:
     """cx review 2026-07-02 P2: the guarded conversation/task sites lacked the
     same None-contract coverage the newly-guarded modules got."""
     mcp = _tools(conversations)
-    assert mcp.tools["list_conversations"]() == []
-    assert mcp.tools["get_conversation"]("conv-1") == {}
-    assert mcp.tools["list_tasks"]() == []
+    assert _run(mcp.tools["list_conversations"]) == []
+    assert _run(mcp.tools["get_conversation"], "conv-1") == {}
+    assert _run(mcp.tools["list_tasks"]) == []
 
 
 def test_file_tools_tolerate_none() -> None:
     mcp = _tools(images)
-    assert mcp.tools["get_file_info"]("f1") == {}
-    assert mcp.tools["get_file_download_url"]("f1") == ""
+    assert _run(mcp.tools["get_file_info"], "f1") == {}
+    assert _run(mcp.tools["get_file_download_url"], "f1") == ""
 
 
 def test_custom_instructions_get_tolerates_none() -> None:
     mcp = _tools(instructions)
-    out = mcp.tools["custom_instructions_get"]()
+    out = _run(mcp.tools["custom_instructions_get"])
     assert out["about_user"] == ""
     assert out["enabled"] is None
 
 
 def test_account_tools_tolerate_none() -> None:
     mcp = _tools(account)
-    status = mcp.tools["account_status"]()
+    status = _run(mcp.tools["account_status"])
     assert status["email"] == ""
     assert status["features_count"] == 0
-    assert mcp.tools["list_models"]() == []
+    assert _run(mcp.tools["list_models"]) == []
 
 
 def test_list_custom_gpts_tolerates_none() -> None:
-    assert _tools(gpts).tools["list_custom_gpts"]() == []
+    assert _run(_tools(gpts).tools["list_custom_gpts"]) == []
 
 
 def test_list_apps_tolerates_none() -> None:
-    assert _tools(apps).tools["list_apps"]() == []
+    assert _run(_tools(apps).tools["list_apps"]) == []
 
 
 def test_codex_list_tools_tolerate_none() -> None:
     mcp = _tools(codex)
-    assert mcp.tools["list_codex_envs"]() == []
-    assert mcp.tools["list_codex_tasks"]() == []
+    assert _run(mcp.tools["list_codex_envs"]) == []
+    assert _run(mcp.tools["list_codex_tasks"]) == []
 
 
 # ── write tool: None current state → refuse, do NOT clobber ─────────────────
@@ -96,7 +102,7 @@ def test_custom_instructions_set_refuses_on_none_current() -> None:
     mcp = FakeMCP()
     writes.register(mcp, client)
     with pytest.raises(RuntimeError, match="custom instructions"):
-        mcp.tools["custom_instructions_set"](about_user="new about-user text")
+        _run(mcp.tools["custom_instructions_set"], about_user="new about-user text")
     assert client.posted == []  # nothing was overwritten
 
 
@@ -105,7 +111,7 @@ def test_custom_instructions_set_known_empty_current_still_works() -> None:
     client = FakeClient(routes={"/backend-api/user_system_messages": {}})
     mcp = FakeMCP()
     writes.register(mcp, client)
-    mcp.tools["custom_instructions_set"](about_user="hello")
+    _run(mcp.tools["custom_instructions_set"], about_user="hello")
     assert client.posted == [
         ("/backend-api/user_system_messages", {"about_user_message": "hello"})
     ]
@@ -116,7 +122,7 @@ def test_codex_task_create_env_lookup_tolerates_none() -> None:
     mcp = FakeMCP()
     writes.register(mcp, client)
     with pytest.raises(ValueError, match="No Codex environment"):
-        mcp.tools["codex_task_create"](repo_label="myrepo", prompt="do things")
+        _run(mcp.tools["codex_task_create"], repo_label="myrepo", prompt="do things")
     assert client.posted == []
 
 

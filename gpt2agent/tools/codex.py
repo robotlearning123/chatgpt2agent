@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
 from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def list_codex_envs() -> list:
+    async def list_codex_envs() -> list:
         """Return Codex environments (label, repos, network access)."""
-        data = client.get(
+        data = await async_get(
+            client,
             "/backend-api/codex/environments",
             target_path="/backend-api/codex/environments",
         ) or {}
@@ -25,9 +27,10 @@ def register(mcp, client: BackendClient) -> None:
         ]
 
     @mcp.tool()
-    def list_codex_tasks(limit: int = 10) -> list:
+    async def list_codex_tasks(limit: int = 10) -> list:
         """Return recent Codex tasks (title + status). Content is PII-redacted."""
-        data = client.get(
+        data = await async_get(
+            client,
             f"/backend-api/codex/tasks?limit={limit}",
             target_path="/backend-api/codex/tasks",
         ) or {}

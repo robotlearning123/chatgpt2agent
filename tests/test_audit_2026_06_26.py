@@ -454,7 +454,7 @@ def test_apps_preserves_explicit_false(monkeypatch):
             return {"apps": [{"id": "connector_x", "enabled": True, "is_connected": False}]}
 
     apps.register(_MCP(), _Client())
-    out = captured["list_apps"]()
+    out = asyncio.run(captured["list_apps"]())
     assert out[0]["connected"] is False
 
 
@@ -517,10 +517,10 @@ def test_get_conversation_follows_active_chain():
             return detail
 
     conversations.register(_MCP(), _Client())
-    out = captured["get_conversation"]("c1")
+    out = asyncio.run(captured["get_conversation"]("c1"))
     texts = [m["text"] for m in out["messages"]]
     assert texts == ["hello", "hi", "more", "done"]
     assert "STALE BRANCH" not in texts
 
-    limited = captured["get_conversation"]("c1", max_messages=2)
+    limited = asyncio.run(captured["get_conversation"]("c1", max_messages=2))
     assert [m["text"] for m in limited["messages"]] == ["more", "done"]

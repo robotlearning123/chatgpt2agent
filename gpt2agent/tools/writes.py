@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get, async_post
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def custom_instructions_set(
+    async def custom_instructions_set(
         about_user: str | None = None,
         about_model: str | None = None,
     ) -> dict:
         """Overwrite ChatGPT custom instructions (read-modify-write — preserves fields not supplied)."""
-        current = client.get(
+        fields = [
+            name
+            for name, value in (("about_user", about_user), ("about_model", about_model))
+            if value is not None
+        ]
+        if not fields:
+            raise ValueError("at least one custom-instruction field must be supplied")
+
+        current = await async_get(
+            client,
             "/backend-api/user_system_messages",
             target_path="/backend-api/user_system_messages",
         )
@@ -27,11 +37,13 @@ def register(mcp, client: BackendClient) -> None:
             payload["about_user_message"] = about_user
         if about_model is not None:
             payload["about_model_message"] = about_model
-        return client.post(
+        await async_post(
+            client,
             "/backend-api/user_system_messages",
             json=payload,
             target_path="/backend-api/user_system_messages",
         )
+        return {"updated": True, "fields": fields}
 
     # memory_add is NOT registered as an MCP tool.
     # SPIKE FINDING 2026-04-23: POST /backend-api/memories → 405 Method Not Allowed
@@ -46,7 +58,7 @@ def register(mcp, client: BackendClient) -> None:
         )
 
     @mcp.tool()
-    def codex_task_create(
+    async def codex_task_create(
         repo_label: str,
         prompt: str,
         environment_id: str | None = None,
@@ -60,7 +72,8 @@ def register(mcp, client: BackendClient) -> None:
         """
         env_id = environment_id
         if env_id is None:
-            data = client.get(
+            data = await async_get(
+                client,
                 "/backend-api/codex/environments",
                 target_path="/backend-api/codex/environments",
             ) or {}
@@ -92,7 +105,8 @@ def register(mcp, client: BackendClient) -> None:
                 }
             ],
         }
-        return client.post(
+        return await async_post(
+            client,
             "/backend-api/codex/tasks",
             json=payload,
             target_path="/backend-api/codex/tasks",
