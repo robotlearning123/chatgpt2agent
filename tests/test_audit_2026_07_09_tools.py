@@ -97,6 +97,21 @@ async def test_file_tools_reject_control_and_overlong_ids(bad: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_generated_asset_rejects_invalid_backend_file_id_before_request() -> None:
+    class _ImageConversation:
+        async def image_gen(self, prompt: str, model: str) -> dict:
+            return {"assets": [{"file_id": "../me"}]}
+
+    client = _Client()
+    mcp = _MCP()
+    images.register(mcp, client, conv=_ImageConversation())
+
+    with pytest.raises(ValueError, match="invalid file ID"):
+        await mcp.tools["generate_image"]("draw a test", "gpt-5-3")
+    assert client.requests == []
+
+
+@pytest.mark.asyncio
 async def test_conversation_tool_rejects_non_segment_id_before_request() -> None:
     client = _Client()
     tool = _register(conversations, client).tools["get_conversation"]
@@ -229,5 +244,5 @@ def test_all_registered_rest_handlers_are_async() -> None:
 
     for module, names in expected.items():
         tools = _register(module, client).tools
-        assert names <= tools.keys()
-        assert all(inspect.iscoroutinefunction(tools[name]) for name in names)
+        assert set(tools) == names
+        assert all(inspect.iscoroutinefunction(tool) for tool in tools.values())
