@@ -13,7 +13,7 @@
 # Steps:
 #   1. Ensure Python 3.10+ and pipx are available.
 #   2. pipx install gpt2agent (from PyPI by default).
-#   3. codex login check (auth via ~/.codex/auth.json — no platform API key).
+#   3. codex login check (auth via $CODEX_HOME/auth.json or ~/.codex/auth.json).
 #   4. gpt2agent install --client <X>   # register with detected MCP clients + drop skill.
 set -euo pipefail
 
@@ -120,10 +120,11 @@ ok "gpt2agent installed"
 
 # --- 4. codex login check --------------------------------------------------
 
-if [[ -f "$HOME/.codex/auth.json" ]]; then
-  ok "codex token found at ~/.codex/auth.json (no extra login needed)"
+AUTH_FILE="${CODEX_HOME:-$HOME/.codex}/auth.json"
+if [[ -f "$AUTH_FILE" ]]; then
+  ok "codex token found at $AUTH_FILE (no extra login needed)"
 else
-  info "No ~/.codex/auth.json yet. Install codex CLI and run \`codex login\`:"
+  info "No $AUTH_FILE yet. Install codex CLI and run \`codex login\`:"
   info "  https://github.com/openai/codex#installation"
   info "  (or run \`gpt2agent setup\` to paste a token manually)"
 fi

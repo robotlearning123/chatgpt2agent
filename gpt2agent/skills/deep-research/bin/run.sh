@@ -13,7 +13,7 @@ AUTH_FILE="${CODEX_HOME:-$HOME/.codex}/auth.json"
 if [ ! -x "$PYTHON" ]; then
   echo "error: cannot find a Python with gpt2agent installed" >&2
   echo "       (looked at: \$PATH gpt2agent CLI shebang, then $HOME/.local/share/pipx/venvs/gpt2agent/bin/python)" >&2
-  echo "fix:   pipx install git+https://github.com/robotlearning123/gpt2agent.git" >&2
+  echo "fix:   pipx install gpt2agent" >&2
   exit 1
 fi
 if [ ! -f "$AUTH_FILE" ]; then

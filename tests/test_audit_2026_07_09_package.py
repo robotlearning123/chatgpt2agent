@@ -121,6 +121,29 @@ def test_pypi_failure_fails_closed_without_git_fallback(tmp_path: Path) -> None:
     assert not any(arg.startswith("git+https://") for call in calls for arg in call)
 
 
+def test_checkout_installer_honors_codex_home_for_login_check(tmp_path: Path) -> None:
+    env, _log = _recording_installer_env(tmp_path)
+    codex_home = tmp_path / "alternate-codex"
+    codex_home.mkdir()
+    auth_file = codex_home / "auth.json"
+    auth_file.write_text('{"tokens": {}}\n')
+    env["CODEX_HOME"] = str(codex_home)
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert f"codex token found at {auth_file}" in output
+    assert f"No {env['HOME']}/.codex/auth.json" not in output
+
+
 def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     python_log = tmp_path / "python-argv.txt"
@@ -159,6 +182,26 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
     argv = python_log.read_text().splitlines()
     assert Path(argv[0]).name == "deep_research.py"
     assert argv[1:] == ["test topic"]
+
+
+def test_deep_research_wrapper_missing_python_recommends_pypi(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update({"HOME": str(home), "PATH": "/usr/bin:/bin"})
+
+    result = subprocess.run(
+        [str(DR_WRAPPER), "test topic"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "fix:   pipx install gpt2agent" in result.stderr
+    assert "git+https://" not in result.stderr
 
 
 def test_python_module_entry_reports_package_version() -> None:
@@ -305,7 +348,7 @@ def _python_with_build_backend() -> tuple[list[str], str]:
     raise RuntimeError("no local Python provides the declared setuptools build backend")
 
 
-def test_sdist_contains_heavy_parser_json_fixtures(tmp_path: Path) -> None:
+def test_sdist_runs_release_heavy_parser_target(tmp_path: Path) -> None:
     source = tmp_path / "source"
     shutil.copytree(
         REPO_ROOT,
@@ -347,9 +390,21 @@ def test_sdist_contains_heavy_parser_json_fixtures(tmp_path: Path) -> None:
         else:  # Python 3.10/3.11 lack the extraction filter API.
             archive.extractall(unpacked)
     sdist_root = next(path for path in unpacked.iterdir() if path.is_dir())
-    fixture_dir = sdist_root / "tests" / "fixtures"
-    expected = {
-        "heavy_dr_conversation_detail_h2.json",
-        "heavy_dr_widget_state.json",
+    tests_root = sdist_root / "tests"
+    expected_test_files = {
+        Path("test_heavy_dr_parser.py"),
+        Path("fixtures/heavy_dr_conversation_detail_h2.json"),
+        Path("fixtures/heavy_dr_widget_state.json"),
     }
-    assert {path.name for path in fixture_dir.glob("*.json")} >= expected
+    assert {
+        path.relative_to(tests_root) for path in tests_root.rglob("*") if path.is_file()
+    } == expected_test_files
+
+    tested = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "tests/test_heavy_dr_parser.py"],
+        cwd=sdist_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert tested.returncode == 0, tested.stdout + tested.stderr
