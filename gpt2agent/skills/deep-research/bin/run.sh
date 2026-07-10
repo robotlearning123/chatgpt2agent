@@ -7,7 +7,10 @@ if command -v gpt2agent >/dev/null 2>&1; then
   PYTHON="$(head -1 "$(command -v gpt2agent)" | sed 's|^#!||' | awk '{print $1}')"
 fi
 PYTHON="${PYTHON:-$HOME/.local/share/pipx/venvs/gpt2agent/bin/python}"
-SCRIPT="$(dirname "$(readlink -f "$0")")/deep_research.py"
+# Empty CDPATH is intentional so cd cannot print a lookup-path match.
+# shellcheck disable=SC1007
+SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$SCRIPT_DIR/deep_research.py"
 AUTH_FILE="${CODEX_HOME:-$HOME/.codex}/auth.json"
 
 if [ ! -x "$PYTHON" ]; then

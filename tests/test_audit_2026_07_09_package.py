@@ -153,9 +153,20 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FAKE_PYTHON_LOG\"\n",
     )
     _write_executable(fake_bin / "gpt2agent", f"#!{fake_python}\n")
+    _write_executable(
+        fake_bin / "readlink",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"-f\" ]; then\n"
+        "  echo 'readlink: illegal option -- f' >&2\n"
+        "  exit 64\n"
+        "fi\n"
+        "exit 65\n",
+    )
 
     home = tmp_path / "home"
     home.mkdir()
+    unrelated_cwd = tmp_path / "unrelated-cwd"
+    unrelated_cwd.mkdir()
     codex_home = tmp_path / "alternate-codex"
     codex_home.mkdir()
     (codex_home / "auth.json").write_text('{"tokens": {}}\n')
@@ -171,7 +182,7 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [str(DR_WRAPPER), "test topic"],
-        cwd=REPO_ROOT,
+        cwd=unrelated_cwd,
         env=env,
         text=True,
         capture_output=True,
@@ -180,7 +191,7 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stdout + result.stderr
     argv = python_log.read_text().splitlines()
-    assert Path(argv[0]).name == "deep_research.py"
+    assert Path(argv[0]) == DR_WRAPPER.parent / "deep_research.py"
     assert argv[1:] == ["test topic"]
 
 
