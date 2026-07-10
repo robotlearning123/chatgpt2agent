@@ -4,7 +4,8 @@ description: |
   Full ChatGPT Plus/Pro account access via MCP. 25 tools covering chat,
   agent mode, deep research, image generation, code execution, canvas,
   memory, custom instructions, conversations, Custom GPTs, and Codex.
-  Reuses ~/.codex/auth.json (same as Codex CLI) — no extra login needed.
+  Reuses $CODEX_HOME/auth.json (or ~/.codex/auth.json) or the manual
+  ~/.gpt2agent/token.json fallback.
   Use when you need ChatGPT models, web research with citations, DALL-E
   image gen, Python sandbox execution, or ChatGPT account management.
 allowed-tools:
@@ -42,14 +43,20 @@ allowed-tools:
 
 ```!
 command -v gpt2agent >/dev/null && echo "gpt2agent: installed ($(gpt2agent --version 2>/dev/null || echo 'unknown version'))" || echo "gpt2agent: NOT INSTALLED — run: pipx install gpt2agent"
-test -f ~/.codex/auth.json && echo "codex token: present" || echo "codex token: MISSING — run: codex login"
-test -f ~/.gpt2agent/token.json && echo "gpt2agent token: present" || echo "gpt2agent token: not set (codex token preferred)"
+if test -f "${CODEX_HOME:-$HOME/.codex}/auth.json"; then
+  echo "codex token: present"
+elif test -f "$HOME/.gpt2agent/token.json"; then
+  echo "gpt2agent token: present (manual fallback)"
+else
+  echo "ChatGPT token: MISSING — run: codex login or gpt2agent setup"
+fi
 ```
 
 ## Preconditions
 
 1. `gpt2agent` installed via pipx. If missing: `pipx install gpt2agent`
-2. Auth token at `~/.codex/auth.json` (from `codex login`) or `~/.gpt2agent/token.json`.
+2. Auth token at `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`, from
+   `codex login`) or `~/.gpt2agent/token.json`.
 3. MCP server registered in Claude Code. If missing: `gpt2agent install`
 4. Restart Claude Code session after first install to load MCP tools.
 
@@ -127,10 +134,11 @@ Both require a non-temporary conversation context.
 
 ## Quota Management
 
-Deep Research quota: 248 calls/month on Pro plan (resets ~21st of each month).
+Deep Research limits and reset timing are reported by the current account and
+can change.
 
 - `deep_research` and `deep_research_heavy` each cost 1 quota.
-- Check `account_status()` before heavy usage.
+- Run the bundled `deep-research/bin/quota.sh` before heavy usage.
 - Warn user if remaining quota < 10 before firing deep research.
 
 ## Configuration
@@ -157,9 +165,9 @@ chat = "gpt-5-3"
 | Error | Fix |
 |---|---|
 | "gpt2agent not installed" | `pipx install gpt2agent` |
-| "codex token MISSING" | `codex login` |
+| "ChatGPT token: MISSING" | `codex login` or `gpt2agent setup` |
 | MCP tools not appearing | Restart Claude Code session after `gpt2agent install` |
-| 401 / auth error | Re-run `codex login`, then restart MCP server |
+| 401 / auth error | Re-run `codex login` or `gpt2agent setup`, then restart the MCP server |
 | Image/code/canvas fails | Ensure `temporary=False` — these features are blocked in temporary chats |
 | DR connector unavailable | Enable Deep Research at chatgpt.com > Settings > Connectors |
 | "memory_add not available" | Use `memory_create_via_chat` instead (REST POST returns 405) |

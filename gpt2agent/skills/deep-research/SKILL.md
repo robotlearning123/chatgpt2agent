@@ -1,12 +1,13 @@
 ---
 name: deep-research
-version: 0.1.1
+version: 0.1.2
 description: |
   ChatGPT Pro Deep Research via gpt2agent. Two modes: light (model=research,
   30-120s, citations preserved) and heavy (gpt-5-5-pro + connector, 5-30 min,
   long-form report recovered from the connector widget state, citations included).
-  Reuses ~/.codex/auth.json — no extra login. Costs 1 quota per call out of
-  Pro monthly budget (248/cycle). Output saved as Markdown.
+  Reuses `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`) or the manual
+  `~/.gpt2agent/token.json` fallback.
+  Each run uses the account's Deep Research quota. Output saved as Markdown.
   Use when asked to "deep research", "DR", "ChatGPT deep research",
   "research <topic>", "go deep on <topic>", or when a question genuinely
   needs web-augmented multi-source synthesis beyond what training data covers.
@@ -25,8 +26,9 @@ pipx Python (bypasses MCP — works even before Claude Code session restart).
 
 ```bash
 command -v gpt2agent >/dev/null || \
-  echo "gpt2agent not installed; run: pipx install git+https://github.com/robotlearning123/gpt2agent.git"
-test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
+  echo "gpt2agent not installed; run: pipx install gpt2agent"
+test -f "${CODEX_HOME:-$HOME/.codex}/auth.json" || test -f "$HOME/.gpt2agent/token.json" || \
+  echo "ChatGPT token missing; run: codex login or gpt2agent setup"
 ~/.claude/skills/deep-research/bin/quota.sh   # prints remaining DR quota
 ```
 
@@ -42,14 +44,18 @@ test -f ~/.codex/auth.json || echo "Codex token missing; run: codex login"
   hidden widget state (`widget_state.report_message`) via
   `?include_visually_hidden_messages=true&include_widget_state=true` — see
   "Heavy DR retrieval" below.
-- `-o OUT_DIR`: output directory (default: `./research/dr-YYYYMMDD-HHMM/`).
+- `-o OUT_DIR`: output directory (default: a unique
+  `./research/dr-YYYYMMDD-HHMMSS-*/` directory).
 - Query can be inline string, `-` for stdin, or `@file.md` to read from file.
 
 The script writes:
 - `report.md` — final report (reconstructed for heavy mode)
 - `events.jsonl` — all raw SSE events (for debugging / re-extraction)
-- `status.txt` — START / DONE / ERROR with elapsed seconds + event counts
+- `status.txt` — START / DONE / INCOMPLETE / ERROR with elapsed seconds + event counts
 - `meta.json` — server metadata (model slug, request id, etc.)
+
+The run directory is restricted to mode `0700` and its artifacts to `0600` on
+POSIX systems because queries, reports, and metadata may be sensitive.
 
 ## When to invoke
 
@@ -69,22 +75,19 @@ explicitly wants you to handle locally, anything covered by `context7`
 1. If the user provides a clear topic, draft a 3-8 question structured
    query (research questions + context + deliverable shape) and **show it
    to the user before firing** so they can edit / approve. Heavy mode
-   especially deserves a query review — it costs ~10 min and 1/248 quota.
-2. Save the approved query to a file (avoids shell escaping issues with
-   long multi-line queries):
+   especially deserves a query review — it takes minutes and consumes one unit
+   of the account-reported quota.
+2. Pass the approved query over stdin (avoids shell escaping and shared
+   temporary files):
    ```bash
-   cat > /tmp/dr_query.txt <<'EOF'
+   ~/.claude/skills/deep-research/bin/run.sh [--heavy] -o /path/to/out - <<'EOF'
    <your structured query>
    EOF
    ```
-3. Run:
-   ```bash
-   ~/.claude/skills/deep-research/bin/run.sh [--heavy] -o /path/to/out @/tmp/dr_query.txt
-   ```
-4. Use `run_in_background: true` for heavy mode — it takes minutes. Tail
+3. Use `run_in_background: true` for heavy mode — it takes minutes. Tail
    `status.txt` or `events.jsonl` `wc -l` to monitor progress; the bash
    completion notification will arrive when finished.
-5. After completion: Read `report.md`, summarize key findings in 5-8
+4. After completion: Read `report.md`, summarize key findings in 5-8
    bullets for the user, point to the full file path.
 
 ## Heavy DR retrieval — connector widget state (fixed 2026-06-11)
@@ -123,8 +126,8 @@ around `_dr_report_from_widget_state` / `_poll_dr_completion`.
 
 ## Quota management
 
-Pro plan: 248 DR calls / monthly cycle (resets ~the 21st). Check before
-heavy calls:
+Limits and reset timing are reported by the current account and can change.
+Check before heavy calls:
 
 ```bash
 ~/.claude/skills/deep-research/bin/quota.sh
@@ -135,8 +138,8 @@ acknowledges the consumption.
 
 ## Account limits & concurrency (IMPORTANT — read before launching)
 
-The DR *quota* (≈248/cycle) is NOT the only limit. The ChatGPT backend also
-rate-limits the conversation endpoints per account.
+The DR *quota* shown by `quota.sh` is NOT the only limit. The ChatGPT backend
+also rate-limits the conversation endpoints per account.
 
 **Run heavy DR SERIALLY — never concurrently.** One heavy DR at a time. While a
 heavy DR is running (it polls `/backend-api/conversation/{id}` every ~120s during

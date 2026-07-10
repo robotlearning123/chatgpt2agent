@@ -4,7 +4,8 @@ gpt2agent is a native Python MCP server that calls ChatGPT's backend directly �
 no proxy process, no platform API key.
 
 ```
-~/.codex/auth.json  (or ~/.gpt2agent/token.json)   ← bearer, auto-refreshed by codex
+$CODEX_HOME/auth.json (default ~/.codex/auth.json) ← bearer, auto-refreshed by Codex
+~/.gpt2agent/token.json                            ← manual fallback
         │
    gpt2agent  (stdio MCP server; token reloaded from disk on mtime change)
         │

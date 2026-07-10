@@ -106,7 +106,7 @@ def _carrier(role: str, *, report_status: str, widget_status: str, body: str, le
     state = {
         "status": widget_status,
         "report_message": {
-            "content": {"parts": [body]},
+            "content": {"content_type": "text", "parts": [body]},
             "status": report_status,
             "metadata": {"content_references": [{"items": []}]},
         },
@@ -116,8 +116,14 @@ def _carrier(role: str, *, report_status: str, widget_status: str, body: str, le
         "mapping": {
             "n": {
                 "message": {
-                    "author": {"role": role},
+                    "author": {"role": role, "name": "api_tool.widget_state"},
+                    "recipient": "all",
+                    "status": "finished_successfully",
                     "content": {"content_type": "text", "parts": [part]},
+                    "metadata": {
+                        "exclusive_key": "widget_state:Deep Research App_start",
+                        "is_visually_hidden_from_conversation": True,
+                    },
                 }
             }
         }
@@ -137,6 +143,40 @@ def test_widget_user_role_spoof_rejected() -> None:
     text, refs = sse_mod._dr_report_from_widget_state(detail)
     assert text == ""
     assert refs == []
+
+
+def test_widget_arbitrary_tool_name_spoof_rejected() -> None:
+    detail = _carrier(
+        "tool",
+        report_status="finished_successfully",
+        widget_status="completed",
+        body="# SPOOFED",
+    )
+    detail["mapping"]["n"]["message"]["author"]["name"] = "arbitrary_tool"
+
+    assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
+
+
+def test_widget_text_carrier_requires_connector_envelope_fields() -> None:
+    for field in ("exclusive_key", "is_visually_hidden_from_conversation"):
+        detail = _carrier(
+            "tool",
+            report_status="finished_successfully",
+            widget_status="completed",
+            body="# SPOOFED",
+        )
+        del detail["mapping"]["n"]["message"]["metadata"][field]
+        assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
+
+    for field in ("recipient", "status"):
+        detail = _carrier(
+            "tool",
+            report_status="finished_successfully",
+            widget_status="completed",
+            body="# SPOOFED",
+        )
+        del detail["mapping"]["n"]["message"][field]
+        assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
 
 
 def test_widget_in_progress_draft_rejected() -> None:

@@ -45,9 +45,6 @@ FloatMap = Dict[float, Any]
 StringMap = Dict[str, Any]
 FuncType = Callable[..., Any]
 
-_start_time = 0.0
-
-
 def _get_turnstile_token(dx: str, p: str) -> Union[str, None]:
     try:
         decoded = base64.b64decode(dx)
@@ -102,7 +99,7 @@ def _to_str(v: Any) -> str:
     return str(v)
 
 
-def _build_func_map() -> FloatMap:
+def _build_func_map(start_time: float) -> FloatMap:
     pm: FloatMap = {}
 
     def f1(e, t):
@@ -154,7 +151,7 @@ def _build_func_map() -> FloatMap:
         if isinstance(tv, str):
             if tv == "window.performance.now":
                 now_ns = time.time_ns()
-                elapsed = now_ns - int(_start_time * 1e9)
+                elapsed = now_ns - int(start_time * 1e9)
                 res = (elapsed + random.random()) / 1e6
             elif tv == "window.Object.create":
                 res = OrderedMap()
@@ -231,8 +228,7 @@ def _build_func_map() -> FloatMap:
 
 
 def solve_turnstile(dx: str, p: str) -> Union[str, None]:
-    global _start_time
-    _start_time = time.time()
+    start_time = time.time()
     tokens = _get_turnstile_token(dx, p)
     if tokens is None:
         return None
@@ -242,7 +238,7 @@ def solve_turnstile(dx: str, p: str) -> Union[str, None]:
         return None
 
     res = ""
-    pm = _build_func_map()
+    pm = _build_func_map(start_time)
 
     def f3(e: str):
         nonlocal res

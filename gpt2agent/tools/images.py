@@ -1,9 +1,9 @@
 """Image generation and file download tools."""
 from __future__ import annotations
 
-import asyncio
-
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
+from gpt2agent.tools._ids import validate_path_id
 
 
 def register(mcp, client: BackendClient, conv=None) -> None:
@@ -39,8 +39,9 @@ def register(mcp, client: BackendClient, conv=None) -> None:
         for asset in result.get("assets", []):
             file_id = asset.get("file_id", "")
             if file_id:
+                file_id = validate_path_id(file_id, kind="file ID")
                 try:
-                    dl = await asyncio.to_thread(client.get, f"/backend-api/files/{file_id}/download")
+                    dl = await async_get(client, f"/backend-api/files/{file_id}/download")
                     asset["download_url"] = (dl or {}).get("download_url", "")
                     asset["file_name"] = (dl or {}).get("file_name", "")
                     asset["file_size_bytes"] = (dl or {}).get("file_size_bytes")
@@ -50,7 +51,7 @@ def register(mcp, client: BackendClient, conv=None) -> None:
 
             if file_id and not asset.get("file_name"):
                 try:
-                    info = await asyncio.to_thread(client.get, f"/backend-api/files/{file_id}")
+                    info = await async_get(client, f"/backend-api/files/{file_id}")
                     asset["file_name"] = (info or {}).get("name", "")
                     asset["use_case"] = (info or {}).get("use_case")
                     asset["state"] = (info or {}).get("state")
@@ -61,7 +62,7 @@ def register(mcp, client: BackendClient, conv=None) -> None:
         return result
 
     @mcp.tool()
-    def get_file_info(file_id: str) -> dict:
+    async def get_file_info(file_id: str) -> dict:
         """Get metadata for a ChatGPT file (images, uploads, etc.).
 
         Args:
@@ -70,10 +71,11 @@ def register(mcp, client: BackendClient, conv=None) -> None:
         Returns:
             Dict with id, name, size, use_case, state, creation_time, mime_type, etc.
         """
-        return client.get(f"/backend-api/files/{file_id}") or {}
+        file_id = validate_path_id(file_id, kind="file ID")
+        return await async_get(client, f"/backend-api/files/{file_id}") or {}
 
     @mcp.tool()
-    def get_file_download_url(file_id: str) -> str:
+    async def get_file_download_url(file_id: str) -> str:
         """Get a temporary download URL for a ChatGPT file.
 
         Args:
@@ -82,5 +84,6 @@ def register(mcp, client: BackendClient, conv=None) -> None:
         Returns:
             The download URL string (time-limited, expires after ~1 hour).
         """
-        data = client.get(f"/backend-api/files/{file_id}/download")
+        file_id = validate_path_id(file_id, kind="file ID")
+        data = await async_get(client, f"/backend-api/files/{file_id}/download")
         return (data or {}).get("download_url", "")

@@ -29,9 +29,9 @@ account has, and `account_status` for your plan.
 
 ### How much Deep Research can I run?
 
-Roughly ~248 heavy requests per monthly cycle on Pro, fewer on Plus — approximate
-and account/region-dependent, not a guaranteed number. Light `deep_research` is
-cheaper. Run heavy DR serially.
+Limits and reset timing are account-reported and can change. Run the bundled
+`deep-research/bin/quota.sh` to inspect the current account before heavy work,
+and run heavy Deep Research serially.
 
 ### Is `gpt_chat` (Custom GPTs) stable?
 
@@ -41,9 +41,11 @@ Custom GPT types.
 
 ### Where does my token go?
 
-It's read locally from `~/.codex/auth.json` (codex login) or
-`~/.gpt2agent/token.json` (mode `600`) and sent only to `chatgpt.com`. gpt2agent
-never transmits it anywhere else, and redacts token/secret values from error output.
+It's read locally from `$CODEX_HOME/auth.json` (or `~/.codex/auth.json` by
+default) with `~/.gpt2agent/token.json` as the manual fallback. Codex manages
+its auth file; gpt2agent creates or tightens the manual fallback to mode `600`
+where POSIX supports it. The token is sent only to `chatgpt.com`, and gpt2agent
+redacts token/secret values from error output.
 
 ### What's NOT supported?
 

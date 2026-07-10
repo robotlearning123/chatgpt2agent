@@ -21,6 +21,27 @@ _log = logging.getLogger(__name__)
 
 _CONV_URL = _BASE + "/backend-api/conversation"
 
+_INCOMPLETE_RESPONSE_MESSAGE = (
+    "ChatGPT stream ended before completion; partial output was discarded"
+)
+
+
+class _IncompleteStreamError(RuntimeError):
+    def __init__(self, conversation_id: str | None = None) -> None:
+        super().__init__(_INCOMPLETE_RESPONSE_MESSAGE)
+        self.conversation_id = conversation_id
+
+
+def _is_successful_assistant_terminal(message: dict) -> bool:
+    recipient = message.get("recipient")
+    content_type = (message.get("content") or {}).get("content_type")
+    return (
+        (message.get("author") or {}).get("role") == "assistant"
+        and recipient in (None, "all")
+        and content_type in ("text", "multimodal_text")
+        and message.get("status") == "finished_successfully"
+    )
+
 
 def _safe_body(resp: object) -> str:
     try:
@@ -69,9 +90,14 @@ def _raw_dump(obj: dict, *, phase: str) -> None:
     try:
         out = Path(path).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
-            f.write("\n")
+        serialized = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except (OSError, AttributeError):
+            pass
+        with os.fdopen(fd, "a", encoding="utf-8") as stream:
+            stream.write(serialized + "\n")
     except Exception as exc:
         _log.warning("GPT2AGENT_RAW_DUMP write failed (%s)", exc)
 
@@ -98,6 +124,11 @@ def _citation_payload(*metas: dict | None) -> tuple[list, list]:
 #: Prefix a tool node uses when the connector widget state is replayed into the
 #: conversation transcript as plain text.
 _WIDGET_STATE_TEXT_PREFIX = "The latest state of the widget is: "
+_DR_APP_RESOURCE = "Deep Research App_start"
+_DR_CONNECTOR_ID = "connector_openai_deep_research"
+_DR_CONNECTOR_URI = f"connectors://{_DR_CONNECTOR_ID}"
+_DR_RESOURCE_URI = f"/{_DR_CONNECTOR_ID}/implicit_link::{_DR_CONNECTOR_ID}/start"
+_DR_WIDGET_EXCLUSIVE_KEY = f"widget_state:{_DR_APP_RESOURCE}"
 
 
 def _coerce_widget_state(obj: object) -> dict | None:
@@ -136,53 +167,90 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
     :func:`_coerce_widget_state`) and returns ``(report_text, content_references)``
     for the longest *completed* report found, or ``("", [])`` if none is present.
 
-    Hardening (audit 2026-06-18):
+    Hardening (audits 2026-06-18 and 2026-07-10):
 
-    * Only the connector's own ``tool``/``assistant`` nodes are trusted carriers.
-      A ``user`` (or otherwise authored) message that merely contains the widget
-      prefix cannot spoof the final report — the query is stored verbatim and is
-      otherwise attacker/page-controlled in agentic research flows.
+    * Only ``tool`` nodes with the observed Deep Research-specific backend
+      envelope are accepted. Arbitrary assistant, user, or tool content with a
+      widget-shaped payload is ignored. These envelope checks are fail-closed
+      provenance validation, not cryptographic authentication; the payload itself
+      is unsigned and can still contain incorrect or prompt-injected research.
     * The text carrier must *start with* the prefix, not merely contain it.
-    * An in-progress draft is ignored: the report is accepted only when its
-      ``report_message.status`` is ``finished_successfully`` (or, when that field
-      is absent, the top-level widget ``status`` is not a non-completed state),
-      so polling never emits a half-written report as the final answer.
+    * An in-progress draft is ignored: both the top-level widget status and the
+      nested report status must carry their explicit completed values, so polling
+      never emits a half-written report as the final answer.
     """
     mapping = (detail or {}).get("mapping") or {}
+    if not isinstance(mapping, dict):
+        return "", []
     best_text = ""
     best_refs: list = []
     for node in mapping.values():
         msg = (node or {}).get("message")
         if not isinstance(msg, dict):
             continue
-        # Trust only the connector's own nodes — never a user-authored message.
-        role = (msg.get("author") or {}).get("role")
-        if role not in ("tool", "assistant"):
+        author = msg.get("author") or {}
+        metadata = msg.get("metadata") or {}
+        content = msg.get("content") or {}
+        if (
+            not isinstance(author, dict)
+            or not isinstance(metadata, dict)
+            or not isinstance(content, dict)
+            or author.get("role") != "tool"
+            or msg.get("recipient") != "all"
+            or msg.get("status") != "finished_successfully"
+        ):
             continue
         carriers: list[object] = []
-        parts = (msg.get("content") or {}).get("parts") or []
-        if parts and isinstance(parts[0], str) and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX):
+        parts = content.get("parts") or []
+        if (
+            author.get("name") == "api_tool.widget_state"
+            and content.get("content_type") == "text"
+            and metadata.get("exclusive_key") == _DR_WIDGET_EXCLUSIVE_KEY
+            and metadata.get("is_visually_hidden_from_conversation") is True
+            and parts
+            and isinstance(parts[0], str)
+            and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX)
+        ):
             carriers.append(parts[0])
-        sdk = (msg.get("metadata") or {}).get("chatgpt_sdk")
-        if isinstance(sdk, dict) and sdk.get("widget_state"):
+        sdk = metadata.get("chatgpt_sdk")
+        invoked_resource = metadata.get("invoked_resource")
+        if (
+            author.get("name") == "api_tool.call_tool"
+            and content.get("content_type") == "code"
+            and isinstance(sdk, dict)
+            and sdk.get("resource_name") == _DR_APP_RESOURCE
+            and sdk.get("attribution_id") == _DR_CONNECTOR_ID
+            and sdk.get("resolved_pineapple_uri") == _DR_CONNECTOR_URI
+            and sdk.get("distribution_channel") == "openai"
+            and sdk.get("connector_type") == "FIRST_PARTY_ECOSYSTEM"
+            and isinstance(invoked_resource, dict)
+            and invoked_resource.get("resource_uri") == _DR_RESOURCE_URI
+            and sdk.get("widget_state") is not None
+        ):
             carriers.append(sdk["widget_state"])
         for carrier in carriers:
             state = _coerce_widget_state(carrier)
             report = (state or {}).get("report_message")
             if not isinstance(report, dict):
                 continue
-            # Only emit a finished report — never an in-progress draft.
-            report_status = report.get("status")
-            if report_status is not None:
-                if report_status != "finished_successfully":
-                    continue
-            elif (state or {}).get("status") not in (None, "completed"):
+            # Only emit the exact completed shape observed from the connector.
+            if (
+                (state or {}).get("status") != "completed"
+                or report.get("status") != "finished_successfully"
+            ):
                 continue
-            rparts = (report.get("content") or {}).get("parts") or []
+            report_content = report.get("content") or {}
+            if (
+                not isinstance(report_content, dict)
+                or report_content.get("content_type") != "text"
+            ):
+                continue
+            rparts = report_content.get("parts") or []
             text = rparts[0] if rparts and isinstance(rparts[0], str) else ""
             if text and len(text) > len(best_text):
                 best_text = text
-                best_refs = (report.get("metadata") or {}).get("content_references") or []
+                refs = (report.get("metadata") or {}).get("content_references") or []
+                best_refs = refs if isinstance(refs, list) else []
     return best_text, best_refs
 
 
@@ -407,7 +475,8 @@ def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
     in the user-message echo is "i-mini-m" (the orchestration layer); the actual heavy
     reasoning runs as a background tool call inside the connector.
 
-    Rate-limited by the "deep_research" feature quota (248 uses / reset cycle for Pro).
+    Rate-limited by the account-reported "deep_research" feature quota; limits
+    and reset timing can vary.
     """
     msg_id = str(uuid4())
     return {
@@ -519,6 +588,8 @@ class ConversationClient:
             current_msg_id: str | None = None
             last_text = ""
             _conversation_id: str | None = None
+            done_received = False
+            message_completed = False
 
             def _reset_if_new_msg(msg_id: str | None) -> bool:
                 """Return True if this frame starts a new message (caller must not dedupe)."""
@@ -529,6 +600,12 @@ class ConversationClient:
                     return True
                 return False
 
+            def _track_message_lifecycle(message: dict) -> None:
+                nonlocal message_completed
+                role = (message.get("author") or {}).get("role")
+                if role in ("assistant", "tool"):
+                    message_completed = _is_successful_assistant_terminal(message)
+
             async for raw_line in resp.aiter_lines():
                 if isinstance(raw_line, bytes):
                     raw_line = raw_line.decode("utf-8", errors="replace")
@@ -537,6 +614,7 @@ class ConversationClient:
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    done_received = True
                     break
                 try:
                     obj = json.loads(data)
@@ -557,6 +635,7 @@ class ConversationClient:
                     if isinstance(v, str):
                         # String v-patch — continuation of current message id
                         if v:
+                            message_completed = False
                             yield v
                             last_text += v
                         continue
@@ -564,6 +643,7 @@ class ConversationClient:
                         # `{"v":{"message":null}}` makes .get("message", {}) return
                         # None (key present), so chained .get() would AttributeError.
                         vmsg = v.get("message") or {}
+                        _track_message_lifecycle(vmsg)
                         msg_id = vmsg.get("id")
                         is_new = _reset_if_new_msg(msg_id)
                         parts = (vmsg.get("content") or {}).get("parts") or []
@@ -588,6 +668,7 @@ class ConversationClient:
                 msg = obj.get("message")
                 if not isinstance(msg, dict):
                     continue
+                _track_message_lifecycle(msg)
                 if msg.get("author", {}).get("role") != "assistant":
                     continue
                 content = msg.get("content") or {}
@@ -613,6 +694,9 @@ class ConversationClient:
                     yield new
                     last_text = new
 
+            if not (done_received or message_completed):
+                raise _IncompleteStreamError(_conversation_id)
+
             # Emit conversation_id for complete() to use (agent mode async detection)
             if _conversation_id:
                 yield {"_conversation_id": _conversation_id}
@@ -628,12 +712,21 @@ class ConversationClient:
     ) -> str:
         chunks: list[str] = []
         conv_id: str | None = None
-        async for event in self.stream(model, messages, gizmo_id=gizmo_id, temporary=temporary):
-            if isinstance(event, dict):
-                if event.get("_conversation_id"):
-                    conv_id = event["_conversation_id"]
-                continue  # never let a non-str sentinel reach "".join(chunks)
-            chunks.append(event)
+        try:
+            async for event in self.stream(
+                model, messages, gizmo_id=gizmo_id, temporary=temporary
+            ):
+                if isinstance(event, dict):
+                    if event.get("_conversation_id"):
+                        conv_id = event["_conversation_id"]
+                    continue  # never let a non-str sentinel reach "".join(chunks)
+                chunks.append(event)
+        except _IncompleteStreamError as exc:
+            if poll_async and exc.conversation_id:
+                recovered = await self._poll_async_response(exc.conversation_id)
+                if recovered:
+                    return recovered
+            raise
         text = "".join(chunks)
 
         # Agent mode: the stream ends immediately with async_status and the real
@@ -915,6 +1008,8 @@ class ConversationClient:
         tool_calls: list[dict] = []
         tool_responses: list[dict] = []
         multimodal_assets: list[dict] = []
+        done_received = False
+        message_completed = False
 
         async with AsyncSession(impersonate="chrome131", verify=True) as s:
             resp = await s.post(
@@ -935,6 +1030,7 @@ class ConversationClient:
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    done_received = True
                     break
                 try:
                     obj = json.loads(data)
@@ -957,10 +1053,15 @@ class ConversationClient:
                 ct = content.get("content_type", "")
                 parts = content.get("parts") or []
                 status = msg.get("status", "")
+                # A newer assistant/tool lifecycle supersedes any earlier
+                # message-level terminal status. [DONE] remains independent.
+                if role in ("assistant", "tool"):
+                    message_completed = False
 
                 # Assistant text (to "all")
                 if role == "assistant" and recipient == "all" and ct in ("text", "multimodal_text"):
                     str_parts = [p for p in parts if isinstance(p, str)]
+                    message_completed = status == "finished_successfully"
                     if str_parts and status == "finished_successfully":
                         last_text = str_parts[0]
                     elif str_parts:
@@ -989,6 +1090,7 @@ class ConversationClient:
 
                 # Tool response
                 elif role == "tool" and recipient == "all":
+                    message_completed = status == "finished_successfully"
                     resp_parts = []
                     img_assets = []
                     for p in parts:
@@ -1013,6 +1115,8 @@ class ConversationClient:
                     })
                     multimodal_assets.extend(img_assets)
 
+        if not (done_received or message_completed):
+            raise RuntimeError(_INCOMPLETE_RESPONSE_MESSAGE)
         final_text = last_text or "".join(text_parts)
 
         return {
@@ -1106,8 +1210,8 @@ class ConversationClient:
                     )
 
                 last_text = ""
-                done_emitted = False
                 done_text = ""
+                round_completed_successfully = False
                 stream_succeeded = False
                 try:
                     async for raw_line in resp.aiter_lines():
@@ -1141,6 +1245,7 @@ class ConversationClient:
                         ct = content.get("content_type", "")
                         status = msg.get("status", "")
                         meta = msg.get("metadata", {})
+                        recipient = msg.get("recipient")
 
                         # Capture latest assistant message id so the next turn
                         # (auto-proceed reply) can use it as parent_message_id.
@@ -1148,9 +1253,29 @@ class ConversationClient:
                         if msg_id and role == "assistant":
                             last_assistant_msg_id = msg_id
 
-                        # Tool invocation events (search/browse)
-                        if ct == "code" and role == "assistant":
-                            call_text = content.get("text", "")
+                        # Completion belongs to the latest relevant lifecycle,
+                        # not to any earlier clean `done`. A later tool response
+                        # proves the round continued and invalidates that candidate.
+                        if role == "tool":
+                            round_completed_successfully = False
+                            done_text = ""
+                            last_text = ""
+
+                        # Tool invocation events (search/browse). Assistant
+                        # messages addressed to a tool are dispatch envelopes,
+                        # even when the backend represents them as plain text.
+                        if role == "assistant" and (
+                            ct == "code" or recipient not in (None, "all")
+                        ):
+                            round_completed_successfully = False
+                            done_text = ""
+                            last_text = ""
+                            parts = content.get("parts") or []
+                            call_text = content.get("text", "") or (
+                                parts[0]
+                                if parts and isinstance(parts[0], str)
+                                else ""
+                            )
                             if call_text:
                                 yield {"type": "tool", "call": call_text}
                             continue
@@ -1175,10 +1300,18 @@ class ConversationClient:
                                         "search_result_groups", []
                                     ),
                                 }
-                                done_emitted = True
+                                round_completed_successfully = True
                                 last_text = new
                                 done_text = new
-                            elif status == "in_progress" and new:
+                            else:
+                                # Even an empty newer in-progress snapshot
+                                # supersedes an earlier completed candidate.
+                                round_completed_successfully = False
+                                done_text = ""
+                                if status != "in_progress":
+                                    last_text = new
+                                    continue
+                            if status == "in_progress" and new:
                                 # Emit incremental text delta
                                 if new.startswith(last_text):
                                     delta = new[len(last_text) :]
@@ -1187,27 +1320,31 @@ class ConversationClient:
                                 else:
                                     yield {"type": "progress", "text": new}
                                 last_text = new
+                            elif status == "in_progress":
+                                last_text = ""
                     stream_succeeded = True
                 finally:
-                    # Only emit a synthetic "abnormal" done when the stream
-                    # ended normally (no exception) but never reached
-                    # finished_successfully — e.g. server closed mid-text.
+                    # Emit a synthetic abnormal terminal whenever normal EOF
+                    # leaves the latest relevant lifecycle incomplete, even if
+                    # an older candidate had once reached finished_successfully.
                     # On exception, propagate without faking a done event,
                     # so the caller doesn't mistake partial output for a
                     # complete answer (cf. code-review medium #2).
-                    if stream_succeeded and last_text and not done_emitted:
-                        yield {
+                    if stream_succeeded and not round_completed_successfully:
+                        terminal = {
                             "type": "done",
                             "text": last_text,
                             "content_references": [],
                             "search_result_groups": [],
                             "terminated_abnormally": True,
                         }
+                        if round_num > 0:
+                            terminal["clarification_followup_incomplete"] = True
+                        yield terminal
                         done_text = last_text
-                        done_emitted = True
 
             # End of one round — decide whether to continue.
-            if not done_emitted:
+            if not round_completed_successfully:
                 return
 
             # If the model asked for clarification AND we have a captured
@@ -1226,6 +1363,20 @@ class ConversationClient:
                 }
                 current_query = _DR_AUTO_PROCEED
                 continue
+
+            if _looks_like_clarification(done_text):
+                # No continuation can be sent (missing thread identity or the
+                # configured round limit was reached). Override the preceding
+                # clarification-shaped `done` with an explicit abnormal terminal
+                # event rather than reporting the question as successful output.
+                yield {
+                    "type": "done",
+                    "text": done_text,
+                    "content_references": [],
+                    "search_result_groups": [],
+                    "terminated_abnormally": True,
+                    "clarification_unresolved": True,
+                }
 
             return
 
@@ -1258,7 +1409,8 @@ class ConversationClient:
           {"type": "done",     "text": <full_text>,
            "content_references": [...], "search_result_groups": [...]}
 
-        Rate: consumes from the "deep_research" quota (248 uses / reset cycle on Pro).
+        Rate: consumes from the account-reported "deep_research" quota; limits
+        and reset timing can vary.
         Timeout: 1800 s for initial SSE; poll phase adds up to 1800 s more.
 
         Note: the resolved_model_slug in user-message echo will show "i-mini-m"
@@ -1579,7 +1731,9 @@ class ConversationClient:
             and state["tool_invoked"]
         ):
             async for evt in self._poll_dr_completion(
-                state["conversation_id"], seed_text=state["asst_text"]
+                state["conversation_id"],
+                seed_text=state["asst_text"],
+                connector_failed=state["tool_failed"],
             ):
                 yield evt
             return
@@ -1599,6 +1753,7 @@ class ConversationClient:
         conv_id: str,
         *,
         seed_text: str = "",
+        connector_failed: bool = False,
         interval: float = 120.0,
         max_wait: float = 1800.0,
     ) -> AsyncIterator[dict]:
@@ -1616,7 +1771,7 @@ class ConversationClient:
             "?include_visually_hidden_messages=true&include_widget_state=true"
         )
         deadline = time.monotonic() + max_wait
-        last_emitted = seed_text
+        last_emitted = "" if _is_connector_dispatch_text(seed_text) else seed_text
 
         while time.monotonic() < deadline:
             await asyncio.sleep(interval)
@@ -1652,6 +1807,8 @@ class ConversationClient:
                 text = parts[0] if parts and isinstance(parts[0], str) else ""
                 if not text:
                     continue
+                if _is_connector_dispatch_text(text):
+                    continue
                 candidates.append(
                     (
                         msg.get("create_time") or 0,
@@ -1672,6 +1829,7 @@ class ConversationClient:
                     "text": widget_text,
                     "content_references": widget_refs,
                     "search_result_groups": [],
+                    "connector_failed": connector_failed,
                 }
                 return
 
@@ -1718,19 +1876,16 @@ class ConversationClient:
                     "text": latest_text,
                     "content_references": refs,
                     "search_result_groups": groups,
+                    "connector_failed": connector_failed,
                 }
                 return
 
-        if last_emitted:
-            yield {
-                "type": "done",
-                "text": last_emitted,
-                "content_references": [],
-                "search_result_groups": [],
-                "terminated_abnormally": True,
-                "timeout": True,
-            }
-        else:
-            raise RuntimeError(
-                f"DR polling timed out after {max_wait}s waiting for conv {conv_id}"
-            )
+        yield {
+            "type": "done",
+            "text": last_emitted,
+            "content_references": [],
+            "search_result_groups": [],
+            "connector_failed": connector_failed,
+            "terminated_abnormally": True,
+            "timeout": True,
+        }

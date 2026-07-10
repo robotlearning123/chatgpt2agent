@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import sys
@@ -35,9 +36,13 @@ def h1(msg):
 # ── token acquisition ───────────────────────────────────────────────────────
 
 
-def _token_from_codex() -> str | None:
+def _codex_auth_path() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
-    p = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+    return (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+
+
+def _token_from_codex() -> str | None:
+    p = _codex_auth_path()
     if not p.exists():
         return None
     try:
@@ -69,7 +74,7 @@ def _token_via_manual() -> str | None:
     """Open browser + ask user to paste token."""
     print()
     print("  Easiest path: install Codex CLI and run `codex login` — we'll")
-    print("  pick up ~/.codex/auth.json automatically next time.")
+    print(f"  pick up {_codex_auth_path()} automatically next time.")
     print()
     print("  Or paste a token manually:")
     print("    1. Press F12 → Console on chat.openai.com")
@@ -81,15 +86,22 @@ def _token_via_manual() -> str | None:
     )
     print()
     webbrowser.open("https://chat.openai.com")
-    token = input("  Paste token here (or empty to cancel): ").strip()
-    return token or None
+    token = getpass.getpass("  Paste token here (input hidden; empty to cancel): ").strip()
+    if not token:
+        return None
+    from gpt2agent.auth import _is_access_token
+
+    if not _is_access_token(token):
+        err("That does not look like a JWT access_token; token was not saved")
+        return None
+    return token
 
 
 def get_token() -> str:
     h1("Step 1 — Locate ChatGPT token")
 
     if t := _token_from_codex():
-        ok("Found Codex CLI token (~/.codex/auth.json)")
+        ok(f"Found Codex CLI token ({_codex_auth_path()})")
         return t
     if t := _token_from_saved():
         ok("Using saved token")
@@ -128,16 +140,34 @@ def detect_plan() -> str:
 
         bc = BackendClient()
         acct = bc.get("/backend-api/accounts/check/v4-2023-04-27")
-        for a in (acct.get("accounts") or {}).values():
-            ent = a.get("entitlement") or {}
-            plan = ent.get("subscription_plan", "")
-            if "pro" in plan:
-                return "pro"
-            if "plus" in plan:
-                return "plus"
-    except Exception:
-        pass
-    return "plus"  # assume plus if probe fails
+    except Exception as exc:
+        raise RuntimeError(f"Could not verify ChatGPT account: {exc}") from exc
+
+    accounts = (acct or {}).get("accounts") if isinstance(acct, dict) else None
+    if not isinstance(accounts, dict) or not accounts:
+        raise RuntimeError("Could not verify ChatGPT account: response contained no accounts")
+
+    verified_plans: list[str] = []
+    for a in accounts.values():
+        if isinstance(a, dict):
+            ent = a.get("entitlement")
+            if not isinstance(ent, dict):
+                continue
+            plan = str(ent.get("subscription_plan") or "").lower()
+            active = ent.get("has_active_subscription")
+            if active is False:
+                verified_plans.append("free")
+            elif "pro" in plan:
+                verified_plans.append("pro")
+            elif "plus" in plan:
+                verified_plans.append("plus")
+            elif "free" in plan:
+                verified_plans.append("free")
+
+    for plan in ("pro", "plus", "free"):
+        if plan in verified_plans:
+            return plan
+    raise RuntimeError("Could not verify ChatGPT account plan from entitlement response")
 
 
 # ── MCP server ───────────────────────────────────────────────────────────────
@@ -218,4 +248,7 @@ def run_setup() -> None:
 
     except KeyboardInterrupt:
         print("\n\nSetup cancelled.")
+        sys.exit(1)
+    except RuntimeError as exc:
+        err(str(exc))
         sys.exit(1)

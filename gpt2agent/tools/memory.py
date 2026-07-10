@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
 from gpt2agent.tools._redact import redact
 
 
-def _fetch_memories(client: BackendClient) -> list[dict]:
-    data = client.get("/backend-api/memories", target_path="/backend-api/memories")
+async def _fetch_memories(client: BackendClient) -> list[dict]:
+    data = await async_get(
+        client,
+        "/backend-api/memories",
+        target_path="/backend-api/memories",
+    )
     return (data or {}).get("memories") or []
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def memory_list() -> list:
+    async def memory_list() -> list:
         """Return all ChatGPT memories (PII redacted)."""
         return [
             {
@@ -20,19 +25,22 @@ def register(mcp, client: BackendClient) -> None:
                 "content": redact(m.get("content") or ""),
                 "created_timestamp": m.get("created_timestamp"),
             }
-            for m in _fetch_memories(client)
+            for m in await _fetch_memories(client)
         ]
 
     @mcp.tool()
-    def memory_search(query: str) -> list:
+    async def memory_search(query: str) -> list:
         """Keyword search over ChatGPT memories. Returns matching entries (PII redacted)."""
         q = query.lower()
-        return [
-            {
-                "id": m.get("id"),
-                "content": redact(m.get("content") or ""),
-                "created_timestamp": m.get("created_timestamp"),
-            }
-            for m in _fetch_memories(client)
-            if q in (m.get("content") or "").lower()
-        ]
+        matches = []
+        for m in await _fetch_memories(client):
+            content = redact(m.get("content") or "")
+            if q in content.lower():
+                matches.append(
+                    {
+                        "id": m.get("id"),
+                        "content": content,
+                        "created_timestamp": m.get("created_timestamp"),
+                    }
+                )
+        return matches

@@ -1,0 +1,3 @@
+prune tests
+include tests/test_heavy_dr_parser.py
+recursive-include tests/fixtures *.json

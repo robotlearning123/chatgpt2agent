@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -77,17 +78,24 @@ class SentinelGate:
             diff = pow_block.get("difficulty")
             if not seed or not diff:
                 raise RuntimeError(f"sentinel POW missing seed/difficulty: {pow_block}")
-            out["proof"] = _pow.solve_pow(seed, diff, ua)
+            proof = await asyncio.to_thread(_pow.solve_pow, seed, diff, ua)
+            if not proof:
+                raise RuntimeError("required POW challenge could not be solved")
+            out["proof"] = proof
         else:
             out["proof"] = ""
 
         turn_block = resp.get("turnstile") or {}
         if turn_block.get("required"):
             dx = turn_block.get("dx")
-            if dx:
-                proof_for_xor = out.get("proof") or p
-                tok = _turn.solve_turnstile(dx, proof_for_xor)
-                if tok:
-                    out["turnstile"] = tok
+            if not dx:
+                raise RuntimeError("required Turnstile challenge could not be solved")
+            proof_for_xor = out.get("proof") or p
+            tok = await asyncio.to_thread(
+                _turn.solve_turnstile, dx, proof_for_xor
+            )
+            if not tok:
+                raise RuntimeError("required Turnstile challenge could not be solved")
+            out["turnstile"] = tok
 
         return out

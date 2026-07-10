@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
 
 
 def _classify(app_id: str) -> str:
@@ -13,9 +14,10 @@ def _classify(app_id: str) -> str:
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def list_apps() -> list:
+    async def list_apps() -> list:
         """Return ChatGPT connected apps/connectors. Names unresolvable — IDs with type classification returned."""
-        data = client.get(
+        data = await async_get(
+            client,
             "/backend-api/apps/list",
             target_path="/backend-api/apps/list",
         ) or {}

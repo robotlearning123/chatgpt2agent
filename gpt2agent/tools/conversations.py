@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from gpt2agent.backend import BackendClient
+from gpt2agent.tools._backend import async_get
+from gpt2agent.tools._ids import validate_path_id
 from gpt2agent.tools._redact import redact
 
 
 def register(mcp, client: BackendClient) -> None:
     @mcp.tool()
-    def list_conversations(limit: int = 20) -> list:
+    async def list_conversations(limit: int = 20) -> list:
         """Return recent ChatGPT conversations (titles PII-redacted)."""
-        data = client.get(
+        data = await async_get(
+            client,
             f"/backend-api/conversations?offset=0&limit={limit}&order=updated",
             target_path="/backend-api/conversations",
         ) or {}
@@ -24,7 +27,7 @@ def register(mcp, client: BackendClient) -> None:
         ]
 
     @mcp.tool()
-    def get_conversation(conversation_id: str, max_messages: int = 100) -> dict:
+    async def get_conversation(conversation_id: str, max_messages: int = 100) -> dict:
         """Get full details of a ChatGPT conversation including all messages.
 
         Args:
@@ -34,7 +37,8 @@ def register(mcp, client: BackendClient) -> None:
         Returns:
             Dict with title, create_time, mapping (all messages), and metadata.
         """
-        data = client.get(f"/backend-api/conversation/{conversation_id}")
+        conversation_id = validate_path_id(conversation_id, kind="conversation ID")
+        data = await async_get(client, f"/backend-api/conversation/{conversation_id}")
         if not data:
             return {}
         mapping = data.get("mapping") or {}
@@ -58,8 +62,6 @@ def register(mcp, client: BackendClient) -> None:
                 (n for n in mapping.values() if isinstance(n, dict)),
                 key=lambda n: ((n.get("message") or {}).get("create_time") or 0),
             )
-        ordered_nodes = ordered_nodes[-max_messages:] if max_messages > 0 else []
-
         messages = []
         for node in ordered_nodes:
             msg = (node or {}).get("message")
@@ -99,8 +101,10 @@ def register(mcp, client: BackendClient) -> None:
             elif ct == "code" and parts and isinstance(parts[0], str):
                 entry["code"] = redact(parts[0])[:500]
             messages.append(entry)
-            if len(messages) >= max_messages:
-                break
+
+        # Apply the caller's cap only after non-visible roles have been removed.
+        # Otherwise trailing system nodes can consume the entire allowance.
+        messages = messages[-max_messages:] if max_messages > 0 else []
 
         return {
             "id": data.get("id"),
@@ -112,9 +116,10 @@ def register(mcp, client: BackendClient) -> None:
         }
 
     @mcp.tool()
-    def list_tasks(limit: int = 20) -> list:
+    async def list_tasks(limit: int = 20) -> list:
         """Return scheduled/completed ChatGPT tasks with full metadata (titles PII-redacted)."""
-        data = client.get(
+        data = await async_get(
+            client,
             f"/backend-api/tasks?limit={limit}",
             target_path="/backend-api/tasks",
         ) or {}

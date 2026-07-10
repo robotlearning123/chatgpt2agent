@@ -24,8 +24,9 @@ No proxy process. No separate account. No platform API key. Your `codex login`,
 your token, your quota.
 
 If you already have the [`codex`](https://github.com/openai/codex) CLI logged in,
-setup is **zero extra steps** — gpt2agent reuses the same `~/.codex/auth.json`
-bearer and picks up its background-refreshed token automatically.
+setup is **zero extra steps** — gpt2agent reuses `$CODEX_HOME/auth.json` (or
+`~/.codex/auth.json` by default) and picks up its background-refreshed token
+automatically.
 
 Works with Claude Code, Codex CLI, and any client that speaks the MCP protocol over stdio.
 
@@ -38,9 +39,9 @@ curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/ins
 ```
 
 That command:
-1. Installs `gpt2agent` via pipx (creates an isolated env; falls back to a git install if PyPI is unreachable).
-2. Reuses your existing `~/.codex/auth.json` if you've run `codex login` — no separate ChatGPT token paste needed.
-3. Detects which MCP clients you have (Claude Code, Codex, Cursor, Windsurf, Claude Desktop, Zed) and writes the right config for each.
+1. Installs the published `gpt2agent` package via pipx in an isolated environment.
+2. Reuses `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`) if you've run `codex login` — no separate ChatGPT token paste needed.
+3. Detects which MCP clients you have (Claude Code, Codex, Cursor, Windsurf, Claude Desktop, Zed) and writes the right config for each, honoring `CODEX_HOME` for Codex.
 4. Drops the Claude Code skills (`deep-research` + `gpt2agent`) into `~/.claude/skills/`.
 
 ### Or step-by-step
@@ -78,7 +79,7 @@ The `install` subcommand writes the right thing for each:
 | Client | File | Section |
 |---|---|---|
 | **Claude Code** | `~/.claude.json` | `mcpServers.gpt2agent` (stdio: `gpt2agent run --stdio`) |
-| **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.gpt2agent]` |
+| **Codex CLI** | `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) | `[mcp_servers.gpt2agent]` |
 
 Both are idempotent and back up the prior file as `<name>.bak-gpt2agent`.
 
@@ -101,7 +102,7 @@ Claude Code — add to `~/.claude.json`:
 }
 ```
 
-Codex CLI — add to `~/.codex/config.toml`:
+Codex CLI — add to `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.gpt2agent]
@@ -121,7 +122,7 @@ Prompts for a ChatGPT session token (saved to `~/.gpt2agent/token.json`, mode
 `600`), detects your plan, and registers gpt2agent with your detected MCP clients
 over **stdio** — the same wiring as `gpt2agent install`. The `codex login` flow is
 preferred when available because codex auto-refreshes its token; gpt2agent reloads
-`~/.codex/auth.json` on mtime change so long calls don't 401 mid-flight.
+the selected Codex auth file on mtime change so long calls don't 401 mid-flight.
 
 ---
 
@@ -193,7 +194,8 @@ challenge. Token is reloaded from disk on each request, so codex's background
 refresh propagates transparently. See [NOTICES](./NOTICES.md) for attribution.
 
 ```
-~/.codex/auth.json  (or ~/.gpt2agent/token.json)  ← auto-refreshed by codex
+$CODEX_HOME/auth.json (default ~/.codex/auth.json) ← auto-refreshed by Codex
+~/.gpt2agent/token.json                            ← manual fallback
         |
    gpt2agent  (stdio MCP server, token reloaded on each call)
         |
@@ -227,8 +229,9 @@ heavy_dr = "gpt-5-5-pro"    # override slug for deep_research_heavy
 
 ## Limitations
 
-- **Deep Research quota:** roughly ~248 heavy requests / monthly cycle on Pro,
-  lower on Plus — approximate and account/region-dependent, not a guaranteed number.
+- **Deep Research quota:** limits and reset timing are account-reported and can
+  change. Run the bundled `deep-research/bin/quota.sh` before heavy work and run
+  heavy Deep Research serially.
 - **Account-tier features not yet supported:** Sora video, Operator/CUA, voice
   sessions. These use HTTP endpoints that return 404 or haven't yet been
   reverse-engineered out of the chatgpt.com web bundle.
@@ -259,8 +262,11 @@ has real consequences; please understand them before pointing it at your account
   - The server **binds `127.0.0.1` by default** and **refuses** to start the HTTP
     transport on a non-loopback host unless you explicitly set
     `GPT2AGENT_ALLOW_REMOTE=1`. Only do that behind your own auth proxy / firewall.
-- **Your token stays local.** It is read from `~/.codex/auth.json` (or
-  `~/.gpt2agent/token.json`, chmod `600`) and sent only to `chatgpt.com`.
+- **Your token stays local.** It is read from `$CODEX_HOME/auth.json` (or
+  `~/.codex/auth.json` by default), with `~/.gpt2agent/token.json` as the manual
+  fallback. Codex manages its own auth file; gpt2agent creates or tightens the
+  manual fallback to mode `600` where POSIX supports it. The token is sent only
+  to `chatgpt.com`.
   gpt2agent never transmits it anywhere else. Token/secret values are redacted
   from error messages and logs (best-effort).
 - **PII redaction is limited.** Tools that return conversation/memory data mask
@@ -270,7 +276,9 @@ has real consequences; please understand them before pointing it at your account
   verbatim. Don't treat the output as anonymized.
 - **`GPT2AGENT_RAW_DUMP`** (debug) writes raw, unredacted SSE/poll traffic —
   including prompts, responses, and resume tokens — to the path you give it.
-  Use only for debugging and delete the dumps after.
+  The file is created/tightened to mode `600` on POSIX systems, but its content
+  remains sensitive. Use an ignored name such as `gpt2agent-raw-dump.jsonl`,
+  then delete it after debugging.
 
 Found a security issue? See [SECURITY.md](./SECURITY.md).
 
@@ -290,28 +298,68 @@ pytest
 Tagged releases are configured to publish to PyPI and create a GitHub Release
 with the matching CHANGELOG section:
 
+Prepare and merge a reviewed release PR that updates the same version in
+`pyproject.toml`, `gpt2agent/__init__.py`, `.claude-plugin/plugin.json`, and
+both version fields in `server.json`, plus a non-empty dated `CHANGELOG.md`
+section. Verify that candidate before merging:
+
 ```bash
-# bump version
-$EDITOR pyproject.toml             # e.g. "0.0.3" → "0.0.4"
-$EDITOR CHANGELOG.md               # add ## [0.0.4] - YYYY-MM-DD ...
-git commit -am "release: 0.0.4"
-git tag v0.0.4
-git push origin main --tags        # release workflow fires on the tag
+python scripts/verify_release.py
 ```
 
-The release workflow (`.github/workflows/release.yml`) verifies the tag
-matches `pyproject.toml`, runs the test matrix, builds wheel + sdist, publishes
-to PyPI via OIDC trusted publishing, and posts a GitHub Release with that
-version's CHANGELOG body.
+Stable versions use `X.Y.Z`. Supported prereleases use `X.Y.Z-alphaN`,
+`X.Y.Z-betaN`, or `X.Y.Z-rcN` in tags, changelog headings, and project
+manifests. Python package metadata and PyPI use the corresponding canonical
+PEP 440 spelling (`X.Y.ZaN`, `X.Y.ZbN`, or `X.Y.ZrcN`).
 
-> **One-time PyPI setup required before the first publish succeeds.** PyPI's
-> OIDC exchange needs a Trusted Publisher registered for this repo (project
-> `gpt2agent`, owner `robotlearning123`, workflow `release.yml`, environment
-> `pypi`) at
-> [pypi.org → Publishing](https://pypi.org/manage/account/publishing/) — or a
-> first manual `twine upload` to create the project. Until that is done the
-> release job fails with `invalid-publisher` and the package is not on PyPI;
-> the `install.sh` one-liner falls back to a `git+https` install in the meantime.
+After the release PR is merged, read its exact merge SHA, prove that commit is
+on `origin/main`, check out that reviewed tree, then create and push only the
+intended annotated tag. This avoids silently including a later unrelated PR:
+
+```bash
+set -euo pipefail
+git switch main
+git pull --ff-only origin main
+git fetch --no-tags origin main:refs/remotes/origin/main
+read -r -p "Merged release PR number: " PR_NUMBER
+RELEASE_SHA=$(gh pr view "$PR_NUMBER" --json mergeCommit,state \
+  --jq 'select(.state == "MERGED") | .mergeCommit.oid')
+test -n "$RELEASE_SHA"
+git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+git switch --detach "$RELEASE_SHA"
+test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+VERSION=$(python - <<'PY'
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+with open("pyproject.toml", "rb") as stream:
+    print(tomllib.load(stream)["project"]["version"])
+PY
+)
+TAG="v$VERSION"
+python scripts/verify_release.py --tag "$TAG"
+git tag -a "$TAG" "$RELEASE_SHA" -m "gpt2agent $VERSION"
+git switch main
+git push origin "refs/tags/$TAG"
+```
+
+The release workflow (`.github/workflows/release.yml`) verifies every version
+surface and the CHANGELOG, proves the tagged commit is on `origin/main`, runs
+the test matrix, installs and tests the built wheel and sdist in clean
+environments, publishes to PyPI via OIDC trusted publishing, and posts a GitHub
+Release with that version's CHANGELOG body.
+
+If a publish or downstream release job fails, use GitHub Actions' **Re-run
+failed jobs** on that same workflow run so it reuses the original build
+artifact. Do not re-run the whole workflow after any file reaches PyPI: Python
+sdists are not guaranteed byte-reproducible, and the hash guard intentionally
+rejects different rebuilt bytes for an existing version.
+
+> PyPI publishing requires a Trusted Publisher for this repository, workflow
+> `release.yml`, and environment `pypi`. Keep that environment restricted to
+> protected release tags; the installer fails closed if the published package
+> cannot be installed rather than substituting unreleased repository code.
 
 ---
 
