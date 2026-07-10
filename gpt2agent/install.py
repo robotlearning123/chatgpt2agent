@@ -18,6 +18,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
+
 # ── ANSI ──────────────────────────────────────────────────────────────────
 _GREEN = "\033[92m"
 _YELLOW = "\033[93m"
@@ -216,17 +221,63 @@ def _toml_quote(value: str) -> str:
 _SECTION_HEADER_RE = re.compile(r"^\s*\[\[?([^\[\]\n]+)\]\]?\s*(?:#.*)?$")
 
 
+def _toml_header_path(header_line: str) -> tuple[str, ...] | None:
+    """Return the semantic key path declared by a TOML table header.
+
+    TOML permits quoted key segments, so ``[a.b]`` and ``[a."b"]`` declare
+    the same path while ``["a.b"]`` declares a different, single-segment key.
+    Let the standard parser resolve those distinctions instead of comparing
+    the raw header text.
+    """
+    match = _SECTION_HEADER_RE.match(header_line)
+    if match is None:
+        return None
+
+    is_array = header_line.lstrip().startswith("[[")
+    opening, closing = ("[[", "]]") if is_array else ("[", "]")
+    marker = "__gpt2agent_header_marker__"
+    synthetic = f"{opening}{match.group(1).strip()}{closing}\n{marker} = true\n"
+    try:
+        parsed = tomllib.loads(synthetic)
+    except (TypeError, ValueError):
+        return None
+
+    def _find_marker(node: object, path: tuple[str, ...]) -> tuple[str, ...] | None:
+        if isinstance(node, dict):
+            if node.get(marker) is True:
+                return path
+            for key, value in node.items():
+                found = _find_marker(value, (*path, str(key)))
+                if found is not None:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = _find_marker(value, path)
+                if found is not None:
+                    return found
+        return None
+
+    return _find_marker(parsed, ())
+
+
+def _toml_section_path(section_name: str) -> tuple[str, ...]:
+    path = _toml_header_path(f"[{section_name}]")
+    if path is None:
+        raise ValueError(f"invalid TOML section name: {section_name!r}")
+    return path
+
+
 def _belongs_to_section(header_line: str, section_name: str) -> bool:
     """True iff *header_line* is ``[section_name]`` itself or a dotted child
     (``[section_name.env]``, ``[[section_name.x]]``). Child subtables are part
     of the section for TOML semantics — removing/replacing the parent while
     leaving a child behind resurrects the section as a headless half-entry.
     """
-    m = _SECTION_HEADER_RE.match(header_line)
-    if not m:
+    header_path = _toml_header_path(header_line)
+    if header_path is None:
         return False
-    name = m.group(1).strip()
-    return name == section_name or name.startswith(section_name + ".")
+    section_path = _toml_section_path(section_name)
+    return header_path[: len(section_path)] == section_path
 
 
 def _is_target_header(line: str, section_name: str) -> bool:
@@ -238,8 +289,7 @@ def _is_target_header(line: str, section_name: str) -> bool:
     """
     if line.lstrip().startswith("[["):  # array-of-table is never the target
         return False
-    m = _SECTION_HEADER_RE.match(line)
-    return bool(m) and m.group(1).strip() == section_name
+    return _toml_header_path(line) == _toml_section_path(section_name)
 
 
 def _remove_toml_section(content: str, section_name: str) -> str:
@@ -269,10 +319,6 @@ def _legacy_codex_openai_present(content: str) -> bool:
     """True iff content has a ``[mcp_servers.openai]`` section whose
     ``command`` is the renamed-away ``openai-mcp`` binary.
     """
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10 fallback
-        import tomli as tomllib  # type: ignore
     try:
         parsed = tomllib.loads(content)
     except Exception:
@@ -341,6 +387,14 @@ def install_codex(
     """
     cfg_path = config_path or _codex_home() / "config.toml"
     existing = cfg_path.read_text() if cfg_path.exists() else ""
+    if existing:
+        try:
+            tomllib.loads(existing)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{cfg_path} is not valid TOML ({exc}). Refusing to overwrite — "
+                "open it in an editor and either repair or move it aside."
+            ) from exc
 
     section_name = f"mcp_servers.{server_name}"
     new_section = [
@@ -355,6 +409,14 @@ def install_codex(
     if section_name != "mcp_servers.openai" and _legacy_codex_openai_present(new_content):
         new_content = _remove_toml_section(new_content, "mcp_servers.openai")
         legacy_removed = True
+
+    try:
+        tomllib.loads(new_content)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Generated Codex config for {cfg_path} is not valid TOML ({exc}). "
+            "Refusing to overwrite the existing file."
+        ) from exc
 
     if new_content == existing:
         _info(f"codex: {cfg_path} already has [{section_name}] (no-op)")

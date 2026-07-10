@@ -462,6 +462,87 @@ def test_toml_section_editors_recognize_commented_headers() -> None:
     assert "[other]" in removed
 
 
+def test_install_codex_replaces_equivalent_quoted_toml_table(tmp_path: Path) -> None:
+    """Quoted TOML key segments are equivalent to their bare-key spelling."""
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - Python 3.10
+        import tomli as tomllib  # type: ignore
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[mcp_servers."gpt2agent"]\n'
+        'command = "stale"\n'
+        'args = ["old"]\n'
+        '\n[mcp_servers."gpt2agent".env]\n'
+        'STALE = "1"\n'
+        "\n[unrelated]\n"
+        "keep = true\n"
+    )
+
+    result = install_codex(config_path=cfg)
+
+    assert result["changed"] is True
+    parsed = tomllib.loads(cfg.read_text())
+    assert parsed["mcp_servers"]["gpt2agent"] == {
+        "command": "gpt2agent",
+        "args": ["run", "--stdio"],
+    }
+    assert parsed["unrelated"]["keep"] is True
+
+
+def test_toml_section_editor_keeps_fully_quoted_dotted_key_distinct() -> None:
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - Python 3.10
+        import tomli as tomllib  # type: ignore
+
+    src = '["mcp_servers.gpt2agent"]\nkeep = true\n'
+    replaced = _replace_or_append_toml_section(
+        src,
+        "mcp_servers.gpt2agent",
+        ['command = "gpt2agent"'],
+    )
+
+    parsed = tomllib.loads(replaced)
+    assert parsed["mcp_servers.gpt2agent"]["keep"] is True
+    assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
+
+
+def test_install_codex_removes_quoted_legacy_openai_table(tmp_path: Path) -> None:
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - Python 3.10
+        import tomli as tomllib  # type: ignore
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        '[mcp_servers."openai"]\n'
+        'command = "openai-mcp"\n'
+        '\n[mcp_servers."openai".env]\n'
+        'STALE = "1"\n'
+    )
+
+    result = install_codex(config_path=cfg)
+
+    assert result["changed"] is True
+    parsed = tomllib.loads(cfg.read_text())
+    assert "openai" not in parsed.get("mcp_servers", {})
+    assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
+
+
+def test_install_codex_refuses_invalid_existing_toml(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.toml"
+    original = "[broken\nvalue = 1\n"
+    cfg.write_text(original)
+
+    with pytest.raises(RuntimeError, match="not valid TOML.*Refusing to overwrite"):
+        install_codex(config_path=cfg)
+
+    assert cfg.read_text() == original
+    assert not cfg.with_name("config.toml.bak-gpt2agent").exists()
+
+
 def test_codex_legacy_removal_covers_commented_header(tmp_path: Path) -> None:
     """_legacy_codex_openai_present detects via tomllib (comment-tolerant), so
     removal must handle '[mcp_servers.openai] # legacy' too — previously the
