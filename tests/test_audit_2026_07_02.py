@@ -172,14 +172,13 @@ def test_browser_use_does_not_return_session_cookie(monkeypatch) -> None:
             self.returncode = returncode
 
     def fake_run(cmd, **kwargs):
-        if cmd[:1] == ["which"]:
-            return _Result(returncode=0)
         if "eval" in cmd:
             return _Result(stdout="[]")  # no auth0 localStorage entries
         if "cookies" in cmd:
             raise AssertionError("cookie fallback must not be attempted")
         return _Result()
 
+    monkeypatch.setattr(auth_mod.shutil, "which", lambda name: "/usr/bin/browser-use")
     monkeypatch.setattr(auth_mod.subprocess, "run", fake_run)
     monkeypatch.setattr("builtins.input", lambda *a: "")
     monkeypatch.setattr(auth_mod.time, "sleep", lambda *a: None)
@@ -191,7 +190,7 @@ def _run_from_browser(monkeypatch, pasted: str):
     import gpt2agent.auth as auth_mod
 
     monkeypatch.setattr(auth_mod.webbrowser, "open", lambda *a, **k: True)
-    monkeypatch.setattr("builtins.input", lambda *a: pasted)
+    monkeypatch.setattr(auth_mod.getpass, "getpass", lambda *a: pasted)
     return auth_mod._from_browser()
 
 

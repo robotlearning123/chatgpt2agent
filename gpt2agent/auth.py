@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
+import shutil
 import subprocess
 import time
 import webbrowser
 from pathlib import Path
+
+
+def _is_access_token(token: str) -> bool:
+    """Return whether *token* has the three-segment JWT access-token shape."""
+    return token.startswith("eyJ") and token.count(".") == 2
 
 
 # --------------------------------------------------------------------------- #
@@ -78,10 +85,10 @@ def _from_browser() -> dict | None:
     print("  (Tip: running `codex login` once lets gpt2agent reuse that token automatically.)")
     print()
     webbrowser.open("https://chat.openai.com")
-    token = input("  Paste access_token: ").strip()
+    token = getpass.getpass("  Paste access_token (input hidden): ").strip()
     if not token:
         return None
-    if not token.startswith("eyJ") or token.count(".") != 2:
+    if not _is_access_token(token):
         # ChatGPT access tokens are 3-segment JWTs; session cookies (5-segment
         # JWE) or random strings only produce 401s downstream — fail here.
         print("  That does not look like a JWT access_token (expected eyJ...x.y.z);")
@@ -92,14 +99,15 @@ def _from_browser() -> dict | None:
 
 def _from_browser_use() -> dict | None:
     """Extract token automatically using browser-use CLI (if installed)."""
-    if subprocess.run(["which", "browser-use"], capture_output=True).returncode != 0:
+    browser_use = shutil.which("browser-use")
+    if browser_use is None:
         return None
 
     print("  browser-use detected — attempting automatic token extraction...")
     try:
         # Open ChatGPT and wait for login
         subprocess.run(
-            ["browser-use", "open", "https://chat.openai.com"],
+            [browser_use, "open", "https://chat.openai.com"],
             timeout=30,
         )
         time.sleep(3)
@@ -108,7 +116,7 @@ def _from_browser_use() -> dict | None:
         # Try localStorage first
         result = subprocess.run(
             [
-                "browser-use",
+                browser_use,
                 "eval",
                 "JSON.stringify(Object.entries(localStorage).filter(([k]) => k.includes('auth0')))",
             ],
@@ -123,7 +131,7 @@ def _from_browser_use() -> dict | None:
                 try:
                     body = json.loads(v).get("body", {})
                     token = body.get("access_token")
-                    if token:
+                    if token and _is_access_token(token):
                         return {"access_token": token, "source": "browser-use"}
                 except Exception:
                     pass
@@ -149,7 +157,7 @@ def get_token(interactive: bool = True) -> str:
     # Prefer Codex for parity with BackendClient/setup/docs: it honors CODEX_HOME
     # and auto-refreshes, while ~/.gpt2agent/token.json can be stale or from a
     # different account.
-    for fn in [_from_codex, _from_saved, _from_browser_use]:
+    for fn in [_from_codex, _from_saved]:
         result = fn()
         if result:
             print(f"  ✓ Token found ({result['source']})")
@@ -157,6 +165,11 @@ def get_token(interactive: bool = True) -> str:
 
     if not interactive:
         raise RuntimeError("No ChatGPT token found. Run: gpt2agent setup")
+
+    result = _from_browser_use()
+    if result:
+        print(f"  ✓ Token found ({result['source']})")
+        return result["access_token"]
 
     result = _from_browser()
     if not result:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import sys
@@ -81,8 +82,15 @@ def _token_via_manual() -> str | None:
     )
     print()
     webbrowser.open("https://chat.openai.com")
-    token = input("  Paste token here (or empty to cancel): ").strip()
-    return token or None
+    token = getpass.getpass("  Paste token here (input hidden; empty to cancel): ").strip()
+    if not token:
+        return None
+    from gpt2agent.auth import _is_access_token
+
+    if not _is_access_token(token):
+        err("That does not look like a JWT access_token; token was not saved")
+        return None
+    return token
 
 
 def get_token() -> str:
@@ -128,16 +136,29 @@ def detect_plan() -> str:
 
         bc = BackendClient()
         acct = bc.get("/backend-api/accounts/check/v4-2023-04-27")
-        for a in (acct.get("accounts") or {}).values():
+    except Exception as exc:
+        raise RuntimeError(f"Could not verify ChatGPT account: {exc}") from exc
+
+    accounts = (acct or {}).get("accounts") if isinstance(acct, dict) else None
+    if not isinstance(accounts, dict) or not accounts:
+        raise RuntimeError("Could not verify ChatGPT account: response contained no accounts")
+
+    verified_plans: list[str] = []
+    for a in accounts.values():
+        if isinstance(a, dict):
             ent = a.get("entitlement") or {}
-            plan = ent.get("subscription_plan", "")
+            plan = str(ent.get("subscription_plan") or "").lower()
             if "pro" in plan:
-                return "pro"
-            if "plus" in plan:
-                return "plus"
-    except Exception:
-        pass
-    return "plus"  # assume plus if probe fails
+                verified_plans.append("pro")
+            elif "plus" in plan:
+                verified_plans.append("plus")
+            elif "free" in plan or ent.get("has_active_subscription") is False:
+                verified_plans.append("free")
+
+    for plan in ("pro", "plus", "free"):
+        if plan in verified_plans:
+            return plan
+    raise RuntimeError("Could not verify ChatGPT account plan from entitlement response")
 
 
 # ── MCP server ───────────────────────────────────────────────────────────────
@@ -218,4 +239,7 @@ def run_setup() -> None:
 
     except KeyboardInterrupt:
         print("\n\nSetup cancelled.")
+        sys.exit(1)
+    except RuntimeError as exc:
+        err(str(exc))
         sys.exit(1)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,7 @@ class BackendClient:
             self._token_mtime: float | None = source.stat().st_mtime if source else None
         except OSError:
             self._token_mtime = None
+        self._token_lock = threading.Lock()
         # Keep TLS fingerprint + User-Agent aligned across backend / sentinel /
         # conversation streams. Cloudflare's bot manager cross-checks them and
         # will 403 mixed fingerprints.
@@ -118,28 +120,37 @@ class BackendClient:
         )
 
     def _reload_token_if_stale(self) -> None:
-        """Re-read the token file and update Authorization header if mtime changed.
+        """Re-evaluate token sources and refresh the Authorization header.
 
         Codex CLI auto-refreshes ``~/.codex/auth.json`` in the background. Without
         this, multi-minute calls (heavy DR poll phase, codex task waits) can 401
-        once the in-memory bearer ages past the file's refresh.
+        once the in-memory bearer ages past the file's refresh. Re-evaluating the
+        source also lets a running server pick up a new preferred Codex login or
+        fall back to the setup token if that login disappears.
         """
-        if self._token_source is None:
-            return
-        try:
-            mtime = self._token_source.stat().st_mtime
-        except OSError:
-            return
-        if self._token_mtime is not None and mtime == self._token_mtime:
-            return
-        try:
-            token, _ = _load_token_with_source()
-        except RuntimeError:
-            # Keep the stale token rather than break mid-request — the next
-            # 401 will surface a clearer error to the caller.
-            return
-        self._session.headers["Authorization"] = f"Bearer {token}"
-        self._token_mtime = mtime
+        with self._token_lock:
+            try:
+                token, source = _load_token_with_source()
+            except RuntimeError:
+                # Keep the stale token rather than break mid-request — the next
+                # 401 will surface a clearer error to the caller.
+                return
+            try:
+                mtime = source.stat().st_mtime if source else None
+            except OSError:
+                mtime = None
+
+            authorization = f"Bearer {token}"
+            if (
+                source == self._token_source
+                and mtime == self._token_mtime
+                and self._session.headers.get("Authorization") == authorization
+            ):
+                return
+
+            self._session.headers["Authorization"] = authorization
+            self._token_source = source
+            self._token_mtime = mtime
 
     def get(
         self,
