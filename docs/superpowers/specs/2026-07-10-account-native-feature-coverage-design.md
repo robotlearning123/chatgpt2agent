@@ -1,9 +1,19 @@
 # Account-native feature coverage and compatibility design
 
-- **Status:** Conversation-approved design, cross-model corrections applied, pending user re-approval
+- **Status:** Conversation-approved for implementation; post-review scope amendment applied
 - **Date:** 2026-07-10
 - **Target release:** gpt2agent 0.0.12
 - **Primary constraint:** Use the signed-in consumer ChatGPT account session only. Do not use an OpenAI API key, the OpenAI API, Realtime API billing, or a second service credential.
+
+### Post-review scope amendment
+
+On 2026-07-10 the user approved a narrower release sequence: `0.0.12` is a
+fully tested account-native release, while all Voice implementation moves to
+`0.0.13`. Version `0.0.12` may inventory Voice as deferred product evidence,
+but it does not register `list_voices`, probe a Voice route in its release
+gate, start a Voice session, or ship audio/media code. The prior cross-model
+review remains useful finding provenance, but its exact-design PASS is stale
+until the amended release candidate is reviewed again.
 
 ## 1. Context
 
@@ -73,6 +83,7 @@ The 2026-07-10 read-only audit established the following non-secret baseline:
 - The account exposed both older Plugin response variants (`list` and `results/page`) while the current public web bundle consumes newer `plugins/release` variants. The adapter must therefore recognize both without dumping raw unknown fields.
 - The automations and Sites list routes returned valid empty `{items, cursor}` envelopes; Sites access was enabled. Empty is account state, not a route failure.
 - The voice settings route returned nine account-visible voice IDs. Runtime names are authoritative for the catalog tool because rollout metadata can differ from help-page names.
+- Codex App Server 0.144.1 exposed experimental Realtime/WebRTC methods and returned its voice catalogs under the current ChatGPT login, but a minimal no-microphone, no-startup-context WebRTC start reached the account backend and returned HTTP 404 before a session was created. Protocol presence therefore does not establish account rollout or release readiness.
 - The project-list route returned HTTP 405, so project coverage is explicitly deferred.
 
 The official update review covered the July 8–9 changes that motivate this release: GPT-Live-1/mini, GPT-5.6 and Work surfaces, Sites public beta, the Plugin Directory naming change, unified desktop Chat/Work/Codex entry points, and the corresponding Codex desktop/CLI changelog. These observations are a dated snapshot, not a perpetual compatibility claim.
@@ -88,9 +99,9 @@ The official update review covered the July 8–9 changes that motivate this rel
 | Generic asynchronous jobs | Product behavior; not scheduled-task proof | `/backend-api/tasks` | Keep `list_tasks`, correct its description |
 | Scheduled automations | Official ChatGPT product surface | `/backend-api/automations` | Add a distinct scheduled-task read tool |
 | Sites | Official Sites public-beta documentation | `/backend-api/websites` and `/access` | Add access and list tools; no creation/publication |
-| Voice catalog | Official Voice documentation | `/backend-api/settings/voices` | Add the read-only voice catalog |
+| Voice catalog | Official Voice documentation | `/backend-api/settings/voices` | Defer the read-only catalog implementation to 0.0.13; inventory-only in 0.0.12 |
 | Post-session Voice transcript | Official Voice documentation says transcripts enter chat history | Private transcript adapter path not yet proven | Inventory-only; deferred and `unverified`, with no stable MCP exposure claim |
-| GPT-Live audio | Official Voice product, with explicit initial feature exclusions | Private browser WebRTC evidence only | No stable audio export; defer an optional experimental sidecar |
+| GPT-Live audio | Official Voice product, with explicit initial feature exclusions | Private browser and experimental Codex Realtime evidence only | No stable audio export; defer to a separately approved, capability-gated AgentRTC release |
 | Projects | Official product feature | Candidate list route returned HTTP 405 | Explicitly unsupported in 0.0.12 |
 | Existing conversations, GPTs, memory, instructions, Codex, images, tools, and research | Existing project coverage | Existing tested adapters/SSE paths | Retain and include in the feature-coverage resource; no unrelated expansion |
 
@@ -101,7 +112,7 @@ The packaged feature-coverage resource must inventory every existing MCP tool pl
 The 0.0.12 release will:
 
 1. Fix incorrect normalization and naming in existing read tools without breaking their return shapes.
-2. Add focused, read-only tools for scheduled automations, Plugins, Work models, Sites, voices, and account capabilities.
+2. Add focused, read-only tools for scheduled automations, Plugins, Work models, Sites, and account capabilities.
 3. Add optional model-aware `thinking_effort` to `chat`.
 4. Add MCP resources for release-time feature coverage and update evidence.
 5. Apply explicit schemas, tool annotations, pagination, bounded inputs, redaction, and typed errors to new surfaces.
@@ -114,6 +125,7 @@ The 0.0.12 release will:
 
 The 0.0.12 release will not:
 
+- expose or probe the Voice catalog; that implementation belongs to 0.0.13;
 - expose GPT-Live audio as a stable MCP tool;
 - call the OpenAI Realtime API or require an API key;
 - add a browser automation fallback;
@@ -127,7 +139,12 @@ The 0.0.12 release will not:
 
 The MCP core remains Python for 0.0.12. Network latency, server processing, and streaming dominate this workload; replacing the mature client with Rust would add packaging and maintenance cost without addressing the main latency path. Python also preserves the existing tested transport, authentication, and redaction code with the smallest safe diff.
 
-If an experimental GPT-Live bridge is pursued later, it should use a small optional TypeScript/browser sidecar for the browser-native WebRTC and media APIs while Python remains the MCP control plane. Rust is reserved for a measured CPU, memory, or transport bottleneck that cannot be resolved in the current architecture. No sidecar is shipped until benchmarks and a separate safety design justify it.
+If AgentRTC is pursued later, TypeScript should own browser-native WebRTC,
+media, and coding-runtime event adapters while Python remains the existing MCP
+account control plane. Rust is reserved for a measured CPU, memory, or
+transport bottleneck that cannot be resolved in the current architecture. No
+media plane ships until live capability gates and a separate safety design
+justify it.
 
 Performance rules for the Python path are:
 
@@ -159,8 +176,8 @@ BackendClient + ConversationClient
    v
 private chatgpt.com web routes and SSE conversation transport
 
-Optional future lane, not in 0.0.12:
-Python MCP control plane <-> local TypeScript WebRTC sidecar <-> GPT-Live web session
+Optional future lane, not in 0.0.12 or 0.0.13:
+Python MCP control plane <-> TypeScript AgentRTC media/control plane <-> coding runtimes
 ```
 
 The server continues to prefer local stdio. Stdout is reserved for MCP protocol frames and logs go to stderr. For 0.0.12, HTTP is strictly loopback-only: the `GPT2AGENT_ALLOW_REMOTE` bypass is removed and every non-loopback bind is refused. Local HTTP also validates any supplied `Origin` against the configured loopback origin/port to prevent DNS rebinding; clients that do not send a browser `Origin` remain supported. Remote serving is deferred until the server has transport authentication; a warning plus a firewall recommendation is not an adequate control for a full-account proxy.
@@ -255,13 +272,6 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 - Do not return `live_url`, `preview_url`, or `screenshot_url` in 0.0.12 because the empty live account sample cannot prove which URL shapes are public. Expose only `has_live_url`, `has_preview`, and `has_screenshot` booleans.
 - A future public-URL field requires redacted non-empty evidence, a proven published/public status, an allowlisted URL-shape contract, and separate security review. No Site content is fetched.
 
-#### `list_voices()`
-
-- Route: `GET /backend-api/settings/voices`
-- Return live voice IDs and display metadata supplied by the account response.
-- Do not hard-code documentation names because voice catalogs can be rollout-specific.
-- This is catalog access only; it does not claim audio streaming or speech synthesis.
-
 #### `account_capabilities()`
 
 - Query the fixed probe table below with a small concurrency cap only through the concurrency-safe request path defined in section 6; otherwise query it serially. Adding, removing, or changing a probe is a reviewed contract change, not an adapter guess.
@@ -284,14 +294,13 @@ Normative probe table:
 | `background_jobs` | `/backend-api/tasks?limit=1` | `account` / `route` | `true` for a valid non-empty account result; `null` for a valid empty result |
 | `scheduled_automations` | `/backend-api/automations?filter=scheduled` | `account` / `route` | use only an explicit account feature/access boolean; otherwise `null`, including a valid empty result |
 | `sites` | `/backend-api/websites/access`, then `/backend-api/websites?limit=1` when access is true/unknown | `account` / `route` | use only the explicit boolean access result; never infer `false` from an empty Site list |
-| `voice_catalog` | `/backend-api/settings/voices` | `voice` / `catalog` | `true` for a valid non-empty catalog; `null` for a valid empty catalog |
+| `voice_catalog`, `voice_transcript`, `gpt_live` | no probe in 0.0.12 | `voice` / `none` | `null`; these are inventory-only until their separately versioned adapters ship |
 | `conversations` | `/backend-api/conversations?offset=0&limit=1&order=updated` | `account` / `route` | `true` for a valid envelope, even when empty |
 | `custom_gpts` | `/backend-api/gizmos/snorlax/sidebar` | `account` / `route` | `true` for a valid non-empty result; `null` when empty |
 | `memory` | `/backend-api/memories` | `account` / `route` | `true` only from an explicit feature flag or non-empty valid result; otherwise `null` |
 | `custom_instructions` | `/backend-api/user_system_messages` | `account` / `route` | `true` for a valid contract response; otherwise follow the truth table below |
 | `codex` | `/backend-api/codex/environments` | `codex` / `route` | `true` for a valid non-empty result; `null` when empty |
 | `projects` | `/backend-api/projects` | `account` / `route` | no entitlement inference; a 404/405 proves only that this unestablished candidate route is `unsupported`, not that Projects are unavailable |
-| `voice_transcript`, `gpt_live` | no content/session probe | `voice` / `none` | `null`; a GET-only capability audit must not start Voice or read a conversation body |
 
 Truth table applied independently to the exact surface exercised by every probe. A route result cannot be inherited as reachability proof for a distinct execution path:
 
@@ -386,13 +395,20 @@ The existing `GPT2AGENT_RAW_DUMP` escape hatch violates this boundary because it
 
 GPT-Live cannot be exported as a supported direct MCP capability today. The current official Voice documentation says Live does not initially support connected apps or plugins, Work, Codex, custom GPTs, temporary chats, or desktop. MCP is also a request/response tool and resource protocol, not a full-duplex low-latency audio transport.
 
-Stable 0.0.12 coverage is limited to:
+Version 0.0.12 exposes no Voice tool. It inventories `voice_catalog`,
+`voice_transcript`, and `gpt_live` as unverified/deferred with
+`reachable_now: null`, `reachability_scope: "none"`, and
+`exposed_by_mcp: false`. The bounded read-only catalog adapter is assigned to
+0.0.13 and must pass its own package and live-contract release gates.
 
-- the live account's voice catalog through `list_voices`.
+Official product documentation says a transcript is added to chat history after a Voice conversation, but that does not prove this private adapter materializes the transcript's content shape. Existing conversation-history tools may happen to expose it, but post-session transcript access remains inventory-only and unverified. It may move to stable coverage only after an explicitly selected, content-safe redacted fixture and live check prove the conversation-history adapter handles the observed Voice shape.
 
-Official product documentation says a transcript is added to chat history after a Voice conversation, but that does not prove this private adapter materializes the transcript's content shape. Existing conversation-history tools may happen to expose it, but post-session transcript access is inventory-only and deferred in 0.0.12: `reachable_now: null`, `reachability_scope: "none"`, `status: "unverified"`, and no claim of stable MCP exposure. It may move to stable coverage only after an explicitly selected, content-safe redacted fixture and live check prove the conversation-history adapter handles the observed Voice shape.
-
-A later experimental account-session bridge may use the private browser WebRTC routes observed in the signed-in web application. Its MCP surface would be control-only, such as `start`, `status`, `send_text`, `end`, and `get_transcript`; audio would remain on local WebRTC. It must be optional, disabled by default, labeled private/experimental, and isolated in a TypeScript sidecar so private media churn cannot destabilize the Python read server.
+A separate AgentRTC design may evaluate the experimental Codex App Server
+Realtime surface and consumer-site bridges, but protocol presence is not
+account availability. That release must remain blocked when its live backend
+capability gate fails, keep audio outside MCP JSON, preserve coding-tool
+approvals, and avoid claiming that an existing consumer Voice session can be
+attached or exported.
 
 ## 11. Browser-client metadata drift
 
@@ -415,7 +431,7 @@ Use synthesized fixtures for:
 - string, object, mixed, missing, and malformed app entries;
 - empty and populated `{items, cursor}` automation/Site envelopes;
 - Plugin list pagination and installed-plugin envelope differences;
-- Work model and voice normalization;
+- Work-model normalization;
 - Work-only model rejection on general `chat`/`agent` paths unless the exact slug also appears in the general catalog;
 - capability partial failures, truth-state separation, and proof that catalog reachability never promotes a distinct execution path to `reachable_now: true`;
 - redaction of sensitive fields and safe URL handling;
@@ -445,9 +461,9 @@ The live group must:
 - leave no snapshots, cookies, screenshots, or temporary account artifacts;
 - report entitlement, reachability, and official support separately.
 
-An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `voice_catalog`, `conversations`, `custom_gpts`, `memory`, `codex`, and `projects`; every other capability uses `item_contract_status: "not_applicable"`.
+An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `conversations`, `custom_gpts`, `memory`, `codex`, and `projects`; every other capability uses `item_contract_status: "not_applicable"`.
 
-Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. Voice transcript parsing is not part of the required gate and remains inventory-only and unverified until a user explicitly selects an existing Voice conversation for a content-safe test.
+Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. No Voice route or conversation-body probe is part of the 0.0.12 gate.
 
 The gate is invalidated by any subsequent source, test, dependency, build, or version change. It is run once on the final reviewed PR head and again on the merged `main` commit immediately before tagging. The pre-tag receipt becomes a GitHub Release asset; its local copy is deleted only after upload and digest verification.
 
@@ -536,7 +552,8 @@ The release is complete only after:
 
 The following require separate designs and releases:
 
-- an experimental GPT-Live WebRTC sidecar;
+- the bounded read-only Voice catalog in 0.0.13;
+- a capability-gated TypeScript AgentRTC media/control plane;
 - confirmation-gated account writes and destructive/public actions;
 - remote authenticated MCP hosting;
 - project listing if a stable reachable account route emerges;

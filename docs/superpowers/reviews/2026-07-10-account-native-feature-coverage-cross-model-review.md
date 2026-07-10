@@ -4,8 +4,14 @@
 - **Baseline design commit:** `36ab2b9d87652403a9f89b573aee0a7a0241b17e`
 - **Final reviewed design SHA-256:** `fc8a3fff4f32d70671d944bf6851b5fa31f6ae7cd1004659030c2ba1e8d24b31`
 - **Final diff SHA-256 against baseline:** `43db44e881630ce02cbcbe9b9cd6b1a8246bcdd6cc59afe4945db3ba9470f23d`
-- **Final cross-model verdict:** PASS after corrections
-- **Implementation/release status:** not started; design remains pending user re-approval
+- **Original exact-design verdict:** PASS after corrections
+- **Current review status:** re-review required after the approved scope amendment
+- **Implementation/release status:** v0.0.12 approved for implementation with all Voice code moved to v0.0.13
+
+The SHA-256 values above identify the originally reviewed design. On
+2026-07-10 the user narrowed v0.0.12 to exclude the Voice catalog and assigned
+that adapter to v0.0.13. This is a risk-reducing scope change, but the original
+exact-design PASS is not reused as a verdict for the amended release candidate.
 
 ## 1. Scope and evidence boundary
 
@@ -70,7 +76,7 @@ The first draft combined the voice catalog and post-session transcript under sta
 
 The final design therefore:
 
-- ships only the read-only voice catalog as stable 0.0.12 Voice coverage;
+- assigns the read-only voice catalog to 0.0.13 rather than 0.0.12;
 - records post-session transcript access as inventory-only, deferred, and `unverified`;
 - does not start Voice or read a conversation body in the required GET-only live gate;
 - does not expose GPT-Live audio as a supported MCP capability.
