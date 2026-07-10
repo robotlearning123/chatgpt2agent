@@ -36,9 +36,13 @@ def h1(msg):
 # ── token acquisition ───────────────────────────────────────────────────────
 
 
-def _token_from_codex() -> str | None:
+def _codex_auth_path() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
-    p = (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+    return (Path(codex_home) if codex_home else Path.home() / ".codex") / "auth.json"
+
+
+def _token_from_codex() -> str | None:
+    p = _codex_auth_path()
     if not p.exists():
         return None
     try:
@@ -70,7 +74,7 @@ def _token_via_manual() -> str | None:
     """Open browser + ask user to paste token."""
     print()
     print("  Easiest path: install Codex CLI and run `codex login` — we'll")
-    print("  pick up ~/.codex/auth.json automatically next time.")
+    print(f"  pick up {_codex_auth_path()} automatically next time.")
     print()
     print("  Or paste a token manually:")
     print("    1. Press F12 → Console on chat.openai.com")
@@ -97,7 +101,7 @@ def get_token() -> str:
     h1("Step 1 — Locate ChatGPT token")
 
     if t := _token_from_codex():
-        ok("Found Codex CLI token (~/.codex/auth.json)")
+        ok(f"Found Codex CLI token ({_codex_auth_path()})")
         return t
     if t := _token_from_saved():
         ok("Using saved token")

@@ -25,7 +25,7 @@ def _load_token_with_source() -> tuple[str, Path | None]:
     Search order:
       1. ``$CODEX_HOME/auth.json`` (or ``~/.codex/auth.json`` if CODEX_HOME
          is unset) with ``tokens.access_token`` (codex login). Honoring
-         CODEX_HOME lets a second account (e.g. ``CODEX_HOME=~/.codex-cx2``)
+         CODEX_HOME lets a second account (e.g. ``CODEX_HOME=~/.codex-alt``)
          be used without touching the default login.
       2. ``~/.gpt2agent/token.json`` with ``token`` (flat) OR
          ``tokens.access_token`` (nested) — written by ``gpt2agent setup``
@@ -44,9 +44,9 @@ def _load_token_with_source() -> tuple[str, Path | None]:
             token = (data.get("tokens") or {}).get("access_token")
             if token:
                 return token, codex_path
-            codex_err = "tokens.access_token missing in ~/.codex/auth.json"
+            codex_err = f"tokens.access_token missing in {codex_path}"
         except (json.JSONDecodeError, OSError) as exc:
-            codex_err = f"Failed to read ~/.codex/auth.json: {exc}"
+            codex_err = f"Failed to read {codex_path}: {exc}"
 
     # Source 2: gpt2agent setup wizard
     wizard_path = Path.home() / ".gpt2agent" / "token.json"
@@ -75,7 +75,7 @@ def _load_token_with_source() -> tuple[str, Path | None]:
         )
     raise RuntimeError(
         "No ChatGPT token found — run `codex login` or `gpt2agent setup` "
-        "(checked ~/.codex/auth.json and ~/.gpt2agent/token.json)"
+        f"(checked {codex_path} and {wizard_path})"
     )
 
 

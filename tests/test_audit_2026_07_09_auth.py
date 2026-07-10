@@ -141,6 +141,36 @@ def test_backend_falls_back_when_codex_source_disappears(tmp_path, monkeypatch) 
     assert client._token_source == saved
 
 
+def test_backend_error_names_selected_codex_auth_path(tmp_path, monkeypatch) -> None:
+    from gpt2agent import backend
+
+    home = tmp_path / "home"
+    codex_home = tmp_path / "alternate-codex"
+    home.mkdir()
+    codex_home.mkdir()
+    selected = codex_home / "auth.json"
+    selected.write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend._load_token_with_source()
+
+    assert str(selected) in str(exc_info.value)
+
+
+def test_setup_reports_selected_codex_auth_path(tmp_path, monkeypatch, capsys) -> None:
+    from gpt2agent import setup
+
+    codex_home = tmp_path / "alternate-codex"
+    selected = codex_home / "auth.json"
+    _write_token(selected, "ALT_TOKEN", codex=True)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    assert setup.get_token() == "ALT_TOKEN"
+    assert str(selected) in capsys.readouterr().out
+
+
 class _PlanClient:
     def __init__(self, response=None, error: Exception | None = None) -> None:
         self.response = response
