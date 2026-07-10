@@ -1210,8 +1210,8 @@ class ConversationClient:
                     )
 
                 last_text = ""
-                done_emitted = False
                 done_text = ""
+                round_completed_successfully = False
                 stream_succeeded = False
                 try:
                     async for raw_line in resp.aiter_lines():
@@ -1245,6 +1245,7 @@ class ConversationClient:
                         ct = content.get("content_type", "")
                         status = msg.get("status", "")
                         meta = msg.get("metadata", {})
+                        recipient = msg.get("recipient")
 
                         # Capture latest assistant message id so the next turn
                         # (auto-proceed reply) can use it as parent_message_id.
@@ -1252,9 +1253,29 @@ class ConversationClient:
                         if msg_id and role == "assistant":
                             last_assistant_msg_id = msg_id
 
-                        # Tool invocation events (search/browse)
-                        if ct == "code" and role == "assistant":
-                            call_text = content.get("text", "")
+                        # Completion belongs to the latest relevant lifecycle,
+                        # not to any earlier clean `done`. A later tool response
+                        # proves the round continued and invalidates that candidate.
+                        if role == "tool":
+                            round_completed_successfully = False
+                            done_text = ""
+                            last_text = ""
+
+                        # Tool invocation events (search/browse). Assistant
+                        # messages addressed to a tool are dispatch envelopes,
+                        # even when the backend represents them as plain text.
+                        if role == "assistant" and (
+                            ct == "code" or recipient not in (None, "all")
+                        ):
+                            round_completed_successfully = False
+                            done_text = ""
+                            last_text = ""
+                            parts = content.get("parts") or []
+                            call_text = content.get("text", "") or (
+                                parts[0]
+                                if parts and isinstance(parts[0], str)
+                                else ""
+                            )
                             if call_text:
                                 yield {"type": "tool", "call": call_text}
                             continue
@@ -1279,10 +1300,18 @@ class ConversationClient:
                                         "search_result_groups", []
                                     ),
                                 }
-                                done_emitted = True
+                                round_completed_successfully = True
                                 last_text = new
                                 done_text = new
-                            elif status == "in_progress" and new:
+                            else:
+                                # Even an empty newer in-progress snapshot
+                                # supersedes an earlier completed candidate.
+                                round_completed_successfully = False
+                                done_text = ""
+                                if status != "in_progress":
+                                    last_text = new
+                                    continue
+                            if status == "in_progress" and new:
                                 # Emit incremental text delta
                                 if new.startswith(last_text):
                                     delta = new[len(last_text) :]
@@ -1291,27 +1320,31 @@ class ConversationClient:
                                 else:
                                     yield {"type": "progress", "text": new}
                                 last_text = new
+                            elif status == "in_progress":
+                                last_text = ""
                     stream_succeeded = True
                 finally:
-                    # Only emit a synthetic "abnormal" done when the stream
-                    # ended normally (no exception) but never reached
-                    # finished_successfully — e.g. server closed mid-text.
+                    # Emit a synthetic abnormal terminal whenever normal EOF
+                    # leaves the latest relevant lifecycle incomplete, even if
+                    # an older candidate had once reached finished_successfully.
                     # On exception, propagate without faking a done event,
                     # so the caller doesn't mistake partial output for a
                     # complete answer (cf. code-review medium #2).
-                    if stream_succeeded and last_text and not done_emitted:
-                        yield {
+                    if stream_succeeded and not round_completed_successfully:
+                        terminal = {
                             "type": "done",
                             "text": last_text,
                             "content_references": [],
                             "search_result_groups": [],
                             "terminated_abnormally": True,
                         }
+                        if round_num > 0:
+                            terminal["clarification_followup_incomplete"] = True
+                        yield terminal
                         done_text = last_text
-                        done_emitted = True
 
             # End of one round — decide whether to continue.
-            if not done_emitted:
+            if not round_completed_successfully:
                 return
 
             # If the model asked for clarification AND we have a captured
@@ -1330,6 +1363,20 @@ class ConversationClient:
                 }
                 current_query = _DR_AUTO_PROCEED
                 continue
+
+            if _looks_like_clarification(done_text):
+                # No continuation can be sent (missing thread identity or the
+                # configured round limit was reached). Override the preceding
+                # clarification-shaped `done` with an explicit abnormal terminal
+                # event rather than reporting the question as successful output.
+                yield {
+                    "type": "done",
+                    "text": done_text,
+                    "content_references": [],
+                    "search_result_groups": [],
+                    "terminated_abnormally": True,
+                    "clarification_unresolved": True,
+                }
 
             return
 

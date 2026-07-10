@@ -1,6 +1,6 @@
 ---
 name: deep-research
-version: 0.1.1
+version: 0.1.2
 description: |
   ChatGPT Pro Deep Research via gpt2agent. Two modes: light (model=research,
   30-120s, citations preserved) and heavy (gpt-5-5-pro + connector, 5-30 min,
@@ -44,7 +44,8 @@ test -f "${CODEX_HOME:-$HOME/.codex}/auth.json" || test -f "$HOME/.gpt2agent/tok
   hidden widget state (`widget_state.report_message`) via
   `?include_visually_hidden_messages=true&include_widget_state=true` — see
   "Heavy DR retrieval" below.
-- `-o OUT_DIR`: output directory (default: `./research/dr-YYYYMMDD-HHMM/`).
+- `-o OUT_DIR`: output directory (default: a unique
+  `./research/dr-YYYYMMDD-HHMMSS-*/` directory).
 - Query can be inline string, `-` for stdin, or `@file.md` to read from file.
 
 The script writes:
@@ -52,6 +53,9 @@ The script writes:
 - `events.jsonl` — all raw SSE events (for debugging / re-extraction)
 - `status.txt` — START / DONE / INCOMPLETE / ERROR with elapsed seconds + event counts
 - `meta.json` — server metadata (model slug, request id, etc.)
+
+The run directory is restricted to mode `0700` and its artifacts to `0600` on
+POSIX systems because queries, reports, and metadata may be sensitive.
 
 ## When to invoke
 
@@ -73,21 +77,17 @@ explicitly wants you to handle locally, anything covered by `context7`
    to the user before firing** so they can edit / approve. Heavy mode
    especially deserves a query review — it takes minutes and consumes one unit
    of the account-reported quota.
-2. Save the approved query to a file (avoids shell escaping issues with
-   long multi-line queries):
+2. Pass the approved query over stdin (avoids shell escaping and shared
+   temporary files):
    ```bash
-   cat > /tmp/dr_query.txt <<'EOF'
+   ~/.claude/skills/deep-research/bin/run.sh [--heavy] -o /path/to/out - <<'EOF'
    <your structured query>
    EOF
    ```
-3. Run:
-   ```bash
-   ~/.claude/skills/deep-research/bin/run.sh [--heavy] -o /path/to/out @/tmp/dr_query.txt
-   ```
-4. Use `run_in_background: true` for heavy mode — it takes minutes. Tail
+3. Use `run_in_background: true` for heavy mode — it takes minutes. Tail
    `status.txt` or `events.jsonl` `wc -l` to monitor progress; the bash
    completion notification will arrive when finished.
-5. After completion: Read `report.md`, summarize key findings in 5-8
+4. After completion: Read `report.md`, summarize key findings in 5-8
    bullets for the user, point to the full file path.
 
 ## Heavy DR retrieval — connector widget state (fixed 2026-06-11)

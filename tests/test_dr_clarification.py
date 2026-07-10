@@ -12,7 +12,9 @@ best interpretation" in the same conversation thread.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -85,6 +87,34 @@ def _frame_real(conv_id: str, msg_id: str) -> list[str]:
     ]
 
 
+def _frame_finished_text(
+    conv_id: str,
+    msg_id: str,
+    text: str,
+    *,
+    content_references: list[dict] | None = None,
+) -> list[str]:
+    """SSE frames for a customizable completed assistant-text message."""
+    return [
+        "data: "
+        + json.dumps(
+            {
+                "conversation_id": conv_id,
+                "message": {
+                    "id": msg_id,
+                    "author": {"role": "assistant"},
+                    "content": {"content_type": "text", "parts": [text]},
+                    "status": "finished_successfully",
+                    "metadata": {
+                        "content_references": content_references or [],
+                    },
+                },
+            }
+        ),
+        "data: [DONE]",
+    ]
+
+
 class _FakeResp:
     status_code = 200
 
@@ -134,6 +164,41 @@ class _FakeSentinel:
         return {"chat-requirements": "stub", "proof": "", "turnstile": ""}
 
 
+def _load_bundled_runner() -> Any:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "gpt2agent"
+        / "skills"
+        / "deep-research"
+        / "bin"
+        / "deep_research.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_test_dr_clarification_runner", path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_bundled_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    rounds: list[list[str]],
+    out_dir: Path,
+) -> int:
+    """Run the bundled runner through the real light-DR event producer."""
+    from gpt2agent import sse as sse_mod
+
+    _ScriptedSession._next = rounds
+    monkeypatch.setattr(sse_mod, "AsyncSession", _ScriptedSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
+
+    runner = _load_bundled_runner()
+    monkeypatch.setattr(runner, "BackendClient", _FakeBackend)
+    return asyncio.run(runner._run("research topic X", "light", out_dir))
+
+
 def test_clarification_then_real_research(monkeypatch: pytest.MonkeyPatch) -> None:
     """First round = clarification Q; second round = real report. The wrapper
     must auto-reply between them and yield both the clarification meta event
@@ -171,6 +236,57 @@ def test_clarification_then_real_research(monkeypatch: pytest.MonkeyPatch) -> No
     assert dones[-1]["text"] == _REAL_REPORT
     # And it carries citations from metadata.
     assert dones[-1]["content_references"]
+
+
+def test_clarification_followup_eof_emits_abnormal_terminal_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A continuation that closes without a response must not end silently."""
+    from gpt2agent import sse as sse_mod
+
+    _ScriptedSession._next = [
+        _frame_clarification("conv-eof", "msg-clar"),
+        ["data: [DONE]"],
+    ]
+    monkeypatch.setattr(sse_mod, "AsyncSession", _ScriptedSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
+    client = sse_mod.ConversationClient(_FakeBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research("research topic X"):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    assert events[-1]["type"] == "done"
+    assert events[-1]["terminated_abnormally"] is True
+    assert events[-1]["text"] == ""
+    assert events[-1]["clarification_followup_incomplete"] is True
+
+
+def test_unresolved_clarification_at_round_limit_is_abnormal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gpt2agent import sse as sse_mod
+
+    _ScriptedSession._next = [_frame_clarification("conv-limit", "msg-clar")]
+    monkeypatch.setattr(sse_mod, "AsyncSession", _ScriptedSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
+    client = sse_mod.ConversationClient(_FakeBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research(
+            "research topic X", max_clarification_rounds=0
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    assert events[-1]["type"] == "done"
+    assert events[-1]["terminated_abnormally"] is True
+    assert events[-1]["clarification_unresolved"] is True
 
 
 def test_long_done_text_is_not_clarification(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,3 +376,88 @@ def test_build_dr_payload_continuation_fields() -> None:
     )
     assert p2["conversation_id"] == "conv-123"
     assert p2["parent_message_id"] == "msg-abc"
+
+
+def test_bundled_runner_marks_empty_clarification_followup_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out_dir = tmp_path / "clarification-followup-eof"
+
+    status = _run_bundled_runner(
+        monkeypatch,
+        [
+            _frame_clarification("conv-runner-eof", "msg-clarification"),
+            ["data: [DONE]"],
+        ],
+        out_dir,
+    )
+
+    assert status == 3
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "INCOMPLETE\t"
+    )
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert _CLARIFICATION_TEXT not in report
+
+    events = [
+        json.loads(line)
+        for line in (out_dir / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert events[-1]["type"] == "done"
+    assert events[-1]["text"] == ""
+    assert events[-1]["terminated_abnormally"] is True
+
+
+def test_bundled_runner_uses_short_cited_final_after_long_clarification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gpt2agent.sse import _looks_like_clarification
+
+    long_question = (
+        "Before I begin, could you confirm whether the report should cover "
+        "North America, Europe, or both? "
+        + "Please specify the regional scope, time horizon, and exclusions. " * 8
+    )
+    short_final = "# Final report\n\nEvidence supports the concise conclusion."
+    stale_url = "https://clarification.invalid/stale"
+    final_url = "https://example.org/final-evidence"
+    stale_refs = [{"items": [{"url": stale_url, "title": "Stale source"}]}]
+    final_refs = [{"items": [{"url": final_url, "title": "Final evidence"}]}]
+
+    assert len(long_question) > len(short_final)
+    assert _looks_like_clarification(long_question)
+    assert not _looks_like_clarification(short_final)
+
+    out_dir = tmp_path / "clarification-short-final"
+    status = _run_bundled_runner(
+        monkeypatch,
+        [
+            _frame_finished_text(
+                "conv-runner-final",
+                "msg-long-clarification",
+                long_question,
+                content_references=stale_refs,
+            ),
+            _frame_finished_text(
+                "conv-runner-final",
+                "msg-short-final",
+                short_final,
+                content_references=final_refs,
+            ),
+        ],
+        out_dir,
+    )
+
+    assert status == 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "DONE\t"
+    )
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert short_final in report
+    assert long_question not in report
+    assert final_url in report
+    assert stale_url not in report

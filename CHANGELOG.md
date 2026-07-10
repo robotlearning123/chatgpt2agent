@@ -32,6 +32,9 @@ distribution, and release-pipeline audit.
   or independently verified polling result proves completion. Heavy Deep
   Research ignores connector-dispatch envelopes, propagates connector failures,
   and the bundled runner records timeouts and abnormal endings as `INCOMPLETE`.
+- Light Deep Research discards clarification rounds before selecting a final
+  report, and newer partial/tool activity supersedes any stale completed
+  candidate. Empty or unresolved follow-ups now terminate as `INCOMPLETE`.
 - Required Sentinel challenges now fail closed and run their solvers off the
   event loop. Conversation caps apply after filtering visible messages, and
   large date-heavy redactions no longer recurse. Turnstile timing state is
@@ -44,8 +47,13 @@ distribution, and release-pipeline audit.
   window so concurrent requests cannot silently lose an unrelated field.
 - The shell installer distinguishes explicit local sources from the default
   PyPI install, fails closed instead of substituting mutable repository code,
-  installs skills transactionally without bytecode, honors `CODEX_HOME`, and
-  supports `python -m gpt2agent`.
+  passes its selected compatible Python to pipx, installs skills transactionally
+  without bytecode, honors `CODEX_HOME`, and supports `python -m gpt2agent`.
+  Replacing an existing pipx environment also removes its injected packages.
+- Bundled Deep Research runs use collision-resistant private output directories
+  and private files, reject symlinked artifacts where the platform supports
+  no-follow opens, and accept approved multi-line queries over stdin without a
+  shared temporary file.
 - Source distributions include a self-contained parser test and its fixtures so
   the built sdist is exercised before publication.
 
@@ -54,7 +62,8 @@ distribution, and release-pipeline audit.
 - One verifier now requires all package, plugin, server, tag, and changelog
   versions to agree. Supported SemVer prereleases are normalized at Python
   distribution and PyPI boundaries. CI exposes a stable aggregate required
-  check and pins every third-party action to an immutable commit.
+  check, adds Windows package/import smoke coverage, and pins every third-party
+  action to an immutable commit.
 - Release tags must be annotated and originate on `origin/main`; clean environments install
   and test both built artifacts before trusted publishing. Existing and newly
   published PyPI filenames and SHA-256 hashes must match the original build,

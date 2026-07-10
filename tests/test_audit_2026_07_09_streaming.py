@@ -171,6 +171,113 @@ def test_complete_rejects_newer_partial_after_earlier_success_at_raw_eof(
         )
 
 
+def test_light_research_marks_newer_partial_after_done_as_abnormal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    earlier = json.loads(
+        _assistant_frame("earlier completed candidate", "finished_successfully")[6:]
+    )
+    earlier["conversation_id"] = "conv-stale"
+    earlier["message"]["id"] = "msg-complete"
+    newer = json.loads(_assistant_frame("newer partial report", "in_progress")[6:])
+    newer["conversation_id"] = "conv-stale"
+    newer["message"]["id"] = "msg-partial"
+    _patch_sse_frames(
+        monkeypatch,
+        [
+            "data: " + json.dumps(earlier),
+            "data: " + json.dumps(newer),
+            "data: [DONE]",
+        ],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research("query"):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    assert events[-1]["type"] == "done"
+    assert events[-1]["text"] == "newer partial report"
+    assert events[-1]["terminated_abnormally"] is True
+
+
+def test_light_research_marks_tool_activity_after_done_as_abnormal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    earlier = json.loads(
+        _assistant_frame("earlier completed candidate", "finished_successfully")[6:]
+    )
+    earlier["conversation_id"] = "conv-tool-stale"
+    earlier["message"]["id"] = "msg-complete"
+    tool = {
+        "conversation_id": "conv-tool-stale",
+        "message": {
+            "id": "tool-response",
+            "author": {"role": "tool"},
+            "content": {"content_type": "text", "parts": ["tool result"]},
+            "status": "finished_successfully",
+        },
+    }
+    _patch_sse_frames(
+        monkeypatch,
+        [
+            "data: " + json.dumps(earlier),
+            "data: " + json.dumps(tool),
+            "data: [DONE]",
+        ],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research("query"):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    assert events[-1]["type"] == "done"
+    assert events[-1]["text"] == ""
+    assert events[-1]["terminated_abnormally"] is True
+
+
+def test_light_research_treats_text_addressed_to_tool_as_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatch = {
+        "conversation_id": "conv-dispatch",
+        "message": {
+            "id": "msg-dispatch",
+            "author": {"role": "assistant"},
+            "recipient": "api_tool.deep_research",
+            "content": {
+                "content_type": "text",
+                "parts": ['{"query": "research topic"}'],
+            },
+            "status": "finished_successfully",
+        },
+    }
+    _patch_sse_frames(
+        monkeypatch,
+        ["data: " + json.dumps(dispatch), "data: [DONE]"],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research("query"):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    assert events[0] == {"type": "tool", "call": '{"query": "research topic"}'}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["text"] == ""
+    assert events[-1]["terminated_abnormally"] is True
+
+
 @pytest.mark.parametrize(
     ("recipient", "content_type"),
     [("api_tool.example", "text"), ("all", "thoughts")],
@@ -700,6 +807,129 @@ def test_bundled_runner_keeps_events_file_private(
     assert stat.S_IMODE(events_path.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize("preexisting", [False, True], ids=["new", "preexisting"])
+def test_bundled_runner_keeps_all_output_artifacts_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preexisting: bool
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [
+            {"type": "meta", "data": {"request_id": "synthetic"}},
+            {"type": "done", "text": "complete report"},
+        ],
+    )
+    out_dir = tmp_path / "private-output"
+    if preexisting:
+        out_dir.mkdir(mode=0o755)
+        for name in ("events.jsonl", "report.md", "meta.json", "status.txt"):
+            path = out_dir / name
+            path.write_text("old data\n", encoding="utf-8")
+            path.chmod(0o644)
+
+    previous_umask = os.umask(0)
+    try:
+        status = asyncio.run(runner._run("query", "light", out_dir))
+    finally:
+        os.umask(previous_umask)
+
+    assert status == 0
+    assert stat.S_IMODE(out_dir.stat().st_mode) == 0o700
+    for name in ("events.jsonl", "report.md", "meta.json", "status.txt"):
+        assert stat.S_IMODE((out_dir / name).stat().st_mode) == 0o600
+
+
+def test_bundled_runner_default_output_directories_are_unique_and_private(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    monkeypatch.chdir(tmp_path)
+
+    first = runner._default_output_dir()
+    second = runner._default_output_dir()
+
+    assert first != second
+    assert first.parent == tmp_path / "research"
+    assert second.parent == tmp_path / "research"
+    assert first.name.startswith("dr-")
+    assert stat.S_IMODE(first.stat().st_mode) == 0o700
+    assert stat.S_IMODE(second.stat().st_mode) == 0o700
+
+
+def test_bundled_runner_records_backend_initialization_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+
+    def _fail_backend() -> object:
+        raise RuntimeError("invalid saved token")
+
+    monkeypatch.setattr(runner, "BackendClient", _fail_backend)
+    out_dir = tmp_path / "backend-error"
+    out_dir.mkdir()
+    for name in ("events.jsonl", "report.md", "meta.json", "status.txt"):
+        path = out_dir / name
+        path.write_text(f"stale {name}\n", encoding="utf-8")
+        path.chmod(0o644)
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status != 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "ERROR\tRuntimeError: invalid saved token"
+    )
+    assert (out_dir / "events.jsonl").read_text(encoding="utf-8") == ""
+    assert (out_dir / "report.md").read_text(encoding="utf-8") == ""
+    assert (out_dir / "meta.json").read_text(encoding="utf-8") == "[]\n"
+    for name in ("events.jsonl", "report.md", "meta.json", "status.txt"):
+        assert stat.S_IMODE((out_dir / name).stat().st_mode) == 0o600
+
+
+def test_bundled_runner_clears_stale_meta_when_run_emits_no_meta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [{"type": "done", "text": "complete report"}],
+    )
+    out_dir = tmp_path / "no-meta"
+    out_dir.mkdir()
+    (out_dir / "meta.json").write_text('{"request_id": "stale"}\n')
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status == 0
+    assert (out_dir / "meta.json").read_text(encoding="utf-8") == "[]\n"
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="O_NOFOLLOW unavailable")
+def test_bundled_runner_refuses_symlinked_output_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [{"type": "done", "text": "complete report"}],
+    )
+    out_dir = tmp_path / "symlink-output"
+    out_dir.mkdir()
+    sentinel = tmp_path / "sentinel.txt"
+    sentinel.write_text("do not overwrite\n", encoding="utf-8")
+    (out_dir / "report.md").symlink_to(sentinel)
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status == 2
+    assert sentinel.read_text(encoding="utf-8") == "do not overwrite\n"
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "ERROR\t"
+    )
+
+
 @pytest.mark.parametrize(
     ("terminal_event", "reason"),
     [
@@ -816,3 +1046,82 @@ def test_bundled_runner_keeps_clean_done_successful(
     assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
         "DONE\t"
     )
+
+
+def test_bundled_runner_keeps_longest_of_multiple_clean_done_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    expected = "complete research report " * 20
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [
+            {"type": "done", "text": "short dispatch candidate"},
+            {"type": "done", "text": expected},
+        ],
+    )
+    out_dir = tmp_path / "multiple-complete"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status == 0
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert expected in report
+    assert "short dispatch candidate" not in report
+
+
+def test_bundled_runner_invalidates_clarification_before_followup_eof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    question = "Before I begin, could you confirm the desired scope?"
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [
+            {"type": "done", "text": question},
+            {
+                "type": "clarification_auto_reply",
+                "round": 1,
+                "question": question,
+            },
+        ],
+    )
+    out_dir = tmp_path / "clarification-eof"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status != 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "INCOMPLETE\t"
+    )
+
+
+def test_bundled_runner_discards_long_clarification_before_short_final(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    question = "Before I begin, could you confirm the desired scope? " * 20
+    final = "# Final report\n\nShort but complete."
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [
+            {"type": "done", "text": question},
+            {
+                "type": "clarification_auto_reply",
+                "round": 1,
+                "question": question,
+            },
+            {"type": "done", "text": final, "content_references": []},
+        ],
+    )
+    out_dir = tmp_path / "clarification-then-final"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status == 0
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert final in report
+    assert question not in report

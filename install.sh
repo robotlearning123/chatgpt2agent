@@ -54,8 +54,8 @@ h1 "gpt2agent installer"
 PYTHON=""
 for cand in python3.13 python3.12 python3.11 python3.10 python3; do
   if command -v "$cand" >/dev/null 2>&1; then
-    if "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-      PYTHON="$cand"
+    if resolved_python=$("$cand" -c 'import os, sys; sys.version_info >= (3, 10) or sys.exit(1); print(os.path.realpath(sys.executable))' 2>/dev/null); then
+      PYTHON="$resolved_python"
       break
     fi
   fi
@@ -94,20 +94,32 @@ ok "pipx: $(pipx --version 2>/dev/null || echo present)"
 
 # --- 3. install gpt2agent -------------------------------------------------
 
+# A forced install keeps an existing pipx virtual environment and ignores
+# --python. Replace the named environment first so both the requested source
+# and the compatible interpreter are honored. A failed removal is fatal.
+if ! PIPX_HOME_DIR=$(pipx environment --value PIPX_HOME); then
+  err "Could not determine pipx's environment location. Upgrade pipx and retry."
+  exit 1
+fi
+if [[ -d "$PIPX_HOME_DIR/venvs/gpt2agent" ]]; then
+  info "Replacing existing gpt2agent pipx environment (injected packages are removed)"
+  pipx uninstall gpt2agent
+fi
+
 if [[ $SOURCE_EXPLICIT -eq 1 && -d "$SOURCE" ]]; then
   info "Installing (editable) from $SOURCE"
-  pipx install --editable --force "$SOURCE"
+  pipx install --editable --force --python "$PYTHON" "$SOURCE"
 elif [[ $SOURCE_EXPLICIT -eq 1 ]]; then
   info "Installing from $SOURCE"
-  pipx install --force "$SOURCE"
+  pipx install --force --python "$PYTHON" "$SOURCE"
 else
   info "Installing $SOURCE from PyPI"
-  if pipx install --force "$SOURCE" 2>&1; then
+  if pipx install --force --python "$PYTHON" "$SOURCE" 2>&1; then
     :
   else
     status=$?
     err "PyPI install failed. Check your network and Python toolchain, then retry:"
-    err "  pipx install --force $SOURCE"
+    err "  pipx install --force --python $PYTHON $SOURCE"
     exit "$status"
   fi
 fi

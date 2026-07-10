@@ -37,6 +37,13 @@ def _write_executable(path: Path, content: str) -> None:
 def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     fake_bin = tmp_path / "bin"
     log = tmp_path / "pipx-argv.jsonl"
+    _write_executable(
+        fake_bin / "python3.13",
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = '-c' ]; then printf '%s\\n' \"$0\"; exit 0; fi\n"
+        "if [ \"${1:-}\" = '--version' ]; then echo 'Python 3.13.0'; exit 0; fi\n"
+        "exit 64\n",
+    )
     fake_pipx = fake_bin / "pipx"
     _write_executable(
         fake_pipx,
@@ -51,9 +58,15 @@ def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
             if args == ["--version"]:
                 print("fake-pipx 1.0")
                 raise SystemExit(0)
+            if args == ["environment", "--value", "PIPX_HOME"]:
+                print(os.environ["FAKE_PIPX_HOME"])
+                raise SystemExit(0)
 
             with open(os.environ["FAKE_PIPX_LOG"], "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(args) + "\\n")
+
+            if args[:1] == ["uninstall"]:
+                raise SystemExit(int(os.environ.get("FAKE_PIPX_UNINSTALL_STATUS", "0")))
 
             is_git = any(arg.startswith("git+https://") for arg in args)
             status_var = "FAKE_PIPX_GIT_STATUS" if is_git else "FAKE_PIPX_PYPI_STATUS"
@@ -68,10 +81,13 @@ def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
 
     home = tmp_path / "home"
     home.mkdir()
+    pipx_home = tmp_path / "pipx-home"
+    pipx_home.mkdir()
     env = os.environ.copy()
     env.update(
         {
             "FAKE_PIPX_LOG": str(log),
+            "FAKE_PIPX_HOME": str(pipx_home),
             "HOME": str(home),
             "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
         }
@@ -81,6 +97,41 @@ def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
 
 def _pipx_calls(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+@pytest.mark.parametrize("source_kind", ["pypi", "url", "directory"])
+def test_installer_passes_selected_python_to_every_pipx_install_branch(
+    tmp_path: Path, source_kind: str
+) -> None:
+    env, log = _recording_installer_env(tmp_path)
+    command = [str(INSTALLER), "--no-register"]
+    install_flags = ["--force"]
+    source = "gpt2agent"
+    selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
+
+    if source_kind == "url":
+        source = "git+https://example.invalid/gpt2agent.git@main"
+        command.extend(["--source", source])
+    elif source_kind == "directory":
+        source_dir = tmp_path / "local-source"
+        source_dir.mkdir()
+        source = str(source_dir)
+        command.extend(["--source", source])
+        install_flags.insert(0, "--editable")
+
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _pipx_calls(log) == [
+        ["install", *install_flags, "--python", selected_python, source]
+    ]
 
 
 def test_checkout_installer_defaults_to_named_pypi_package(tmp_path: Path) -> None:
@@ -96,7 +147,53 @@ def test_checkout_installer_defaults_to_named_pypi_package(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _pipx_calls(log) == [["install", "--force", "gpt2agent"]]
+    selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
+    assert _pipx_calls(log) == [
+        ["install", "--force", "--python", selected_python, "gpt2agent"]
+    ]
+
+
+def test_installer_replaces_existing_pipx_environment_before_install(
+    tmp_path: Path,
+) -> None:
+    env, log = _recording_installer_env(tmp_path)
+    (Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent").mkdir(parents=True)
+    selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _pipx_calls(log) == [
+        ["uninstall", "gpt2agent"],
+        ["install", "--force", "--python", selected_python, "gpt2agent"],
+    ]
+
+
+def test_installer_aborts_when_existing_pipx_environment_cannot_be_removed(
+    tmp_path: Path,
+) -> None:
+    env, log = _recording_installer_env(tmp_path)
+    (Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent").mkdir(parents=True)
+    env["FAKE_PIPX_UNINSTALL_STATUS"] = "73"
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 73
+    assert _pipx_calls(log) == [["uninstall", "gpt2agent"]]
 
 
 def test_pypi_failure_fails_closed_without_git_fallback(tmp_path: Path) -> None:
@@ -118,7 +215,14 @@ def test_pypi_failure_fails_closed_without_git_fallback(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "simulated PyPI failure" in result.stdout + result.stderr
     calls = _pipx_calls(log)
-    assert calls[0] == ["install", "--force", "gpt2agent"]
+    selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
+    assert calls[0] == [
+        "install",
+        "--force",
+        "--python",
+        selected_python,
+        "gpt2agent",
+    ]
     assert not any(arg.startswith("git+https://") for call in calls for arg in call)
 
 
@@ -354,6 +458,13 @@ def test_deep_research_wrapper_missing_python_recommends_pypi(tmp_path: Path) ->
     assert result.returncode == 1
     assert "fix:   pipx install gpt2agent" in result.stderr
     assert "git+https://" not in result.stderr
+
+
+def test_deep_research_skill_uses_stdin_instead_of_shared_tmp_query() -> None:
+    skill = (DR_WRAPPER.parents[1] / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "/tmp/dr_query.txt" not in skill
+    assert " - <<'EOF'" in skill
 
 
 def test_python_module_entry_reports_package_version() -> None:

@@ -62,5 +62,9 @@ brew install pipx && pipx ensurepath         # macOS
 
 The default installer fails closed if the published package cannot be installed;
 it never substitutes mutable repository code. Check network/PyPI status and retry
-`pipx install --force gpt2agent`. For development from a checkout you deliberately
-trust, use `./install.sh --source /path/to/gpt2agent`.
+the one-line installer. For development from a checkout you deliberately trust,
+use `./install.sh --source /path/to/gpt2agent`.
+
+The installer recreates an existing `gpt2agent` pipx environment when upgrading
+so the requested source and a compatible Python are both honored. Re-add any
+packages you had deliberately injected into that environment afterward.

@@ -200,7 +200,11 @@ def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
     readme_flat = re.sub(r"\s+", " ", readme)
 
     assert "name: Required checks" in ci
-    assert "needs: [quality, test, lint-installer]" in ci
+    assert "name: Windows package smoke" in ci
+    assert "runs-on: windows-latest" in ci
+    assert "working-directory: ${{ runner.temp }}" in ci
+    assert "gpt2agent --version" in ci
+    assert "needs: [quality, test, windows-smoke, lint-installer]" in ci
     assert 'git cat-file -t "$GITHUB_REF"' in release
     assert "must be an annotated tag" in release
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in release
