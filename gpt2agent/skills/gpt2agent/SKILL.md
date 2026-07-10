@@ -4,7 +4,7 @@ description: |
   Full ChatGPT Plus/Pro account access via MCP. 25 tools covering chat,
   agent mode, deep research, image generation, code execution, canvas,
   memory, custom instructions, conversations, Custom GPTs, and Codex.
-  Reuses ~/.codex/auth.json (same as Codex CLI) — no extra login needed.
+  Reuses $CODEX_HOME/auth.json (or ~/.codex/auth.json) — no extra login needed.
   Use when you need ChatGPT models, web research with citations, DALL-E
   image gen, Python sandbox execution, or ChatGPT account management.
 allowed-tools:
@@ -42,14 +42,15 @@ allowed-tools:
 
 ```!
 command -v gpt2agent >/dev/null && echo "gpt2agent: installed ($(gpt2agent --version 2>/dev/null || echo 'unknown version'))" || echo "gpt2agent: NOT INSTALLED — run: pipx install gpt2agent"
-test -f ~/.codex/auth.json && echo "codex token: present" || echo "codex token: MISSING — run: codex login"
+test -f "${CODEX_HOME:-$HOME/.codex}/auth.json" && echo "codex token: present" || echo "codex token: MISSING — run: codex login"
 test -f ~/.gpt2agent/token.json && echo "gpt2agent token: present" || echo "gpt2agent token: not set (codex token preferred)"
 ```
 
 ## Preconditions
 
 1. `gpt2agent` installed via pipx. If missing: `pipx install gpt2agent`
-2. Auth token at `~/.codex/auth.json` (from `codex login`) or `~/.gpt2agent/token.json`.
+2. Auth token at `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`, from
+   `codex login`) or `~/.gpt2agent/token.json`.
 3. MCP server registered in Claude Code. If missing: `gpt2agent install`
 4. Restart Claude Code session after first install to load MCP tools.
 
@@ -127,10 +128,11 @@ Both require a non-temporary conversation context.
 
 ## Quota Management
 
-Deep Research quota: 248 calls/month on Pro plan (resets ~21st of each month).
+Deep Research limits and reset timing are reported by the current account and
+can change.
 
 - `deep_research` and `deep_research_heavy` each cost 1 quota.
-- Check `account_status()` before heavy usage.
+- Run the bundled `deep-research/bin/quota.sh` before heavy usage.
 - Warn user if remaining quota < 10 before firing deep research.
 
 ## Configuration

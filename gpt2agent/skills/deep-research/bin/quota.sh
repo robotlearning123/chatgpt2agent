@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print remaining ChatGPT Pro Deep Research quota.
+# Print remaining ChatGPT Deep Research quota for the selected account.
 set -euo pipefail
 
 if command -v gpt2agent >/dev/null 2>&1; then
@@ -9,7 +9,7 @@ PYTHON="${PYTHON:-$HOME/.local/share/pipx/venvs/gpt2agent/bin/python}"
 
 if [ ! -x "$PYTHON" ]; then
   echo "error: cannot find a Python with gpt2agent installed" >&2
-  echo "fix:   pipx install git+https://github.com/robotlearning123/gpt2agent.git" >&2
+  echo "fix:   pipx install gpt2agent" >&2
   exit 1
 fi
 

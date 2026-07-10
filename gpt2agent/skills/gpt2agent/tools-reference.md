@@ -100,7 +100,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   )
   ```
 - **Notes**:
-  - **Monthly quota**: ~248 calls on Pro plan (resets around the 21st). Check remaining quota before heavy calls.
+  - **Quota**: limits and reset timing are account-reported and can change. Run the bundled `deep-research/bin/quota.sh` before heavy calls.
   - Takes 5-30 minutes. Use `run_in_background` for shell integration.
   - Uses `/backend-api/f/conversation` (frontend endpoint), not the standard `/backend-api/conversation`.
   - Model slug configurable via `[models].heavy_dr` in `config.toml` (default: `gpt-5-5-pro`).
@@ -657,11 +657,11 @@ results = memory_search("keyword from new fact")
 
 2. **PII redaction**: `list_conversations`, `get_conversation`, `list_tasks`, `memory_list`, `memory_search`, `custom_instructions_get`, `list_custom_gpts`, and `list_codex_tasks` all redact emails and phone numbers from returned text.
 
-3. **Sync vs async**: REST-based tools (account, memory, instructions, codex, conversations, apps, gpts) are synchronous. SSE-based tools (chat, agent, deep_research, deep_research_heavy, gpt_chat, generate_image, code_interpreter, canvas_execute) are async.
+3. **Sync vs async**: Registered REST handlers (account, memory, instructions, codex, conversations, apps, gpts) are async and offload the synchronous backend client. SSE-based tools (chat, agent, deep_research, deep_research_heavy, gpt_chat, generate_image, code_interpreter, canvas_execute) are async.
 
 4. **Memory creation is model-initiated only**: `POST /backend-api/memories` returns 405. Use `memory_create_via_chat` which asks the model to store the memory through conversation.
 
-5. **Heavy DR quota**: ~248 calls/month on Pro plan. Check before dispatching. The quota resets around the 21st of each month.
+5. **Heavy DR quota**: limits and reset timing are account-reported and can change. Check `deep-research/bin/quota.sh` before dispatching.
 
 6. **Heavy DR citations**: Recovered from the connector's hidden widget state (`widget_state.report_message`) since 0.0.4. Grouped source URLs are usually present but not guaranteed; if absent, the model may have cited sources inline in the report body.
 

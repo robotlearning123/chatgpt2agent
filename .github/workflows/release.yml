@@ -20,36 +20,45 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   verify:
-    name: Verify tag matches pyproject version
+    name: Verify release source and metadata
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.extract.outputs.version }}
+      version: ${{ steps.metadata.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Extract versions
-        id: extract
+      - name: Require the tagged commit to be on origin/main
         run: |
-          set -e
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          PROJECT_VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
-          echo "tag=$TAG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "project=$PROJECT_VERSION" >> "$GITHUB_OUTPUT"
-          if [ "$TAG_VERSION" != "$PROJECT_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PROJECT_VERSION"
+          set -euo pipefail
+          if [ "$(git cat-file -t "$GITHUB_REF")" != tag ]; then
+            echo "::error::Release ref $GITHUB_REF must be an annotated tag"
             exit 1
           fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release tag commit $GITHUB_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Verify tag, manifests, and changelog
+        id: metadata
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          python scripts/verify_release.py --tag "$GITHUB_REF_NAME"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   test:
     name: Tests must pass before publish
@@ -61,8 +70,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         python: ["3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -74,21 +83,91 @@ jobs:
       - run: SKIP_LIVE=1 pytest -q
 
   build:
-    name: Build wheel + sdist
-    needs: test
+    name: Build and test wheel + sdist
+    needs: [verify, test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip build
-      - run: python -m build
+      - name: Build wheel and sdist
+        run: python -m build
       - name: Twine check
         run: |
           python -m pip install twine
           twine check dist/*
-      - uses: actions/upload-artifact@v4
+
+      - name: Test built artifacts in clean environments
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          TMP_ROOT=$(mktemp -d)
+          trap 'rm -rf "$TMP_ROOT"' EXIT
+          WHEEL=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.whl' -print -quit)
+          SDIST=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name '*.tar.gz' -print -quit)
+          test -n "$WHEEL"
+          test -n "$SDIST"
+
+          python -m venv "$TMP_ROOT/wheel-venv"
+          "$TMP_ROOT/wheel-venv/bin/python" -m pip install --upgrade pip
+          "$TMP_ROOT/wheel-venv/bin/python" -m pip install "$WHEEL"
+          "$TMP_ROOT/wheel-venv/bin/python" -m pip check
+          (
+            cd "$TMP_ROOT"
+            test "$("$TMP_ROOT/wheel-venv/bin/gpt2agent" --version)" = "gpt2agent $VERSION"
+            test "$("$TMP_ROOT/wheel-venv/bin/python" -m gpt2agent --version)" = "gpt2agent $VERSION"
+            "$TMP_ROOT/wheel-venv/bin/python" - "$VERSION" <<'PY'
+          from importlib.metadata import version
+          from importlib.resources import files
+          import sys
+
+          expected = sys.argv[1]
+          assert version("gpt2agent") == expected
+          root = files("gpt2agent")
+          required = [
+              "skills/deep-research/SKILL.md",
+              "skills/deep-research/bin/deep_research.py",
+              "skills/deep-research/bin/quota.sh",
+              "skills/deep-research/bin/run.sh",
+              "skills/gpt2agent/SKILL.md",
+              "skills/gpt2agent/tools-reference.md",
+          ]
+          assert all(root.joinpath(path).is_file() for path in required)
+          PY
+          )
+          mkdir -p "$TMP_ROOT/home"
+          HOME="$TMP_ROOT/home" "$TMP_ROOT/wheel-venv/bin/gpt2agent" install --client claude-code
+          test -f "$TMP_ROOT/home/.claude/skills/deep-research/SKILL.md"
+          if find "$TMP_ROOT/home/.claude/skills" -type f \( -name '*.pyc' -o -name '*.pyo' \) -print -quit | grep -q .; then
+            echo "::error::Installed skills contain generated bytecode"
+            exit 1
+          fi
+
+          mkdir -p "$TMP_ROOT/sdist"
+          tar -xzf "$SDIST" -C "$TMP_ROOT/sdist"
+          SDIST_ROOT=$(find "$TMP_ROOT/sdist" -mindepth 1 -maxdepth 1 -type d -print -quit)
+          test -f "$SDIST_ROOT/tests/fixtures/heavy_dr_conversation_detail_h2.json"
+          test -f "$SDIST_ROOT/tests/fixtures/heavy_dr_widget_state.json"
+          python -m venv "$TMP_ROOT/sdist-venv"
+          "$TMP_ROOT/sdist-venv/bin/python" -m pip install --upgrade pip
+          "$TMP_ROOT/sdist-venv/bin/python" -m pip install "$SDIST" pytest pytest-asyncio
+          (
+            cd "$SDIST_ROOT"
+            SKIP_LIVE=1 "$TMP_ROOT/sdist-venv/bin/python" -m pytest -q \
+              tests/test_heavy_dr_parser.py
+          )
+
+      - name: Verify any existing PyPI artifacts match this build
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: >-
+          python scripts/verify_pypi_artifacts.py --version "$VERSION"
+          --dist dist --attempts 3 --delay 5
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
@@ -103,22 +182,43 @@ jobs:
     permissions:
       id-token: write   # OIDC for PyPI trusted publishing
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          # Supports retries of failed jobs in this same run, which reuse the
+          # original build artifact. Pre/post jobs compare every filename/hash.
+          skip-existing: true
+
+  verify-pypi:
+    name: Verify published PyPI artifacts
+    needs: [pypi-publish, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+      - name: Match every published filename and SHA-256
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: >-
+          python scripts/verify_pypi_artifacts.py --version "$VERSION"
+          --dist dist --require-complete --attempts 7 --delay 10
 
   github-release:
     name: Create GitHub Release
-    needs: [pypi-publish, verify]
+    needs: [verify-pypi, verify]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist/
@@ -128,7 +228,7 @@ jobs:
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          set -e
+          set -euo pipefail
           awk -v ver="$VERSION" '
             BEGIN { p = 0 }
             /^## \[/{
@@ -138,15 +238,14 @@ jobs:
             p { print }
           ' CHANGELOG.md > release_notes.md
           if [ ! -s release_notes.md ]; then
-            echo "Release $VERSION" > release_notes.md
-            echo "" >> release_notes.md
-            echo "See CHANGELOG.md for details." >> release_notes.md
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
           fi
           echo "----- release notes -----"
           cat release_notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           body_path: release_notes.md
           files: dist/*

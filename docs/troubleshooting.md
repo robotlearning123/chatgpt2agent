@@ -60,6 +60,7 @@ brew install pipx && pipx ensurepath         # macOS
 
 ### PyPI install fails (package not found)
 
-The `install.sh` one-liner automatically falls back to a `git+https` install if
-PyPI is unavailable. To force it: `./install.sh --source
-git+https://github.com/robotlearning123/gpt2agent.git`.
+The default installer fails closed if the published package cannot be installed;
+it never substitutes mutable repository code. Check network/PyPI status and retry
+`pipx install --force gpt2agent`. For development from a checkout you deliberately
+trust, use `./install.sh --source /path/to/gpt2agent`.

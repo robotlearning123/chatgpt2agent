@@ -6,6 +6,56 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-07-10
+
+Patch release from the 2026-07-09 end-to-end security, correctness,
+distribution, and release-pipeline audit.
+
+### Security
+
+- File and conversation IDs are validated as single URL-safe path segments
+  before any backend request, closing path traversal and percent-escape routes.
+- Memory search now compares only redacted text, and custom-instruction updates
+  return a minimal acknowledgement instead of a secret-bearing backend echo.
+- Raw SSE diagnostic files are created or tightened to mode `0600` on POSIX;
+  assistant-authored widget state can no longer impersonate a completed
+  tool-authored Deep Research report.
+- Manual token entry uses hidden input and strict JWT-shape validation;
+  noninteractive token lookup never launches browser automation.
+
+### Fixed
+
+- REST-backed MCP handlers offload synchronous backend calls, keeping the async
+  server responsive while preserving the existing 25-tool surface.
+- Chat and tool streams reject truncated EOF unless an explicit terminal signal
+  or independently verified polling result proves completion. Heavy Deep
+  Research ignores connector-dispatch envelopes, propagates connector failures,
+  and the bundled runner records timeouts and abnormal endings as `INCOMPLETE`.
+- Required Sentinel challenges now fail closed and run their solvers off the
+  event loop. Conversation caps apply after filtering visible messages, and
+  large date-heavy redactions no longer recurse.
+- Token refresh re-evaluates source priority safely, browser helper discovery is
+  portable, and account setup reports only backend-verified plan state.
+- The shell installer distinguishes explicit local sources from the default
+  PyPI install, fails closed instead of substituting mutable repository code,
+  installs skills transactionally without bytecode, honors `CODEX_HOME`, and
+  supports `python -m gpt2agent`.
+- Source distributions include a self-contained parser test and its fixtures so
+  the built sdist is exercised before publication.
+
+### CI / Release
+
+- One verifier now requires all package, plugin, server, tag, and changelog
+  versions to agree. CI exposes a stable aggregate required check and pins every
+  third-party action to an immutable commit.
+- Release tags must be annotated and originate on `origin/main`; clean environments install
+  and test both built artifacts before trusted publishing. Existing and newly
+  published PyPI filenames and SHA-256 hashes must match the original build,
+  allowing failed jobs in the same workflow run to retry safely; full workflow
+  reruns after publication fail closed. Missing release notes fail the workflow.
+  GitHub release tags are immutable, and the PyPI environment is configured for
+  `v`-prefixed tag deployments.
+
 ## [0.0.9] - 2026-07-02
 
 Patch release: 2026-07-02 audit round — PII-redaction correctness, robustness

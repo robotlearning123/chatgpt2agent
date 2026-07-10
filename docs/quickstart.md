@@ -7,7 +7,8 @@ Get gpt2agent running in any MCP client in ~5 minutes.
 - An active **ChatGPT Plus or Pro** subscription.
 - **Python 3.10+** and **pipx** (`pip install --user pipx`, or `apt/dnf/brew install pipx`).
 - The easiest auth path: the [`codex`](https://github.com/openai/codex) CLI, logged in
-  (`codex login`). gpt2agent reuses its `~/.codex/auth.json` — no separate token to paste.
+  (`codex login`). gpt2agent reuses `$CODEX_HOME/auth.json` (or
+  `~/.codex/auth.json` by default) — no separate token to paste.
 
 ## 2. Install
 

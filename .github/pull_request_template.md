@@ -13,7 +13,8 @@ What does this change and why?
 
 ## Checklist
 
-- [ ] `ruff check gpt2agent tests` is clean
+- [ ] `ruff check gpt2agent tests scripts` is clean
+- [ ] `python scripts/verify_release.py` is clean
 - [ ] `pytest -q` passes (offline suite; live tests gated by `SKIP_LIVE`)
 - [ ] CHANGELOG.md updated (for user-visible changes)
 - [ ] No secrets/tokens added; new error/log output is redacted
