@@ -297,6 +297,73 @@ def test_phase_two_poll_skips_finished_connector_dispatch() -> None:
     assert done[0]["text"].startswith("# Report A")
 
 
+def test_phase_two_timeout_drops_connector_dispatch_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    detail = _dispatch_detail()
+    dispatch = detail["mapping"]["dispatch"]["message"]["content"]["parts"][0]
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    async def _collect() -> list[dict]:
+        events: list[dict] = []
+        async for event in client._poll_dr_completion(
+            "conv-dispatch", seed_text=dispatch, interval=0, max_wait=0
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_collect())
+    runner = _load_runner()
+    _patch_runner_events(monkeypatch, runner, events)
+    out_dir = tmp_path / "dispatch-timeout"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+    report = (out_dir / "report.md").read_text(encoding="utf-8")
+
+    assert len(events) == 1
+    assert events[0]["type"] == "done"
+    assert events[0]["text"] == ""
+    assert dispatch not in events[0]["text"]
+    assert events[0]["timeout"] is True
+    assert events[0]["terminated_abnormally"] is True
+    assert status != 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "INCOMPLETE\t"
+    )
+    assert dispatch not in report
+
+
+def test_phase_two_empty_timeout_reaches_runner_as_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    async def _collect() -> list[dict]:
+        events: list[dict] = []
+        async for event in client._poll_dr_completion(
+            "conv-empty", interval=0, max_wait=0
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_collect())
+    runner = _load_runner()
+    _patch_runner_events(monkeypatch, runner, events)
+    out_dir = tmp_path / "empty-timeout"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert len(events) == 1
+    assert events[0]["type"] == "done"
+    assert events[0]["text"] == ""
+    assert events[0]["timeout"] is True
+    assert events[0]["terminated_abnormally"] is True
+    assert status != 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "INCOMPLETE\t"
+    )
+
+
 def test_widget_report_rejects_assistant_carrier_and_keeps_tool_fixture() -> None:
     tool_detail = _widget_fixture()
     assistant_detail = deepcopy(tool_detail)
@@ -535,6 +602,87 @@ def _patch_runner_events(
 
     monkeypatch.setattr(runner, "BackendClient", lambda: object())
     monkeypatch.setattr(runner, "ConversationClient", _Conversation)
+
+
+@pytest.mark.parametrize("preexisting", [False, True], ids=["new", "preexisting"])
+def test_bundled_runner_keeps_events_file_private(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preexisting: bool,
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [{"type": "done", "text": "complete report"}],
+    )
+    out_dir = tmp_path / "secure-events"
+    events_path = out_dir / "events.jsonl"
+    if preexisting:
+        out_dir.mkdir()
+        events_path.write_text("old unredacted data\n", encoding="utf-8")
+        events_path.chmod(0o644)
+
+    previous_umask = os.umask(0o022)
+    try:
+        status = asyncio.run(runner._run("query", "light", out_dir))
+    finally:
+        os.umask(previous_umask)
+
+    assert status == 0
+    assert stat.S_IMODE(events_path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("terminal_event", "reason"),
+    [
+        (
+            {
+                "type": "done",
+                "text": "timeout",
+                "terminated_abnormally": True,
+                "timeout": True,
+            },
+            "polling timed out",
+        ),
+        (
+            {
+                "type": "done",
+                "text": "abnormal",
+                "terminated_abnormally": True,
+            },
+            "stream terminated abnormally",
+        ),
+    ],
+    ids=["timeout", "terminated-abnormally"],
+)
+def test_bundled_runner_uses_final_terminal_state_independent_of_report_length(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_event: dict,
+    reason: str,
+) -> None:
+    runner = _load_runner()
+    long_clean_report = "complete report " * 20
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [
+            {"type": "done", "text": long_clean_report},
+            terminal_event,
+        ],
+    )
+    out_dir = tmp_path / "terminal-state"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+    status_text = (out_dir / "status.txt").read_text(encoding="utf-8")
+
+    assert status != 0
+    assert status_text.startswith("INCOMPLETE\t")
+    assert f"reason={reason}" in status_text
+    assert long_clean_report in (out_dir / "report.md").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.parametrize(

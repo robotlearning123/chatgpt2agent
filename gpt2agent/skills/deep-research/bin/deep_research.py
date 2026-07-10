@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -56,8 +57,8 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
     t0 = time.time()
     n_events = 0
     seen_first_done = False
-    selected_done_complete = False
-    selected_done_reason = "no completed done event"
+    terminal_done_complete = False
+    terminal_done_reason = "no completed done event"
     light_final_text = ""
     light_refs: list = []
     light_groups: list = []
@@ -68,7 +69,22 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
     tool_error_msg = ""
     connector_failed = False
 
-    with events_path.open("w") as ef:
+    events_fd = os.open(
+        events_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    try:
+        os.fchmod(events_fd, 0o600)
+    except (OSError, AttributeError):
+        pass
+    try:
+        events_file = os.fdopen(events_fd, "w", encoding="utf-8")
+    except Exception:
+        os.close(events_fd)
+        raise
+
+    with events_file as ef:
         try:
             async for ev in gen:
                 n_events += 1
@@ -86,6 +102,15 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
                     txt = ev.get("text", "") or ""
                     if ev.get("connector_failed"):
                         connector_failed = True
+                    if ev.get("timeout"):
+                        terminal_done_complete = False
+                        terminal_done_reason = "polling timed out"
+                    elif ev.get("terminated_abnormally"):
+                        terminal_done_complete = False
+                        terminal_done_reason = "stream terminated abnormally"
+                    else:
+                        terminal_done_complete = True
+                        terminal_done_reason = ""
                     # Pick the LONGEST done as the real report. The research model
                     # often emits a short tool-dispatch JSON as the FIRST done
                     # (e.g. {"queries": [...], "source_filter": [...]}); the real
@@ -95,15 +120,6 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
                         light_final_text = txt
                         light_refs = ev.get("content_references", []) or light_refs
                         light_groups = ev.get("search_result_groups", []) or light_groups
-                        if ev.get("timeout"):
-                            selected_done_complete = False
-                            selected_done_reason = "polling timed out"
-                        elif ev.get("terminated_abnormally"):
-                            selected_done_complete = False
-                            selected_done_reason = "stream terminated abnormally"
-                        else:
-                            selected_done_complete = True
-                            selected_done_reason = ""
                     seen_first_done = True
                 elif et == "progress":
                     txt = ev.get("text", "")
@@ -160,15 +176,15 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
         meta_path.write_text(json.dumps(meta_data, indent=2, default=str))
 
     elapsed = time.time() - t0
-    if not selected_done_complete:
+    if not terminal_done_complete:
         status_path.write_text(
             f"INCOMPLETE\t{time.strftime('%Y-%m-%d %H:%M:%S')}\tmode={mode}\t"
             f"elapsed={elapsed:.0f}s\tevents={n_events}\t"
             f"body_chars={len(body)}\trefs={len(lines)}\t"
-            f"reason={selected_done_reason}\n"
+            f"reason={terminal_done_reason}\n"
         )
         print(
-            f"[incomplete] {selected_done_reason}; retry the run and inspect "
+            f"[incomplete] {terminal_done_reason}; retry the run and inspect "
             f"{events_path}",
             flush=True,
         )

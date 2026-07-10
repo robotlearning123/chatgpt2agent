@@ -1671,7 +1671,7 @@ class ConversationClient:
             "?include_visually_hidden_messages=true&include_widget_state=true"
         )
         deadline = time.monotonic() + max_wait
-        last_emitted = seed_text
+        last_emitted = "" if _is_connector_dispatch_text(seed_text) else seed_text
 
         while time.monotonic() < deadline:
             await asyncio.sleep(interval)
@@ -1780,17 +1780,12 @@ class ConversationClient:
                 }
                 return
 
-        if last_emitted:
-            yield {
-                "type": "done",
-                "text": last_emitted,
-                "content_references": [],
-                "search_result_groups": [],
-                "connector_failed": connector_failed,
-                "terminated_abnormally": True,
-                "timeout": True,
-            }
-        else:
-            raise RuntimeError(
-                f"DR polling timed out after {max_wait}s waiting for conv {conv_id}"
-            )
+        yield {
+            "type": "done",
+            "text": last_emitted,
+            "content_references": [],
+            "search_result_groups": [],
+            "connector_failed": connector_failed,
+            "terminated_abnormally": True,
+            "timeout": True,
+        }
