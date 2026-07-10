@@ -11,7 +11,8 @@ PYTHON="${PYTHON:-$HOME/.local/share/pipx/venvs/gpt2agent/bin/python}"
 # shellcheck disable=SC1007
 SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$SCRIPT_DIR/deep_research.py"
-AUTH_FILE="${CODEX_HOME:-$HOME/.codex}/auth.json"
+CODEX_AUTH="${CODEX_HOME:-$HOME/.codex}/auth.json"
+SAVED_AUTH="$HOME/.gpt2agent/token.json"
 
 if [ ! -x "$PYTHON" ]; then
   echo "error: cannot find a Python with gpt2agent installed" >&2
@@ -19,10 +20,10 @@ if [ ! -x "$PYTHON" ]; then
   echo "fix:   pipx install gpt2agent" >&2
   exit 1
 fi
-if [ ! -f "$AUTH_FILE" ]; then
-  echo "error: $AUTH_FILE missing" >&2
-  echo "fix:   codex login" >&2
+if [ ! -f "$CODEX_AUTH" ] && [ ! -f "$SAVED_AUTH" ]; then
+  echo "error: no ChatGPT auth file found" >&2
+  echo "       checked: $CODEX_AUTH and $SAVED_AUTH" >&2
+  echo "fix:   run codex login or gpt2agent setup" >&2
   exit 1
 fi
-
 exec "$PYTHON" "$SCRIPT" "$@"

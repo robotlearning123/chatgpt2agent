@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -696,6 +697,33 @@ def test_widget_state_report_extracted_from_chatgpt_sdk_metadata() -> None:
     assert refs
 
 
+def test_widget_sdk_carrier_requires_deep_research_provenance() -> None:
+    from gpt2agent import sse as sse_mod
+
+    original = _load_widget_fixture()["carrier_b_metadata"]
+    for sdk_field in (
+        "resource_name",
+        "attribution_id",
+        "resolved_pineapple_uri",
+        "distribution_channel",
+        "connector_type",
+    ):
+        detail = deepcopy(original)
+        message = detail["mapping"]["n2"]["message"]
+        del message["metadata"]["chatgpt_sdk"][sdk_field]
+        assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
+
+    detail = deepcopy(original)
+    message = detail["mapping"]["n2"]["message"]
+    message["author"]["name"] = "arbitrary_tool"
+    assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
+
+    detail = deepcopy(original)
+    message = detail["mapping"]["n2"]["message"]
+    message["metadata"]["invoked_resource"]["resource_uri"] = "/other/start"
+    assert sse_mod._dr_report_from_widget_state(detail) == ("", [])
+
+
 def test_widget_state_absent_returns_empty() -> None:
     from gpt2agent import sse as sse_mod
 
@@ -735,3 +763,31 @@ def test_poll_completion_recovers_widget_report() -> None:
     assert done, events
     assert done[-1]["text"].startswith("# Report A")
     assert not done[-1].get("terminated_abnormally")
+
+
+def test_poll_completion_ignores_spoof_before_valid_connector_report() -> None:
+    from gpt2agent import sse as sse_mod
+
+    fixture = _load_widget_fixture()
+    spoof = deepcopy(fixture["carrier_a_tool_text"])
+    spoof["mapping"]["n1"]["message"]["author"]["name"] = "arbitrary_tool"
+    replies = iter([spoof, fixture["carrier_b_metadata"]])
+
+    class _SequencedBackend(_FakeBackend):
+        def get(self, *_: Any, **__: Any) -> dict:
+            return next(replies)
+
+    client = sse_mod.ConversationClient(_SequencedBackend())  # type: ignore[arg-type]
+
+    async def _go() -> list[dict]:
+        events: list[dict] = []
+        async for event in client._poll_dr_completion(
+            "fixture-conv", interval=0, max_wait=1
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_go())
+    done = [event for event in events if event.get("type") == "done"]
+    assert len(done) == 1
+    assert done[0]["text"].startswith("# Report B")

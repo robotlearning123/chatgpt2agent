@@ -625,6 +625,22 @@ def test_required_turnstile_unsolved_fails_closed(
         asyncio.run(gate.get_tokens())
 
 
+def test_concurrent_turnstile_maps_keep_independent_start_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sentinel_mod._turn.time, "time_ns", lambda: 201_000_000_000)
+    monkeypatch.setattr(sentinel_mod._turn.random, "random", lambda: 0.0)
+
+    first = sentinel_mod._turn._build_func_map(100.0)
+    second = sentinel_mod._turn._build_func_map(200.0)
+    for func_map in (first, second):
+        func_map[2](30, "window.performance.now")
+        func_map[17](31, 30)
+
+    assert first[31] == 101_000.0
+    assert second[31] == 1_000.0
+
+
 def _load_runner() -> ModuleType:
     path = Path("gpt2agent/skills/deep-research/bin/deep_research.py")
     spec = importlib.util.spec_from_file_location("_test_deep_research_runner", path)

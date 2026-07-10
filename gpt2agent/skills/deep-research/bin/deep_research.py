@@ -8,7 +8,7 @@ Two modes:
 Outputs (in --out-dir):
   report.md   final markdown report
   events.jsonl all raw SSE events
-  status.txt  START / DONE / ERROR + elapsed
+  status.txt  START / DONE / INCOMPLETE / ERROR + elapsed
   meta.json   server metadata (model slug, request id, plan type, ...)
 
 Run with any Python that has gpt2agent installed, e.g.

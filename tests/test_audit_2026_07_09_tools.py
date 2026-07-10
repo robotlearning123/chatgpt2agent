@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 from time import sleep
 from typing import Any
 
@@ -165,6 +166,54 @@ async def test_custom_instruction_setter_never_echoes_preserved_secrets() -> Non
     with pytest.raises(ValueError, match="at least one"):
         await _invoke(no_op_tool)
     assert no_op_client.requests == []
+
+
+@pytest.mark.asyncio
+async def test_custom_instruction_setter_serializes_read_modify_write() -> None:
+    path = "/backend-api/user_system_messages"
+
+    class _ConcurrentClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.state = {
+                "about_user_message": "old user",
+                "about_model_message": "old model",
+            }
+            self._state_lock = threading.Lock()
+            self._second_get_started = threading.Event()
+            self._get_count = 0
+
+        def get(self, request_path: str, **kwargs: Any) -> dict:
+            assert request_path == path
+            with self._state_lock:
+                self._get_count += 1
+                call_number = self._get_count
+                snapshot = dict(self.state)
+            if call_number == 1:
+                # Without a handler-level RMW lock, the second task reaches GET
+                # and both callers retain the same stale snapshot. With the lock,
+                # this bounded wait expires and the second GET observes the POST.
+                self._second_get_started.wait(timeout=0.2)
+            else:
+                self._second_get_started.set()
+            return snapshot
+
+        def post(self, request_path: str, **kwargs: Any) -> dict:
+            assert request_path == path
+            with self._state_lock:
+                self.state = dict(kwargs["json"])
+            return dict(self.state)
+
+    client = _ConcurrentClient()
+    tool = _register(writes, client).tools["custom_instructions_set"]
+
+    await asyncio.gather(
+        tool(about_user="new user"),
+        tool(about_model="new model"),
+    )
+
+    assert client.state["about_user_message"] == "new user"
+    assert client.state["about_model_message"] == "new model"
 
 
 @pytest.mark.asyncio

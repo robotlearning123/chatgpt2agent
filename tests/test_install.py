@@ -483,6 +483,21 @@ def test_codex_legacy_removal_covers_commented_header(tmp_path: Path) -> None:
     assert parsed["mcp_servers"]["gpt2agent"]["command"] == "gpt2agent"
 
 
+def test_install_codex_defaults_to_selected_codex_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_home = tmp_path / "home"
+    selected_home = tmp_path / "alternate-codex"
+    monkeypatch.setenv("HOME", str(default_home))
+    monkeypatch.setenv("CODEX_HOME", str(selected_home))
+
+    result = install_codex()
+
+    assert result["path"] == selected_home / "config.toml"
+    assert (selected_home / "config.toml").is_file()
+    assert not (default_home / ".codex" / "config.toml").exists()
+
+
 # ── detect ─────────────────────────────────────────────────────────────────
 
 
@@ -497,6 +512,31 @@ def test_detect_clients_with_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     detected = detect_clients()
     assert "claude-code" in detected
     assert "codex" in detected
+
+
+def test_detect_clients_uses_selected_codex_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_home = tmp_path / "home"
+    selected_home = tmp_path / "alternate-codex"
+    default_home.mkdir()
+    selected_home.mkdir()
+    monkeypatch.setenv("HOME", str(default_home))
+    monkeypatch.setenv("CODEX_HOME", str(selected_home))
+
+    assert "codex" in detect_clients()
+
+
+def test_detect_clients_does_not_fall_back_when_codex_home_is_selected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_home = tmp_path / "home"
+    (default_home / ".codex").mkdir(parents=True)
+    selected_home = tmp_path / "missing-alternate-codex"
+    monkeypatch.setenv("HOME", str(default_home))
+    monkeypatch.setenv("CODEX_HOME", str(selected_home))
+
+    assert "codex" not in detect_clients()
 
 
 # ── Other MCP hosts (Cursor / Windsurf / Zed) ───────────────────────────────

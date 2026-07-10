@@ -13,7 +13,7 @@ server.
 | Client | `--client` | Config file | Restart needed |
 |---|---|---|---|
 | Claude Code | `claude-code` | `~/.claude.json` | yes |
-| Codex CLI | `codex` | `~/.codex/config.toml` | no (next run) |
+| Codex CLI | `codex` | `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) | no (next run) |
 | Cursor | `cursor` | `~/.cursor/mcp.json` | yes |
 | Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` | yes |
 | Claude Desktop | `claude-desktop` | platform Claude config | yes |
@@ -31,7 +31,7 @@ Most hosts use the `mcpServers` shape:
 }
 ```
 
-Codex (`~/.codex/config.toml`):
+Codex (`$CODEX_HOME/config.toml`, default `~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.gpt2agent]

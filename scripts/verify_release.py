@@ -16,7 +16,25 @@ except ModuleNotFoundError:  # Python 3.10 after installing project dependencies
     import tomli as tomllib  # type: ignore[no-redef]
 
 
-_VERSION_RE = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\Z")
+_VERSION_RE = re.compile(
+    r"(?P<base>\d+\.\d+\.\d+)"
+    r"(?:-(?P<label>alpha|beta|rc)(?P<number>0|[1-9]\d*))?\Z"
+)
+
+
+def distribution_version(version: str) -> str:
+    """Map the supported SemVer spelling to canonical PEP 440 metadata."""
+    match = _VERSION_RE.fullmatch(version)
+    if match is None:
+        raise ValueError(
+            f"version {version!r} is not supported; expected X.Y.Z or "
+            "X.Y.Z-(alpha|beta|rc)N"
+        )
+    label = match.group("label")
+    if label is None:
+        return match.group("base")
+    pep440_label = {"alpha": "a", "beta": "b", "rc": "rc"}[label]
+    return f"{match.group('base')}{pep440_label}{match.group('number')}"
 
 
 def _package_version(path: Path) -> str:
@@ -62,8 +80,10 @@ def verify(root: Path, tag: str | None = None) -> tuple[str | None, list[str]]:
     except (OSError, KeyError, TypeError, ValueError) as exc:
         return None, [f"pyproject.toml: {exc}"]
 
-    if not _VERSION_RE.fullmatch(version):
-        errors.append(f"pyproject.toml version is not SemVer-shaped: {version!r}")
+    try:
+        distribution_version(version)
+    except ValueError as exc:
+        errors.append(str(exc))
 
     try:
         package_version = _package_version(root / "gpt2agent" / "__init__.py")
@@ -122,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--tag", help="Expected git tag, including the leading v")
+    parser.add_argument(
+        "--print-distribution-version",
+        action="store_true",
+        help="Print only the canonical PEP 440 distribution version on success",
+    )
     args = parser.parse_args(argv)
 
     version, errors = verify(args.root.resolve(), args.tag)
@@ -129,7 +154,10 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    print(f"release metadata verified: {version}")
+    if args.print_distribution_version:
+        print(distribution_version(version or ""))
+    else:
+        print(f"release metadata verified: {version}")
     return 0
 
 

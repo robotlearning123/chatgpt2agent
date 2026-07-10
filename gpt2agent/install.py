@@ -50,6 +50,11 @@ def _h1(msg: str) -> None:
 # ── shared ─────────────────────────────────────────────────────────────────
 
 
+def _codex_home() -> Path:
+    """Return the authoritative Codex profile directory for this process."""
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+
+
 def _backup(path: Path) -> Path | None:
     """Snapshot ``path`` to ``path.bak-gpt2agent`` so the user can undo.
 
@@ -330,11 +335,11 @@ def install_codex(
     dry_run: bool = False,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Register gpt2agent in ``~/.codex/config.toml`` under ``[mcp_servers.<server_name>]``.
+    """Register gpt2agent in the selected Codex home's ``config.toml``.
 
     Preserves all other sections (codex agent definitions, model config, …).
     """
-    cfg_path = config_path or Path.home() / ".codex" / "config.toml"
+    cfg_path = config_path or _codex_home() / "config.toml"
     existing = cfg_path.read_text() if cfg_path.exists() else ""
 
     section_name = f"mcp_servers.{server_name}"
@@ -604,7 +609,7 @@ def detect_clients() -> list[str]:
     detected = []
     if (Path.home() / ".claude.json").exists() or (Path.home() / ".claude").exists():
         detected.append("claude-code")
-    if (Path.home() / ".codex").exists():
+    if _codex_home().exists():
         detected.append("codex")
     for name, (_installer, detect) in _EXTRA_HOSTS.items():
         if detect().exists():
@@ -634,7 +639,10 @@ def run_install(
         targets = detect_clients()
         if not targets:
             _err("No supported clients detected on this machine.")
-            _info("Expected one of: ~/.claude.json, ~/.claude/, ~/.codex/")
+            _info(
+                "Expected one of: ~/.claude.json, ~/.claude/, "
+                f"selected Codex home ({_codex_home()}/)"
+            )
             return 1
         _info(f"detected: {', '.join(targets)}")
     else:

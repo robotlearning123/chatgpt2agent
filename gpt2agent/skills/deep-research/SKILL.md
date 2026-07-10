@@ -5,7 +5,8 @@ description: |
   ChatGPT Pro Deep Research via gpt2agent. Two modes: light (model=research,
   30-120s, citations preserved) and heavy (gpt-5-5-pro + connector, 5-30 min,
   long-form report recovered from the connector widget state, citations included).
-  Reuses `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`) — no extra login.
+  Reuses `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`) or the manual
+  `~/.gpt2agent/token.json` fallback.
   Each run uses the account's Deep Research quota. Output saved as Markdown.
   Use when asked to "deep research", "DR", "ChatGPT deep research",
   "research <topic>", "go deep on <topic>", or when a question genuinely
@@ -26,7 +27,8 @@ pipx Python (bypasses MCP — works even before Claude Code session restart).
 ```bash
 command -v gpt2agent >/dev/null || \
   echo "gpt2agent not installed; run: pipx install gpt2agent"
-test -f "${CODEX_HOME:-$HOME/.codex}/auth.json" || echo "Codex token missing; run: codex login"
+test -f "${CODEX_HOME:-$HOME/.codex}/auth.json" || test -f "$HOME/.gpt2agent/token.json" || \
+  echo "ChatGPT token missing; run: codex login or gpt2agent setup"
 ~/.claude/skills/deep-research/bin/quota.sh   # prints remaining DR quota
 ```
 

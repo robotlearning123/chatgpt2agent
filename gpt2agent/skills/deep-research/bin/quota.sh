@@ -14,16 +14,52 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 exec "$PYTHON" - <<'PY'
+import sys
+
 from gpt2agent.backend import BackendClient
-b = BackendClient()
-try:
-    data = b.post("/backend-api/conversation/init", json={"conversation_mode_kind": "primary_assistant"})
-    for lim in (data.get("limits_progress") or []):
-        if isinstance(lim, dict) and lim.get("feature_name") == "deep_research":
-            print(f"deep_research remaining = {lim.get('remaining')}  reset = {lim.get('reset_after')}")
-            break
-    else:
-        print("deep_research quota entry not found")
-except Exception as e:
-    print(f"error: {type(e).__name__}: {e}")
+
+
+def main():
+    try:
+        b = BackendClient()
+        data = b.post(
+            "/backend-api/conversation/init",
+            json={"conversation_mode_kind": "primary_assistant"},
+        )
+    except Exception as e:
+        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+    if not isinstance(data, dict):
+        print("deep_research quota response is malformed", file=sys.stderr)
+        return 1
+    limits = data.get("limits_progress") or []
+    if not isinstance(limits, list):
+        print("deep_research quota response is malformed", file=sys.stderr)
+        return 1
+    for lim in limits:
+        if not isinstance(lim, dict) or lim.get("feature_name") != "deep_research":
+            continue
+        remaining = lim.get("remaining")
+        try:
+            if isinstance(remaining, bool):
+                raise ValueError
+            remaining = int(remaining)
+        except (TypeError, ValueError):
+            print(
+                "deep_research quota remaining is missing or invalid",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"deep_research remaining = {remaining}  "
+            f"reset = {lim.get('reset_after')}"
+        )
+        return 0
+
+    print("deep_research quota entry not found", file=sys.stderr)
+    return 1
+
+
+raise SystemExit(main())
 PY

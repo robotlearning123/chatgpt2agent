@@ -124,6 +124,11 @@ def _citation_payload(*metas: dict | None) -> tuple[list, list]:
 #: Prefix a tool node uses when the connector widget state is replayed into the
 #: conversation transcript as plain text.
 _WIDGET_STATE_TEXT_PREFIX = "The latest state of the widget is: "
+_DR_APP_RESOURCE = "Deep Research App_start"
+_DR_CONNECTOR_ID = "connector_openai_deep_research"
+_DR_CONNECTOR_URI = f"connectors://{_DR_CONNECTOR_ID}"
+_DR_RESOURCE_URI = f"/{_DR_CONNECTOR_ID}/implicit_link::{_DR_CONNECTOR_ID}/start"
+_DR_WIDGET_EXCLUSIVE_KEY = f"widget_state:{_DR_APP_RESOURCE}"
 
 
 def _coerce_widget_state(obj: object) -> dict | None:
@@ -162,54 +167,90 @@ def _dr_report_from_widget_state(detail: dict | None) -> tuple[str, list]:
     :func:`_coerce_widget_state`) and returns ``(report_text, content_references)``
     for the longest *completed* report found, or ``("", [])`` if none is present.
 
-    Hardening (audit 2026-06-18):
+    Hardening (audits 2026-06-18 and 2026-07-10):
 
-    * Only the connector's own ``tool`` nodes are trusted carriers. An
-      ``assistant``/``user`` (or otherwise authored) message that merely contains
-      the widget prefix cannot spoof the final report — those messages can contain
-      attacker/page-controlled text in agentic research flows.
+    * Only ``tool`` nodes with the observed Deep Research-specific backend
+      envelope are accepted. Arbitrary assistant, user, or tool content with a
+      widget-shaped payload is ignored. These envelope checks are fail-closed
+      provenance validation, not cryptographic authentication; the payload itself
+      is unsigned and can still contain incorrect or prompt-injected research.
     * The text carrier must *start with* the prefix, not merely contain it.
-    * An in-progress draft is ignored: the report is accepted only when its
-      ``report_message.status`` is ``finished_successfully`` (or, when that field
-      is absent, the top-level widget ``status`` is not a non-completed state),
-      so polling never emits a half-written report as the final answer.
+    * An in-progress draft is ignored: both the top-level widget status and the
+      nested report status must carry their explicit completed values, so polling
+      never emits a half-written report as the final answer.
     """
     mapping = (detail or {}).get("mapping") or {}
+    if not isinstance(mapping, dict):
+        return "", []
     best_text = ""
     best_refs: list = []
     for node in mapping.values():
         msg = (node or {}).get("message")
         if not isinstance(msg, dict):
             continue
-        # Trust only the connector's own tool nodes. Assistant text is model-authored
-        # and can repeat attacker/page-controlled widget-shaped content.
-        role = (msg.get("author") or {}).get("role")
-        if role != "tool":
+        author = msg.get("author") or {}
+        metadata = msg.get("metadata") or {}
+        content = msg.get("content") or {}
+        if (
+            not isinstance(author, dict)
+            or not isinstance(metadata, dict)
+            or not isinstance(content, dict)
+            or author.get("role") != "tool"
+            or msg.get("recipient") != "all"
+            or msg.get("status") != "finished_successfully"
+        ):
             continue
         carriers: list[object] = []
-        parts = (msg.get("content") or {}).get("parts") or []
-        if parts and isinstance(parts[0], str) and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX):
+        parts = content.get("parts") or []
+        if (
+            author.get("name") == "api_tool.widget_state"
+            and content.get("content_type") == "text"
+            and metadata.get("exclusive_key") == _DR_WIDGET_EXCLUSIVE_KEY
+            and metadata.get("is_visually_hidden_from_conversation") is True
+            and parts
+            and isinstance(parts[0], str)
+            and parts[0].startswith(_WIDGET_STATE_TEXT_PREFIX)
+        ):
             carriers.append(parts[0])
-        sdk = (msg.get("metadata") or {}).get("chatgpt_sdk")
-        if isinstance(sdk, dict) and sdk.get("widget_state"):
+        sdk = metadata.get("chatgpt_sdk")
+        invoked_resource = metadata.get("invoked_resource")
+        if (
+            author.get("name") == "api_tool.call_tool"
+            and content.get("content_type") == "code"
+            and isinstance(sdk, dict)
+            and sdk.get("resource_name") == _DR_APP_RESOURCE
+            and sdk.get("attribution_id") == _DR_CONNECTOR_ID
+            and sdk.get("resolved_pineapple_uri") == _DR_CONNECTOR_URI
+            and sdk.get("distribution_channel") == "openai"
+            and sdk.get("connector_type") == "FIRST_PARTY_ECOSYSTEM"
+            and isinstance(invoked_resource, dict)
+            and invoked_resource.get("resource_uri") == _DR_RESOURCE_URI
+            and sdk.get("widget_state") is not None
+        ):
             carriers.append(sdk["widget_state"])
         for carrier in carriers:
             state = _coerce_widget_state(carrier)
             report = (state or {}).get("report_message")
             if not isinstance(report, dict):
                 continue
-            # Only emit a finished report — never an in-progress draft.
-            report_status = report.get("status")
-            if report_status is not None:
-                if report_status != "finished_successfully":
-                    continue
-            elif (state or {}).get("status") not in (None, "completed"):
+            # Only emit the exact completed shape observed from the connector.
+            if (
+                (state or {}).get("status") != "completed"
+                or report.get("status") != "finished_successfully"
+            ):
                 continue
-            rparts = (report.get("content") or {}).get("parts") or []
+            report_content = report.get("content") or {}
+            if (
+                not isinstance(report_content, dict)
+                or report_content.get("content_type") != "text"
+            ):
+                continue
+            rparts = report_content.get("parts") or []
             text = rparts[0] if rparts and isinstance(rparts[0], str) else ""
             if text and len(text) > len(best_text):
                 best_text = text
-                best_refs = (report.get("metadata") or {}).get("content_references") or []
+                refs = (report.get("metadata") or {}).get("content_references") or []
+                best_refs = refs if isinstance(refs, list) else []
     return best_text, best_refs
 
 
@@ -434,7 +475,8 @@ def _build_heavy_dr_payload(query: str, *, model: str | None = None) -> dict:
     in the user-message echo is "i-mini-m" (the orchestration layer); the actual heavy
     reasoning runs as a background tool call inside the connector.
 
-    Rate-limited by the "deep_research" feature quota (248 uses / reset cycle for Pro).
+    Rate-limited by the account-reported "deep_research" feature quota; limits
+    and reset timing can vary.
     """
     msg_id = str(uuid4())
     return {
@@ -1320,7 +1362,8 @@ class ConversationClient:
           {"type": "done",     "text": <full_text>,
            "content_references": [...], "search_result_groups": [...]}
 
-        Rate: consumes from the "deep_research" quota (248 uses / reset cycle on Pro).
+        Rate: consumes from the account-reported "deep_research" quota; limits
+        and reset timing can vary.
         Timeout: 1800 s for initial SSE; poll phase adds up to 1800 s more.
 
         Note: the resolved_model_slug in user-message echo will show "i-mini-m"

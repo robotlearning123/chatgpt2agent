@@ -39,8 +39,15 @@ def compare_artifacts(
     remote: dict[str, str] | None,
     *,
     require_complete: bool,
+    require_absent: bool = False,
 ) -> list[str]:
     """Return mismatches between local files and a PyPI release snapshot."""
+    if require_complete and require_absent:
+        raise ValueError("require_complete and require_absent are mutually exclusive")
+    if require_absent:
+        if remote is not None:
+            return ["PyPI release already exists; refusing rebuilt artifacts"]
+        return []
     if remote is None:
         return ["PyPI release does not exist"] if require_complete else []
 
@@ -96,7 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", default="gpt2agent")
     parser.add_argument("--version", required=True)
     parser.add_argument("--dist", type=Path, default=Path("dist"))
-    parser.add_argument("--require-complete", action="store_true")
+    release_state = parser.add_mutually_exclusive_group()
+    release_state.add_argument("--require-complete", action="store_true")
+    release_state.add_argument("--require-absent", action="store_true")
     parser.add_argument("--attempts", type=int, default=1)
     parser.add_argument("--delay", type=float, default=0.0)
     args = parser.parse_args(argv)
@@ -118,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                 local,
                 remote,
                 require_complete=args.require_complete,
+                require_absent=args.require_absent,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             last_errors = [f"PyPI verification failed: {exc}"]

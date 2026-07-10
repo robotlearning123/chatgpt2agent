@@ -18,8 +18,9 @@ distribution, and release-pipeline audit.
 - Memory search now compares only redacted text, and custom-instruction updates
   return a minimal acknowledgement instead of a secret-bearing backend echo.
 - Raw SSE diagnostic files are created or tightened to mode `0600` on POSIX;
-  assistant-authored widget state can no longer impersonate a completed
-  tool-authored Deep Research report.
+  widget reports are accepted only from Deep Research-specific backend
+  envelopes, so arbitrary assistant or tool content with the same JSON shape
+  is ignored. The distributed parser fixture now contains only synthetic data.
 - Manual token entry uses hidden input and strict JWT-shape validation;
   noninteractive token lookup never launches browser automation.
 
@@ -33,9 +34,14 @@ distribution, and release-pipeline audit.
   and the bundled runner records timeouts and abnormal endings as `INCOMPLETE`.
 - Required Sentinel challenges now fail closed and run their solvers off the
   event loop. Conversation caps apply after filtering visible messages, and
-  large date-heavy redactions no longer recurse.
+  large date-heavy redactions no longer recurse. Turnstile timing state is
+  local to each solve, avoiding races between concurrent challenges.
 - Token refresh re-evaluates source priority safely, browser helper discovery is
-  portable, and account setup reports only backend-verified plan state.
+  portable, and account setup reports only backend-verified plan state. The
+  bundled Deep Research wrappers accept either supported token source, and
+  quota checks fail visibly when the account value cannot be verified.
+- Custom-instruction partial updates serialize their full read-modify-write
+  window so concurrent requests cannot silently lose an unrelated field.
 - The shell installer distinguishes explicit local sources from the default
   PyPI install, fails closed instead of substituting mutable repository code,
   installs skills transactionally without bytecode, honors `CODEX_HOME`, and
@@ -46,13 +52,15 @@ distribution, and release-pipeline audit.
 ### CI / Release
 
 - One verifier now requires all package, plugin, server, tag, and changelog
-  versions to agree. CI exposes a stable aggregate required check and pins every
-  third-party action to an immutable commit.
+  versions to agree. Supported SemVer prereleases are normalized at Python
+  distribution and PyPI boundaries. CI exposes a stable aggregate required
+  check and pins every third-party action to an immutable commit.
 - Release tags must be annotated and originate on `origin/main`; clean environments install
   and test both built artifacts before trusted publishing. Existing and newly
   published PyPI filenames and SHA-256 hashes must match the original build,
-  allowing failed jobs in the same workflow run to retry safely; full workflow
-  reruns after publication fail closed. Missing release notes fail the workflow.
+  and a rebuilt workflow may publish only while the version is wholly absent,
+  allowing failed jobs in the same workflow run to retry safely while full
+  workflow reruns after publication fail closed. Missing release notes fail the workflow.
   GitHub release tags are immutable, and the PyPI environment is configured for
   `v`-prefixed tag deployments.
 

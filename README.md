@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/ins
 That command:
 1. Installs the published `gpt2agent` package via pipx in an isolated environment.
 2. Reuses `$CODEX_HOME/auth.json` (or `~/.codex/auth.json`) if you've run `codex login` — no separate ChatGPT token paste needed.
-3. Detects which MCP clients you have (Claude Code, Codex, Cursor, Windsurf, Claude Desktop, Zed) and writes the right config for each.
+3. Detects which MCP clients you have (Claude Code, Codex, Cursor, Windsurf, Claude Desktop, Zed) and writes the right config for each, honoring `CODEX_HOME` for Codex.
 4. Drops the Claude Code skills (`deep-research` + `gpt2agent`) into `~/.claude/skills/`.
 
 ### Or step-by-step
@@ -79,7 +79,7 @@ The `install` subcommand writes the right thing for each:
 | Client | File | Section |
 |---|---|---|
 | **Claude Code** | `~/.claude.json` | `mcpServers.gpt2agent` (stdio: `gpt2agent run --stdio`) |
-| **Codex CLI** | `~/.codex/config.toml` | `[mcp_servers.gpt2agent]` |
+| **Codex CLI** | `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) | `[mcp_servers.gpt2agent]` |
 
 Both are idempotent and back up the prior file as `<name>.bak-gpt2agent`.
 
@@ -102,7 +102,7 @@ Claude Code — add to `~/.claude.json`:
 }
 ```
 
-Codex CLI — add to `~/.codex/config.toml`:
+Codex CLI — add to `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.gpt2agent]
@@ -306,6 +306,11 @@ section. Verify that candidate before merging:
 ```bash
 python scripts/verify_release.py
 ```
+
+Stable versions use `X.Y.Z`. Supported prereleases use `X.Y.Z-alphaN`,
+`X.Y.Z-betaN`, or `X.Y.Z-rcN` in tags, changelog headings, and project
+manifests. Python package metadata and PyPI use the corresponding canonical
+PEP 440 spelling (`X.Y.ZaN`, `X.Y.ZbN`, or `X.Y.ZrcN`).
 
 After the release PR is merged, read its exact merge SHA, prove that commit is
 on `origin/main`, check out that reviewed tree, then create and push only the

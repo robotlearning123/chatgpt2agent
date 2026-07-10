@@ -171,7 +171,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   get_file_info("file_00000000c02471f88295cda5f3b8c66b")
   ```
 - **Notes**:
-  - Synchronous REST call (`GET /backend-api/files/{file_id}`).
+  - Async handler; offloads `GET /backend-api/files/{file_id}` to the synchronous backend client.
   - Returns `{}` if the file doesn't exist or the request fails.
 
 ---
@@ -190,7 +190,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - URLs expire after approximately 1 hour.
-  - Synchronous REST call (`GET /backend-api/files/{file_id}/download`).
+  - Async handler; offloads `GET /backend-api/files/{file_id}/download` to the synchronous backend client.
 
 ---
 
@@ -271,7 +271,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   #  'has_active_subscription': True, 'expires_at': '2026-06-15T...', 'features_count': 42}
   ```
 - **Notes**:
-  - Synchronous. Calls two REST endpoints: `/backend-api/me` and `/backend-api/accounts/check/v4-2023-04-27`.
+  - Async handler; offloads calls to `/backend-api/me` and `/backend-api/accounts/check/v4-2023-04-27` to the synchronous backend client.
   - Email is PII-redacted (regex pattern matching).
 
 ---
@@ -299,7 +299,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - Returns models for `history_and_training_disabled=false` variant. Some models may differ in capabilities between temporary/non-temporary modes.
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -323,7 +323,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - **Notes**:
   - Titles are PII-redacted (emails, phone numbers replaced).
   - Sorted by `update_time` descending (most recent first).
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -355,7 +355,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - **Notes**:
   - Text parts are truncated to 2000 characters, code parts to 500 characters.
   - Only includes messages with role `user`, `assistant`, or `tool` (skips system messages).
-  - Synchronous REST call. Can be slow for large conversations.
+  - Async handler; offloads the REST call to the synchronous backend client. Large conversations can still take time to transfer and parse.
 
 ---
 
@@ -382,7 +382,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - Titles and prompts are PII-redacted.
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -403,7 +403,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - App names are not resolvable from the API -- only IDs are returned. The `type` field is inferred from the ID prefix.
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -425,7 +425,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   - Names are PII-redacted.
   - The `short_url` field is what you pass as `gizmo_id` to `gpt_chat`.
   - Uses the `/backend-api/gizmos/snorlax/sidebar` endpoint.
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -449,7 +449,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - Content is PII-redacted (emails, phone numbers replaced with `<EMAIL>`, `<PHONE>`).
-  - Synchronous REST call (`GET /backend-api/memories`).
+  - Async handler; offloads `GET /backend-api/memories` to the synchronous backend client.
 
 ---
 
@@ -469,6 +469,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   - Case-insensitive substring match (not regex, not fuzzy).
   - Fetches all memories then filters client-side. May be slow if you have many memories.
   - Content is PII-redacted.
+  - Async handler; offloads the memory fetch to the synchronous backend client.
 
 ---
 
@@ -513,7 +514,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - Content is PII-redacted.
-  - Synchronous REST call (`GET /backend-api/user_system_messages`).
+  - Async handler; offloads `GET /backend-api/user_system_messages` to the synchronous backend client.
 
 ---
 
@@ -523,7 +524,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - **Parameters**:
   - `about_user` (str or None, default: `None`) -- new user instructions. If `None`, existing value is preserved.
   - `about_model` (str or None, default: `None`) -- new model instructions. If `None`, existing value is preserved.
-- **Returns**: `dict` -- the server's response from `POST /backend-api/user_system_messages`.
+- **Returns**: `dict` -- minimal acknowledgement: `{"updated": true, "fields": [...]}` listing only the fields updated.
 - **When to use**: Update what ChatGPT knows about the user, change model behavior/persona.
 - **Example**:
   ```python
@@ -536,8 +537,11 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - **Read-modify-write**: reads current instructions first, then overwrites only the fields you supply. Unspecified fields are preserved.
-  - Both parameters are optional -- you can update just one field.
-  - Synchronous. Two REST calls: GET then POST.
+  - At least one parameter must be supplied; pass either field alone to preserve the other.
+  - Concurrent updates are serialized so partial writes cannot overwrite one another with stale preserved values.
+  - If the current state cannot be read, the tool refuses to write rather than risk clearing an unspecified field.
+  - The acknowledgement never echoes instruction content or the backend response.
+  - Async handler; offloads both the GET and POST to the synchronous backend client.
 
 ---
 
@@ -560,7 +564,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   # [{'id': 'env-abc', 'label': 'my-project', 'workspace_dir': '/workspace', ...}]
   ```
 - **Notes**:
-  - Synchronous REST call (`GET /backend-api/codex/environments`).
+  - Async handler; offloads `GET /backend-api/codex/environments` to the synchronous backend client.
   - The `label` field is what you pass as `repo_label` to `codex_task_create`.
 
 ---
@@ -583,7 +587,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - **Notes**:
   - Titles are PII-redacted.
   - Status comes from the `turn.turn_status` field in the response.
-  - Synchronous REST call.
+  - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
 
@@ -610,7 +614,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   - If `environment_id` is not provided, the tool fetches all environments and matches by `repo_label`.
   - Raises `ValueError` if no environment matches the label, or if the label is ambiguous (matches multiple environments).
   - The payload shape is: `new_task={environment_id, branch}` + `input_items=[{type: "message", role: "user", content: [{content_type: "text", text: prompt}]}]`.
-  - Synchronous REST call.
+  - Async handler; offloads the REST calls to the synchronous backend client.
 
 ---
 

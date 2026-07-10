@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+      distribution_version: ${{ steps.metadata.outputs.distribution_version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -58,7 +59,9 @@ jobs:
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           python scripts/verify_release.py --tag "$GITHUB_REF_NAME"
+          DIST_VERSION="$(python scripts/verify_release.py --tag "$GITHUB_REF_NAME" --print-distribution-version)"
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "distribution_version=$DIST_VERSION" >> "$GITHUB_OUTPUT"
 
   test:
     name: Tests must pass before publish
@@ -101,7 +104,8 @@ jobs:
 
       - name: Test built artifacts in clean environments
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          PROJECT_VERSION: ${{ needs.verify.outputs.version }}
+          DIST_VERSION: ${{ needs.verify.outputs.distribution_version }}
         run: |
           set -euo pipefail
           TMP_ROOT=$(mktemp -d)
@@ -117,15 +121,15 @@ jobs:
           "$TMP_ROOT/wheel-venv/bin/python" -m pip check
           (
             cd "$TMP_ROOT"
-            test "$("$TMP_ROOT/wheel-venv/bin/gpt2agent" --version)" = "gpt2agent $VERSION"
-            test "$("$TMP_ROOT/wheel-venv/bin/python" -m gpt2agent --version)" = "gpt2agent $VERSION"
-            "$TMP_ROOT/wheel-venv/bin/python" - "$VERSION" <<'PY'
+            test "$("$TMP_ROOT/wheel-venv/bin/gpt2agent" --version)" = "gpt2agent $PROJECT_VERSION"
+            test "$("$TMP_ROOT/wheel-venv/bin/python" -m gpt2agent --version)" = "gpt2agent $PROJECT_VERSION"
+            "$TMP_ROOT/wheel-venv/bin/python" - "$DIST_VERSION" <<'PY'
           from importlib.metadata import version
           from importlib.resources import files
           import sys
 
-          expected = sys.argv[1]
-          assert version("gpt2agent") == expected
+          expected_distribution = sys.argv[1]
+          assert version("gpt2agent") == expected_distribution
           root = files("gpt2agent")
           required = [
               "skills/deep-research/SKILL.md",
@@ -160,12 +164,12 @@ jobs:
               tests/test_heavy_dr_parser.py
           )
 
-      - name: Verify any existing PyPI artifacts match this build
+      - name: Require the PyPI version to be absent before publication
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          VERSION: ${{ needs.verify.outputs.distribution_version }}
         run: >-
           python scripts/verify_pypi_artifacts.py --version "$VERSION"
-          --dist dist --attempts 3 --delay 5
+          --dist dist --require-absent --attempts 3 --delay 5
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -190,7 +194,8 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           # Supports retries of failed jobs in this same run, which reuse the
-          # original build artifact. Pre/post jobs compare every filename/hash.
+          # original build artifact. A rebuilt workflow cannot pass the
+          # pre-publish version-absence gate after any file reaches PyPI.
           skip-existing: true
 
   verify-pypi:
@@ -205,7 +210,7 @@ jobs:
           path: dist/
       - name: Match every published filename and SHA-256
         env:
-          VERSION: ${{ needs.verify.outputs.version }}
+          VERSION: ${{ needs.verify.outputs.distribution_version }}
         run: >-
           python scripts/verify_pypi_artifacts.py --version "$VERSION"
           --dist dist --require-complete --attempts 7 --delay 10

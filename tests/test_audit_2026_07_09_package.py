@@ -25,6 +25,7 @@ from gpt2agent import install as install_mod
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPO_ROOT / "install.sh"
 DR_WRAPPER = REPO_ROOT / "gpt2agent" / "skills" / "deep-research" / "bin" / "run.sh"
+QUOTA_WRAPPER = REPO_ROOT / "gpt2agent" / "skills" / "deep-research" / "bin" / "quota.sh"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -144,7 +145,7 @@ def test_checkout_installer_honors_codex_home_for_login_check(tmp_path: Path) ->
     assert f"No {env['HOME']}/.codex/auth.json" not in output
 
 
-def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
+def test_deep_research_wrapper_accepts_saved_token_without_codex(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     python_log = tmp_path / "python-argv.txt"
     fake_python = tmp_path / "recording-python"
@@ -165,15 +166,15 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
 
     home = tmp_path / "home"
     home.mkdir()
+    saved_token_dir = home / ".gpt2agent"
+    saved_token_dir.mkdir()
+    (saved_token_dir / "token.json").write_text('{"access_token": "saved"}\n')
     unrelated_cwd = tmp_path / "unrelated-cwd"
     unrelated_cwd.mkdir()
-    codex_home = tmp_path / "alternate-codex"
-    codex_home.mkdir()
-    (codex_home / "auth.json").write_text('{"tokens": {}}\n')
     env = os.environ.copy()
+    env.pop("CODEX_HOME", None)
     env.update(
         {
-            "CODEX_HOME": str(codex_home),
             "FAKE_PYTHON_LOG": str(python_log),
             "HOME": str(home),
             "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
@@ -193,6 +194,146 @@ def test_deep_research_wrapper_honors_codex_home(tmp_path: Path) -> None:
     argv = python_log.read_text().splitlines()
     assert Path(argv[0]) == DR_WRAPPER.parent / "deep_research.py"
     assert argv[1:] == ["test topic"]
+
+
+def test_deep_research_wrapper_rejects_missing_auth_before_python(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    python_marker = tmp_path / "python-was-invoked"
+    fake_python = tmp_path / "recording-python"
+    _write_executable(
+        fake_python,
+        "#!/bin/sh\nprintf invoked > \"$FAKE_PYTHON_MARKER\"\n",
+    )
+    _write_executable(fake_bin / "gpt2agent", f"#!{fake_python}\n")
+
+    home = tmp_path / "home"
+    home.mkdir()
+    selected_codex_home = tmp_path / "selected-codex"
+    env = os.environ.copy()
+    env.update(
+        {
+            "CODEX_HOME": str(selected_codex_home),
+            "FAKE_PYTHON_MARKER": str(python_marker),
+            "HOME": str(home),
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        [str(DR_WRAPPER), "test topic"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "error: no ChatGPT auth file found" in result.stderr
+    assert str(selected_codex_home / "auth.json") in result.stderr
+    assert str(home / ".gpt2agent" / "token.json") in result.stderr
+    assert "codex login or gpt2agent setup" in result.stderr
+    assert not python_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("backend_source", "expected"),
+    [
+        (
+            'class BackendClient:\n'
+            '    def __init__(self):\n'
+            '        raise RuntimeError("no token")\n',
+            "error: RuntimeError: no token",
+        ),
+        (
+            'class BackendClient:\n'
+            '    def post(self, *args, **kwargs):\n'
+            '        raise RuntimeError("offline")\n',
+            "error: RuntimeError: offline",
+        ),
+        (
+            'class BackendClient:\n'
+            '    def post(self, *args, **kwargs):\n'
+            '        return {"limits_progress": []}\n',
+            "deep_research quota entry not found",
+        ),
+        (
+            'class BackendClient:\n'
+            '    def post(self, *args, **kwargs):\n'
+            '        return {"limits_progress": [{"feature_name": "deep_research"}]}\n',
+            "deep_research quota remaining is missing or invalid",
+        ),
+        (
+            'class BackendClient:\n'
+            '    def post(self, *args, **kwargs):\n'
+            '        return {"limits_progress": [{"feature_name": "deep_research", "remaining": "many"}]}\n',
+            "deep_research quota remaining is missing or invalid",
+        ),
+    ],
+)
+def test_quota_wrapper_fails_when_quota_is_unverified(
+    tmp_path: Path, backend_source: str, expected: str
+) -> None:
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "gpt2agent", f"#!{sys.executable}\n")
+    fake_package = tmp_path / "fake-package" / "gpt2agent"
+    fake_package.mkdir(parents=True)
+    (fake_package / "__init__.py").write_text("")
+    (fake_package / "backend.py").write_text(backend_source)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PYTHONPATH": str(fake_package.parent),
+        }
+    )
+
+    result = subprocess.run(
+        [str(QUOTA_WRAPPER)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert result.stdout == ""
+
+
+def test_quota_wrapper_reports_verified_zero_remaining(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    _write_executable(fake_bin / "gpt2agent", f"#!{sys.executable}\n")
+    fake_package = tmp_path / "fake-package" / "gpt2agent"
+    fake_package.mkdir(parents=True)
+    (fake_package / "__init__.py").write_text("")
+    (fake_package / "backend.py").write_text(
+        'class BackendClient:\n'
+        '    def post(self, *args, **kwargs):\n'
+        '        return {"limits_progress": [{"feature_name": "deep_research", '
+        '"remaining": 0, "reset_after": "tomorrow"}]}\n'
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+            "PYTHONPATH": str(fake_package.parent),
+        }
+    )
+
+    result = subprocess.run(
+        [str(QUOTA_WRAPPER)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "deep_research remaining = 0  reset = tomorrow"
+    assert result.stderr == ""
 
 
 def test_deep_research_wrapper_missing_python_recommends_pypi(tmp_path: Path) -> None:

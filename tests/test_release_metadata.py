@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.verify_pypi_artifacts import artifact_hashes, compare_artifacts
+from scripts.verify_release import distribution_version
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +52,31 @@ def test_release_verifier_accepts_consistent_tree(tmp_path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "release metadata verified: 1.2.3" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("project_version", "expected_distribution_version"),
+    [
+        ("1.2.3", "1.2.3"),
+        ("1.2.3-alpha1", "1.2.3a1"),
+        ("1.2.3-beta2", "1.2.3b2"),
+        ("1.2.3-rc10", "1.2.3rc10"),
+    ],
+)
+def test_distribution_version_normalizes_supported_semver_prereleases(
+    project_version: str, expected_distribution_version: str
+) -> None:
+    assert distribution_version(project_version) == expected_distribution_version
+
+
+@pytest.mark.parametrize("version", ["1.2.3-preview1", "1.2.3-rc.1", "1.2.3+build.1"])
+def test_release_verifier_rejects_unsupported_version_suffixes(
+    tmp_path: Path, version: str
+) -> None:
+    result = _verify(_project(tmp_path, version), f"v{version}")
+
+    assert result.returncode == 1
+    assert "not supported" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -139,6 +165,18 @@ def test_pypi_artifact_verifier_fails_closed_on_drift(
     assert compare_artifacts(local, remote, require_complete=require_complete) == expected
 
 
+def test_pypi_pre_publish_verifier_rejects_partial_existing_release() -> None:
+    local = {"wheel.whl": "aaa", "source.tar.gz": "new-sdist"}
+    remote = {"wheel.whl": "aaa"}
+
+    assert compare_artifacts(
+        local,
+        remote,
+        require_complete=False,
+        require_absent=True,
+    ) == ["PyPI release already exists; refusing rebuilt artifacts"]
+
+
 def test_workflow_actions_are_pinned_to_full_commit_shas() -> None:
     workflows = list((PROJECT_ROOT / ".github" / "workflows").glob("*.yml"))
     uses_pattern = re.compile(r"^\s*(?:-\s*)?uses:\s+([^@\s]+)@([^\s#]+)", re.MULTILINE)
@@ -167,9 +205,13 @@ def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
     assert "must be an annotated tag" in release
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in release
     assert "python scripts/verify_release.py --tag" in release
+    assert "distribution_version" in release
+    assert "DIST_VERSION" in release
+    assert 'assert version("gpt2agent") == expected_distribution' in release
     assert "Test built artifacts in clean environments" in release
     assert 'python" -m gpt2agent --version' in release
-    assert "Verify any existing PyPI artifacts match this build" in release
+    assert "Require the PyPI version to be absent before publication" in release
+    assert "--require-absent --attempts 3 --delay 5" in release
     assert "skip-existing: true" in release
     assert "name: Verify published PyPI artifacts" in release
     assert "--require-complete --attempts 7 --delay 10" in release
@@ -187,3 +229,9 @@ def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
     assert "Re-run failed jobs" in readme_flat
     assert "Do not re-run the whole workflow" in readme_flat
     assert "python scripts/verify_release.py --tag v0.0.10" not in readme
+
+
+def test_account_reported_quota_is_not_documented_as_a_fixed_limit() -> None:
+    sse = (PROJECT_ROOT / "gpt2agent" / "sse.py").read_text(encoding="utf-8")
+
+    assert "248 uses / reset cycle" not in sse
