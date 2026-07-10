@@ -146,10 +146,16 @@ Official pages checked for the July 8–9 product change set:
 - [Codex changelog](https://learn.chatgpt.com/docs/changelog)
 - [Codex best practices](https://learn.chatgpt.com/guides/best-practices)
 - [Build Skills](https://learn.chatgpt.com/docs/build-skills)
+- [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
+- [MCP Python SDK releases](https://github.com/modelcontextprotocol/python-sdk/releases)
+- [MCP authorization guidance](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
+- [MCP security best practices](https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices)
 
 The July 8–9 snapshot includes GPT-Live-1/mini; ChatGPT Work and Scheduled Tasks; the Plugin Directory naming/distribution change; the unified desktop Chat, Work, and Codex app; Sites public beta; and retirement of new group-chat creation. The July 9 Codex changelog also records CLI 0.144.0/0.144.1, including interactive MCP authentication without an experimental flag, a `writes` app-approval mode, runtime host authentication, and installer/Code Mode reliability fixes.
 
 The active host commands `codex`, `cx`, and `cx2` all report `codex-cli 0.144.1`. A separate global npm installation still contains `@openai/codex@0.142.4`, but it is not the executable resolved on `PATH`; it is an environment-hygiene item, not a project or release blocker, and was not uninstalled without authorization.
+
+As of July 10, the official MCP Python SDK identifies v1.x as the current stable line, marks v2 as an alpha/beta pre-release, and recommends an upper bound below v2; the latest-release endpoint lists v1.28.1 as the current stable release. This validates the design's `mcp>=1.27,<2` compatibility constraint: `>=1.27` is the supported floor, not a claim that v1.27 is newest. The current MCP authorization and security guidance also supports the design boundary: local stdio may use environment-provided credentials, while remote HTTP access requires standards-based authorization, audience validation, least privilege, HTTPS outside localhost, and no token passthrough.
 
 The authenticated website was also checked read-only. The observation found:
 
