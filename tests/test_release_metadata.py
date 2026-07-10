@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -45,6 +46,98 @@ def _verify(root: Path, tag: str | None = None) -> subprocess.CompletedProcess[s
     if tag is not None:
         command.extend(["--tag", tag])
     return subprocess.run(command, capture_output=True, text=True, check=False)
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        env=_git_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _git_env(**overrides: str) -> dict[str, str]:
+    return {
+        **os.environ,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        **overrides,
+    }
+
+
+def _release_source_guard() -> str:
+    lines = (
+        PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+    ).read_text(encoding="utf-8").splitlines()
+    step = lines.index("      - name: Require the tagged commit to be on origin/main")
+    assert lines[step + 1] == "        run: |"
+
+    script: list[str] = []
+    for line in lines[step + 2 :]:
+        if line.startswith("          "):
+            script.append(line[10:])
+        elif not line:
+            script.append("")
+        else:
+            break
+    return "\n".join(script)
+
+
+def _run_release_source_guard(
+    tmp_path: Path, tag_kind: str, *, mismatched_event: bool = False
+) -> subprocess.CompletedProcess[str]:
+    remote = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    checkout = tmp_path / "checkout"
+    source.mkdir()
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(source, "init", "--initial-branch=main")
+    _git(source, "config", "user.name", "Release Test")
+    _git(source, "config", "user.email", "release-test@example.invalid")
+    (source / "release.txt").write_text("main\n", encoding="utf-8")
+    _git(source, "add", "release.txt")
+    _git(source, "commit", "-m", "main release")
+    main_sha = _git(source, "rev-parse", "HEAD")
+    _git(source, "remote", "add", "origin", str(remote))
+    _git(source, "push", "origin", "main")
+
+    tag_sha = main_sha
+    if tag_kind == "off-main":
+        _git(source, "switch", "-c", "side")
+        (source / "side.txt").write_text("side\n", encoding="utf-8")
+        _git(source, "add", "side.txt")
+        _git(source, "commit", "-m", "side release")
+        tag_sha = _git(source, "rev-parse", "HEAD")
+
+    if tag_kind in {"lightweight", "lightweight-decoy"}:
+        _git(source, "tag", "v1.2.3", tag_sha)
+    else:
+        _git(source, "tag", "-a", "v1.2.3", tag_sha, "-m", "v1.2.3")
+    _git(source, "push", "origin", "refs/tags/v1.2.3")
+    if tag_kind == "lightweight-decoy":
+        decoy = "0/refs/tags/v1.2.3"
+        _git(source, "tag", "-a", decoy, tag_sha, "-m", decoy)
+        _git(source, "push", "origin", f"refs/tags/{decoy}")
+
+    _git(tmp_path, "clone", "--branch", "main", str(remote), str(checkout))
+    _git(checkout, "update-ref", "refs/tags/v1.2.3", main_sha)
+    assert _git(checkout, "cat-file", "-t", "refs/tags/v1.2.3") == "commit"
+
+    event_sha = "0" * 40 if mismatched_event else tag_sha
+    return subprocess.run(
+        ["bash", "-c", _release_source_guard()],
+        cwd=checkout,
+        env=_git_env(
+            GITHUB_REF="refs/tags/v1.2.3",
+            GITHUB_SHA=event_sha,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_release_verifier_accepts_consistent_tree(tmp_path) -> None:
@@ -191,6 +284,37 @@ def test_workflow_actions_are_pinned_to_full_commit_shas() -> None:
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for _, _, revision in references)
 
 
+def test_release_source_guard_accepts_remote_annotated_tag_after_local_clobber(
+    tmp_path: Path,
+) -> None:
+    result = _run_release_source_guard(tmp_path, "annotated")
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("tag_kind", "mismatched_event", "expected_error"),
+    [
+        ("lightweight", False, "must be an annotated tag"),
+        ("lightweight-decoy", False, "must be an annotated tag"),
+        ("annotated", True, "not event SHA"),
+        ("off-main", False, "is not reachable from origin/main"),
+    ],
+)
+def test_release_source_guard_rejects_invalid_remote_release_source(
+    tmp_path: Path,
+    tag_kind: str,
+    mismatched_event: bool,
+    expected_error: str,
+) -> None:
+    result = _run_release_source_guard(
+        tmp_path, tag_kind, mismatched_event=mismatched_event
+    )
+
+    assert result.returncode == 1
+    assert expected_error in result.stdout + result.stderr
+
+
 def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
     ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     release = (PROJECT_ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -205,9 +329,15 @@ def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
     assert "working-directory: ${{ runner.temp }}" in ci
     assert "gpt2agent --version" in ci
     assert "needs: [quality, test, windows-smoke, lint-installer]" in ci
-    assert 'git cat-file -t "$GITHUB_REF"' in release
+    assert "workflow_dispatch:" not in release
+    assert 'VERIFY_REF="refs/release-verification/tag"' in release
+    assert 'git fetch --force --no-tags origin "$GITHUB_REF:$VERIFY_REF"' in release
+    assert 'git cat-file -t "$VERIFY_REF"' in release
     assert "must be an annotated tag" in release
-    assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in release
+    assert 'TAG_COMMIT="$(git rev-parse "$VERIFY_REF^{}")"' in release
+    assert 'if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then' in release
+    assert 'git merge-base --is-ancestor "$TAG_COMMIT" origin/main' in release
+    assert 'git cat-file -t "$GITHUB_REF"' not in release
     assert "python scripts/verify_release.py --tag" in release
     assert "distribution_version" in release
     assert "DIST_VERSION" in release
@@ -225,14 +355,26 @@ def test_release_workflows_keep_required_source_and_artifact_gates() -> None:
         "              tests/test_heavy_dr_parser.py"
     ) in release
     assert 'gh pr view "$PR_NUMBER" --json mergeCommit,state' in readme
-    assert "```bash\nset -euo pipefail\ngit switch main" in readme
+    assert (
+        "```bash\nset -euo pipefail\n"
+        "git fetch --no-tags origin main:refs/remotes/origin/main"
+    ) in readme
+    assert "\ngit switch main\n" not in readme
+    assert "git pull --ff-only origin main" not in readme
     assert 'git merge-base --is-ancestor "$RELEASE_SHA" origin/main' in readme
+    assert 'test -z "$(git status --porcelain)"' in readme
     assert 'git switch --detach "$RELEASE_SHA"' in readme
+    assert "trap 'git switch - >/dev/null || true' EXIT" in readme
     assert 'git tag -a "$TAG" "$RELEASE_SHA"' in readme
+    assert 'awk -v ref="refs/tags/$TAG" \'$2 == ref { print $1 }\'' in readme
     assert 'git push origin "refs/tags/$TAG"' in readme
+    assert "trap - EXIT" in readme
+    assert "\ngit switch -\n```" in readme
     assert "Re-run failed jobs" in readme_flat
     assert "Do not re-run the whole workflow" in readme_flat
-    assert "python scripts/verify_release.py --tag v0.0.10" not in readme
+    assert not re.search(
+        r"python scripts/verify_release\.py --tag v\d+\.\d+\.\d+", readme
+    )
 
 
 def test_account_reported_quota_is_not_documented_as_a_fixed_limit() -> None:

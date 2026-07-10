@@ -6,6 +6,22 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-07-10
+
+Recovery release carrying forward every change in the
+[`0.0.10` changelog section](https://github.com/robotlearning123/gpt2agent/blob/v0.0.11/CHANGELOG.md#0010---2026-07-10).
+Version `0.0.10` was tagged but never published to PyPI or as a GitHub Release
+because its source gate inspected a runner-local tag ref that
+`actions/checkout` had rewritten to the peeled commit.
+
+### Fixed
+
+- Release source verification now reads the annotated tag's peeled target from
+  the remote, binds it to the workflow event SHA, and proves that exact commit
+  is on `origin/main`. This remains correct even when checkout rewrites its
+  runner-local tag ref, while still rejecting lightweight, mismatched, and
+  off-main tags.
+
 ## [0.0.10] - 2026-07-10
 
 Patch release from the 2026-07-09 end-to-end security, correctness,

@@ -43,13 +43,20 @@ jobs:
       - name: Require the tagged commit to be on origin/main
         run: |
           set -euo pipefail
-          if [ "$(git cat-file -t "$GITHUB_REF")" != tag ]; then
+          VERIFY_REF="refs/release-verification/tag"
+          git fetch --force --no-tags origin "$GITHUB_REF:$VERIFY_REF"
+          if [ "$(git cat-file -t "$VERIFY_REF")" != tag ]; then
             echo "::error::Release ref $GITHUB_REF must be an annotated tag"
             exit 1
           fi
+          TAG_COMMIT="$(git rev-parse "$VERIFY_REF^{}")"
+          if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+            echo "::error::Release tag $GITHUB_REF resolves to $TAG_COMMIT, not event SHA $GITHUB_SHA"
+            exit 1
+          fi
           git fetch --no-tags origin main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Release tag commit $GITHUB_SHA is not reachable from origin/main"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
+            echo "::error::Release tag commit $TAG_COMMIT is not reachable from origin/main"
             exit 1
           fi
 
