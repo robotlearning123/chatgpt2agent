@@ -146,13 +146,18 @@ def detect_plan() -> str:
     verified_plans: list[str] = []
     for a in accounts.values():
         if isinstance(a, dict):
-            ent = a.get("entitlement") or {}
+            ent = a.get("entitlement")
+            if not isinstance(ent, dict):
+                continue
             plan = str(ent.get("subscription_plan") or "").lower()
-            if "pro" in plan:
+            active = ent.get("has_active_subscription")
+            if active is False:
+                verified_plans.append("free")
+            elif "pro" in plan:
                 verified_plans.append("pro")
             elif "plus" in plan:
                 verified_plans.append("plus")
-            elif "free" in plan or ent.get("has_active_subscription") is False:
+            elif "free" in plan:
                 verified_plans.append("free")
 
     for plan in ("pro", "plus", "free"):

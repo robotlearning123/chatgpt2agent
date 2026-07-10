@@ -83,6 +83,24 @@ def test_setup_manual_token_is_hidden_and_validated(monkeypatch) -> None:
     assert setup._token_via_manual() == "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl"
 
 
+@pytest.mark.parametrize(
+    "token",
+    [
+        "eyJ..",
+        "eyJ.payload.",
+        "eyJ.pay+load.signature",
+        "eyJ.pay/load.signature",
+        "eyJ.payload.sign=ature",
+        "eyJ.payload. signature",
+        "eyJ.one.two.three",
+    ],
+)
+def test_access_token_rejects_malformed_jwt_segments(token) -> None:
+    from gpt2agent.auth import _is_access_token
+
+    assert _is_access_token(token) is False
+
+
 def test_backend_switches_to_new_preferred_codex_source(tmp_path, monkeypatch) -> None:
     from gpt2agent import backend
 
@@ -166,3 +184,43 @@ def test_setup_detects_verified_free_account(monkeypatch) -> None:
     monkeypatch.setattr(backend, "BackendClient", lambda: _PlanClient(response))
 
     assert setup.detect_plan() == "free"
+
+
+@pytest.mark.parametrize("stale_plan", ["plus", "pro"])
+def test_setup_explicit_inactive_subscription_is_free(monkeypatch, stale_plan) -> None:
+    from gpt2agent import backend, setup
+
+    response = {
+        "accounts": {
+            "acct": {
+                "entitlement": {
+                    "subscription_plan": stale_plan,
+                    "has_active_subscription": False,
+                }
+            }
+        }
+    }
+    monkeypatch.setattr(backend, "BackendClient", lambda: _PlanClient(response))
+
+    assert setup.detect_plan() == "free"
+
+
+def test_setup_malformed_entitlement_fails_before_install(monkeypatch) -> None:
+    from gpt2agent import backend, install, setup
+
+    response = {"accounts": {"acct": {"entitlement": "unknown"}}}
+    installed: list[str] = []
+    monkeypatch.setattr(backend, "BackendClient", lambda: _PlanClient(response))
+    monkeypatch.setattr(setup, "get_token", lambda: "eyJ.header.signature")
+    monkeypatch.setattr(setup, "save_token", lambda token: None)
+    monkeypatch.setattr(
+        install,
+        "run_install",
+        lambda **kwargs: installed.append("installed") or 0,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        setup.run_setup()
+
+    assert exc_info.value.code == 1
+    assert installed == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -12,9 +13,12 @@ import webbrowser
 from pathlib import Path
 
 
+_ACCESS_TOKEN_RE = re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\Z")
+
+
 def _is_access_token(token: str) -> bool:
     """Return whether *token* has the three-segment JWT access-token shape."""
-    return token.startswith("eyJ") and token.count(".") == 2
+    return bool(_ACCESS_TOKEN_RE.fullmatch(token))
 
 
 # --------------------------------------------------------------------------- #
@@ -25,7 +29,7 @@ def _is_access_token(token: str) -> bool:
 def _from_codex() -> dict | None:
     """Reuse token from Codex CLI ($CODEX_HOME/auth.json or ~/.codex/auth.json).
 
-    Honors ``CODEX_HOME`` so a multi-account user (e.g. ``CODEX_HOME=~/.codex-cx2``)
+    Honors ``CODEX_HOME`` so a multi-account user (e.g. ``CODEX_HOME=~/.codex-alt``)
     reads the same login that ``backend.py`` will use, instead of the default one.
     """
     codex_home = os.environ.get("CODEX_HOME")
