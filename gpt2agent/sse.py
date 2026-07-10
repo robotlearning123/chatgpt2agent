@@ -546,7 +546,8 @@ class ConversationClient:
             current_msg_id: str | None = None
             last_text = ""
             _conversation_id: str | None = None
-            completed = False
+            done_received = False
+            message_completed = False
 
             def _reset_if_new_msg(msg_id: str | None) -> bool:
                 """Return True if this frame starts a new message (caller must not dedupe)."""
@@ -557,6 +558,12 @@ class ConversationClient:
                     return True
                 return False
 
+            def _track_message_lifecycle(message: dict) -> None:
+                nonlocal message_completed
+                role = (message.get("author") or {}).get("role")
+                if role in ("assistant", "tool"):
+                    message_completed = _is_successful_assistant_terminal(message)
+
             async for raw_line in resp.aiter_lines():
                 if isinstance(raw_line, bytes):
                     raw_line = raw_line.decode("utf-8", errors="replace")
@@ -565,7 +572,7 @@ class ConversationClient:
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
-                    completed = True
+                    done_received = True
                     break
                 try:
                     obj = json.loads(data)
@@ -586,6 +593,7 @@ class ConversationClient:
                     if isinstance(v, str):
                         # String v-patch — continuation of current message id
                         if v:
+                            message_completed = False
                             yield v
                             last_text += v
                         continue
@@ -593,8 +601,7 @@ class ConversationClient:
                         # `{"v":{"message":null}}` makes .get("message", {}) return
                         # None (key present), so chained .get() would AttributeError.
                         vmsg = v.get("message") or {}
-                        if _is_successful_assistant_terminal(vmsg):
-                            completed = True
+                        _track_message_lifecycle(vmsg)
                         msg_id = vmsg.get("id")
                         is_new = _reset_if_new_msg(msg_id)
                         parts = (vmsg.get("content") or {}).get("parts") or []
@@ -619,10 +626,9 @@ class ConversationClient:
                 msg = obj.get("message")
                 if not isinstance(msg, dict):
                     continue
+                _track_message_lifecycle(msg)
                 if msg.get("author", {}).get("role") != "assistant":
                     continue
-                if _is_successful_assistant_terminal(msg):
-                    completed = True
                 content = msg.get("content") or {}
                 ct = content.get("content_type")
                 if ct not in ("text", "multimodal_text"):
@@ -646,7 +652,7 @@ class ConversationClient:
                     yield new
                     last_text = new
 
-            if not completed:
+            if not (done_received or message_completed):
                 raise _IncompleteStreamError(_conversation_id)
 
             # Emit conversation_id for complete() to use (agent mode async detection)
@@ -960,7 +966,8 @@ class ConversationClient:
         tool_calls: list[dict] = []
         tool_responses: list[dict] = []
         multimodal_assets: list[dict] = []
-        completed = False
+        done_received = False
+        message_completed = False
 
         async with AsyncSession(impersonate="chrome131", verify=True) as s:
             resp = await s.post(
@@ -981,7 +988,7 @@ class ConversationClient:
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
-                    completed = True
+                    done_received = True
                     break
                 try:
                     obj = json.loads(data)
@@ -1004,13 +1011,17 @@ class ConversationClient:
                 ct = content.get("content_type", "")
                 parts = content.get("parts") or []
                 status = msg.get("status", "")
+                # A newer assistant/tool lifecycle supersedes any earlier
+                # message-level terminal status. [DONE] remains independent.
+                if role in ("assistant", "tool"):
+                    message_completed = False
 
                 # Assistant text (to "all")
                 if role == "assistant" and recipient == "all" and ct in ("text", "multimodal_text"):
                     str_parts = [p for p in parts if isinstance(p, str)]
+                    message_completed = status == "finished_successfully"
                     if str_parts and status == "finished_successfully":
                         last_text = str_parts[0]
-                        completed = True
                     elif str_parts:
                         new = str_parts[0]
                         if new.startswith(last_text):
@@ -1037,6 +1048,7 @@ class ConversationClient:
 
                 # Tool response
                 elif role == "tool" and recipient == "all":
+                    message_completed = status == "finished_successfully"
                     resp_parts = []
                     img_assets = []
                     for p in parts:
@@ -1060,10 +1072,8 @@ class ConversationClient:
                         "parts": resp_parts,
                     })
                     multimodal_assets.extend(img_assets)
-                    if status == "finished_successfully":
-                        completed = True
 
-        if not completed:
+        if not (done_received or message_completed):
             raise RuntimeError(_INCOMPLETE_RESPONSE_MESSAGE)
         final_text = last_text or "".join(text_parts)
 

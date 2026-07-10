@@ -148,6 +148,29 @@ def test_complete_accepts_explicit_success_at_eof(
     assert result == "complete answer"
 
 
+def test_complete_rejects_newer_partial_after_earlier_success_at_raw_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    success = json.loads(
+        _assistant_frame("earlier complete answer", "finished_successfully")[6:]
+    )
+    success["message"]["id"] = "msg-success"
+    partial = json.loads(_assistant_frame("newer partial answer", "in_progress")[6:])
+    partial["message"]["id"] = "msg-partial"
+    _patch_sse_frames(
+        monkeypatch,
+        ["data: " + json.dumps(success), "data: " + json.dumps(partial)],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="ended before completion"):
+        asyncio.run(
+            client.complete(
+                "gpt-5-3", [{"role": "user", "content": "question"}]
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("recipient", "content_type"),
     [("api_tool.example", "text"), ("all", "thoughts")],
@@ -235,6 +258,34 @@ def test_tool_call_accepts_explicit_success_at_eof(
     result = asyncio.run(client.tool_call("run the tool"))
 
     assert result["text"] == "complete tool answer"
+
+
+def test_tool_call_rejects_partial_summary_after_finished_tool_at_raw_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_response = "data: " + json.dumps(
+        {
+            "message": {
+                "id": "tool-response",
+                "author": {"role": "tool"},
+                "recipient": "all",
+                "content": {"content_type": "text", "parts": ["tool result"]},
+                "status": "finished_successfully",
+            }
+        }
+    )
+    partial_summary = json.loads(
+        _assistant_frame("partial assistant summary", "in_progress")[6:]
+    )
+    partial_summary["message"]["id"] = "assistant-summary"
+    _patch_sse_frames(
+        monkeypatch,
+        [tool_response, "data: " + json.dumps(partial_summary)],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="ended before completion"):
+        asyncio.run(client.tool_call("run the tool"))
 
 
 def _widget_fixture() -> dict:
