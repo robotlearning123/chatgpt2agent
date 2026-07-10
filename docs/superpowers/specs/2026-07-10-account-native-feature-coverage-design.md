@@ -1,6 +1,6 @@
 # Account-native feature coverage and compatibility design
 
-- **Status:** Conversation-approved design, pending committed-spec review
+- **Status:** Conversation-approved design, cross-model corrections applied, pending user re-approval
 - **Date:** 2026-07-10
 - **Target release:** gpt2agent 0.0.12
 - **Primary constraint:** Use the signed-in consumer ChatGPT account session only. Do not use an OpenAI API key, the OpenAI API, Realtime API billing, or a second service credential.
@@ -16,7 +16,7 @@ gpt2agent is a local MCP server that uses the authenticated `chatgpt.com` accoun
 - The Python package allows any future MCP major version through `mcp>=1.26.0`, even though the official Python SDK documents v1 as the current stable line and v2 as pre-release work.
 - ChatGPT changes faster than a manual release cycle, so release-time snapshots alone cannot reveal drift early.
 
-This design adds reliable, read-only account coverage first, makes MCP and Skill contracts explicit, and creates a no-secret compatibility radar. It deliberately does not promise that undocumented ChatGPT web contracts are official or permanently stable.
+This design adds reliable, read-only account coverage first, makes MCP and Skill contracts explicit, and creates a no-secret public-surface drift radar. It deliberately does not promise that undocumented ChatGPT web contracts are official or permanently stable.
 
 ## 2. Evidence and support boundary
 
@@ -28,14 +28,19 @@ Three evidence classes must remain distinct in code, documentation, and status o
 
 Every feature-coverage record therefore carries separate fields for:
 
+- `surface`
 - `entitled`
 - `reachable_now`
+- `reachability_scope`
 - `exposed_by_mcp`
 - `officially_supported`
 - `evidence_source`
 - `observed_at`
+- `status`
+- `reason`
+- `item_contract_status`
 
-The first four fields must never be collapsed into one `supported` boolean. Unknown is represented as `null`, not guessed as `false`.
+Entitlement, reachability, MCP exposure, and official support must never be collapsed into one `supported` boolean. Unknown is represented as `null`, not guessed as `false`.
 
 `officially_supported` describes the exact integration path from a consumer ChatGPT session into gpt2agent, not merely whether OpenAI documents the product feature. A feature such as Voice can be an official ChatGPT product while the private web route used by this project remains unsupported. The evidence reason must make that distinction explicit.
 
@@ -83,7 +88,8 @@ The official update review covered the July 8–9 changes that motivate this rel
 | Generic asynchronous jobs | Product behavior; not scheduled-task proof | `/backend-api/tasks` | Keep `list_tasks`, correct its description |
 | Scheduled automations | Official ChatGPT product surface | `/backend-api/automations` | Add a distinct scheduled-task read tool |
 | Sites | Official Sites public-beta documentation | `/backend-api/websites` and `/access` | Add access and list tools; no creation/publication |
-| Voice catalog and transcript | Official Voice documentation | `/backend-api/settings/voices`; transcript adapter path not yet proven | Add voice catalog; mark post-session transcript retrieval best-effort/unverified |
+| Voice catalog | Official Voice documentation | `/backend-api/settings/voices` | Add the read-only voice catalog |
+| Post-session Voice transcript | Official Voice documentation says transcripts enter chat history | Private transcript adapter path not yet proven | Inventory-only; deferred and `unverified`, with no stable MCP exposure claim |
 | GPT-Live audio | Official Voice product, with explicit initial feature exclusions | Private browser WebRTC evidence only | No stable audio export; defer an optional experimental sidecar |
 | Projects | Official product feature | Candidate list route returned HTTP 405 | Explicitly unsupported in 0.0.12 |
 | Existing conversations, GPTs, memory, instructions, Codex, images, tools, and research | Existing project coverage | Existing tested adapters/SSE paths | Retain and include in the feature-coverage resource; no unrelated expansion |
@@ -100,7 +106,7 @@ The 0.0.12 release will:
 4. Add MCP resources for release-time feature coverage and update evidence.
 5. Apply explicit schemas, tool annotations, pagination, bounded inputs, redaction, and typed errors to new surfaces.
 6. Tighten the existing MCP dependency to the stable v1 line without adding another runtime package.
-7. Add package/release dry-run coverage to pull requests and a scheduled public, no-secret compatibility radar.
+7. Add package/release dry-run coverage to pull requests and a scheduled, no-secret public-surface drift radar.
 8. Preserve the existing local-account privacy boundary and prove a complete PR-to-release workflow for 0.0.12.
 9. Close two existing account-exposure escape hatches: unauthenticated non-loopback HTTP and unredacted raw SSE dumps.
 
@@ -125,9 +131,10 @@ If an experimental GPT-Live bridge is pursued later, it should use a small optio
 
 Performance rules for the Python path are:
 
-- reuse the existing authenticated HTTP client and connection pool;
+- reuse the existing authenticated HTTP client and per-thread connection caches for ordinary calls;
+- snapshot a reloaded bearer token under the existing lock and pass authorization as request-local headers on every authenticated request instead of mutating shared session headers;
 - avoid a browser launch or manifest fetch on every tool call;
-- fetch independent account capability endpoints concurrently with a small concurrency cap;
+- fetch independent account capability endpoints concurrently with a small cap only after tests prove token reload, request-local headers, cookies, and the shared `curl_cffi.Session` remain isolated; otherwise serialize the probe group;
 - use bounded pagination and return cursors instead of collecting an unbounded account history;
 - cache only non-content model/build metadata in memory for a short process-local lifetime;
 - refresh model metadata once after a validation mismatch before returning an error;
@@ -160,7 +167,7 @@ The server continues to prefer local stdio. Stdout is reserved for MCP protocol 
 
 A future remote deployment must use Streamable HTTP, validate `Origin`, bind safely, and add OAuth 2.1/PKCE with audience validation; account tokens must never be passed through from an MCP client.
 
-The backend adds a dependency-free process-wide concurrency limiter and conservative per-route invocation limits. Limits are configurable only within safe documented bounds, do not expose account state, and fail with retry guidance instead of queuing without bound. A 429 response activates route cooldown from a safe `Retry-After` value when present; it is never blindly retried in a tight loop.
+The backend adds a dependency-free process-wide concurrency limiter and conservative per-route invocation limits. Limits are configurable only within safe documented bounds, do not expose account state, and fail with retry guidance instead of queuing without bound. A 429 response activates route cooldown from a safe `Retry-After` value when present; it is never blindly retried in a tight loop. The installed `curl_cffi` line documents `Session` as thread-safe but recommends a separate session per thread; its per-thread handles do not make concurrent mutation of shared session headers a supported contract. The implementation therefore makes authorization request-local, synchronizes token snapshots, replaces all SSE/Sentinel reads of mutable session authorization with the same snapshot helper, and passes a forced-overlap concurrency test before enabling fan-out.
 
 ## 7. MCP surface
 
@@ -189,7 +196,7 @@ Add optional `thinking_effort`. When unset, omit `thinking_effort` from the seri
 3. If the cached model metadata rejects it, refresh once and revalidate.
 4. Return an `unsupported` tool error if the model does not expose configurable effort, and an invalid-input tool error when the value is outside the live allowed set.
 
-Do not hard-code all UI renderer literals as valid for every model. The observed web serializer sends the snake-case scalar `thinking_effort` and omits it when unset.
+The selected `model` must appear in the general `/backend-api/models` catalog. A Work-only identifier is rejected as `unsupported` unless that exact slug independently appears in the general catalog; only then may its general-catalog metadata participate in `thinking_effort` validation. Do not hard-code all UI renderer literals as valid for every model. The observed web serializer sends the snake-case scalar `thinking_effort` and omits it when unset.
 
 ### 7.2 New read-only tools
 
@@ -231,8 +238,8 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 #### `list_work_models()`
 
 - Route: `GET /backend-api/tpp/models/`
-- Return a list of account-visible Work model records with slug/identifier, title, token limit, reasoning configuration, and observed default effort where present.
-- Do not infer general chat-model availability from this Work-only catalog.
+- Return a list of account-visible Work model records with `surface: "work"`, slug/identifier, title, token limit, reasoning configuration, and observed default effort where present.
+- Do not infer general chat-model availability from this Work-only catalog. Treat each Work identifier as opaque and Work-only unless the exact slug independently appears in the general `/backend-api/models` catalog. Do not merge a Work-only slug into `list_models`, suggest it for `chat`/`agent`, or use it for general-chat `thinking_effort` validation; a known Work-only slug supplied to those tools returns `unsupported`.
 
 #### `sites_access()`
 
@@ -257,37 +264,41 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 
 #### `account_capabilities()`
 
-- Query the fixed probe table below concurrently with a small cap. Adding, removing, or changing a probe is a reviewed contract change, not an adapter guess.
-- Return `{"schema_version": "1", "observed_at": <UTC ISO-8601>, "capabilities": [...]}`. Every record has `id`, `entitled`, `reachable_now`, `exposed_by_mcp`, `officially_supported`, `evidence_source` (a bounded list of `official_doc`, `public_bundle`, `live_account`, or `packaged_contract`), `observed_at`, `status`, and a non-sensitive `reason`.
+- Query the fixed probe table below with a small concurrency cap only through the concurrency-safe request path defined in section 6; otherwise query it serially. Adding, removing, or changing a probe is a reviewed contract change, not an adapter guess.
+- Return `{"schema_version": "1", "observed_at": <UTC ISO-8601>, "capabilities": [...]}`. Every record has `id`, `surface` (`chat`, `work`, `codex`, `account`, or `voice`), `entitled`, `reachable_now`, `reachability_scope` (`catalog`, `route`, `execution_path`, or `none`), `exposed_by_mcp`, `officially_supported`, `evidence_source` (a bounded list of `official_doc`, `public_bundle`, `live_account`, or `packaged_contract`), `observed_at`, `status`, a non-sensitive `reason`, and `item_contract_status` (`live_verified`, `public_bundle_only`, `unverified_live`, or `not_applicable`). The last field is universal so consumers do not guess whether it is omitted; non-collection capabilities use `not_applicable`, and populated-item evidence is never overloaded into `status` or `evidence_source`.
 - Partial failure does not erase successful evidence. Failed lanes receive a typed status and `reachable_now: null` unless the response proves `false`.
 - Do not include email, account IDs, raw flags, cookies, request headers, prompts, conversation titles, or content.
 
+`surface` and `reachability_scope` are deterministic contract fields, not inferences from success. The scope names what the packaged probe actually exercises even when it fails: `catalog` for a catalog read, `route` for a feature-specific route/envelope check, `execution_path` only for a separately approved execution probe, and `none` when the available evidence does not exercise that capability's path.
+
 Normative probe table:
 
-| Capability IDs | GET probe | Entitlement rule |
-| --- | --- | --- |
-| `chat_models`, `agent_mode`, `code_interpreter`, `canvas`, `image_generation`, `deep_research` | `/backend-api/models?history_and_training_disabled=false` | `true` only when the valid catalog explicitly advertises the model/tool/capability; otherwise `null` |
-| `work_models` | `/backend-api/tpp/models/` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
-| `apps` | `/backend-api/apps/list` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
-| `plugins` | `/backend-api/plugins/list?scope=USER&limit=1` | `true` when a valid catalog item or explicit access field exists; `null` for a valid empty catalog |
-| `installed_plugins` | `/backend-api/plugins/installed` | inherit proven Plugin entitlement; an empty valid installed list does not mean `false` |
-| `background_jobs` | `/backend-api/tasks?limit=1` | `true` for a valid non-empty account result; `null` for a valid empty result |
-| `scheduled_automations` | `/backend-api/automations?filter=scheduled` | use only an explicit account feature/access boolean; otherwise `null`, including a valid empty result |
-| `sites` | `/backend-api/websites/access`, then `/backend-api/websites?limit=1` when access is true/unknown | use only the explicit boolean access result; never infer `false` from an empty Site list |
-| `voice_catalog` | `/backend-api/settings/voices` | `true` for a valid non-empty catalog; `null` for a valid empty catalog |
-| `conversations` | `/backend-api/conversations?offset=0&limit=1&order=updated` | `true` for a valid envelope, even when empty |
-| `custom_gpts` | `/backend-api/gizmos/snorlax/sidebar` | `true` for a valid non-empty result; `null` when empty |
-| `memory` | `/backend-api/memories` | `true` only from an explicit feature flag or non-empty valid result; otherwise `null` |
-| `custom_instructions` | `/backend-api/user_system_messages` | `true` for a valid contract response; otherwise follow the truth table below |
-| `codex` | `/backend-api/codex/environments` | `true` for a valid non-empty result; `null` when empty |
-| `projects` | `/backend-api/projects` | no entitlement inference; a 404/405 proves only that this unestablished candidate route is `unsupported`, not that Projects are unavailable |
-| `voice_transcript`, `gpt_live` | no content/session probe | `null`; a GET-only capability audit must not start Voice or read a conversation body |
+| Capability IDs | GET probe | `surface` / `reachability_scope` | Entitlement rule |
+| --- | --- | --- | --- |
+| `chat_models` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `catalog` | `true` for a valid non-empty general catalog; this probe establishes only catalog reachability |
+| `agent_mode`, `code_interpreter`, `canvas`, `image_generation`, `deep_research` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `none` | On a valid catalog 2xx, `true` only when the catalog explicitly advertises the capability; otherwise `null`. Because this GET does not execute these distinct paths, leave `reachable_now: null` and `status: "unverified"`. For every non-success outcome of the shared GET, copy only the applicable typed `status` and entitlement result from the truth table into these execution-capability records; keep `reachable_now: null` and `reachability_scope: "none"`. Only the separate `chat_models` record applies the catalog probe's reachability value |
+| `work_models` | `/backend-api/tpp/models/` | `work` / `catalog` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
+| `apps` | `/backend-api/apps/list` | `account` / `catalog` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
+| `plugins` | `/backend-api/plugins/list?scope=USER&limit=1` | `account` / `catalog` | `true` when a valid catalog item or explicit access field exists; `null` for a valid empty catalog |
+| `installed_plugins` | `/backend-api/plugins/installed` | `account` / `catalog` | inherit proven Plugin entitlement; an empty valid installed list does not mean `false` |
+| `background_jobs` | `/backend-api/tasks?limit=1` | `account` / `route` | `true` for a valid non-empty account result; `null` for a valid empty result |
+| `scheduled_automations` | `/backend-api/automations?filter=scheduled` | `account` / `route` | use only an explicit account feature/access boolean; otherwise `null`, including a valid empty result |
+| `sites` | `/backend-api/websites/access`, then `/backend-api/websites?limit=1` when access is true/unknown | `account` / `route` | use only the explicit boolean access result; never infer `false` from an empty Site list |
+| `voice_catalog` | `/backend-api/settings/voices` | `voice` / `catalog` | `true` for a valid non-empty catalog; `null` for a valid empty catalog |
+| `conversations` | `/backend-api/conversations?offset=0&limit=1&order=updated` | `account` / `route` | `true` for a valid envelope, even when empty |
+| `custom_gpts` | `/backend-api/gizmos/snorlax/sidebar` | `account` / `route` | `true` for a valid non-empty result; `null` when empty |
+| `memory` | `/backend-api/memories` | `account` / `route` | `true` only from an explicit feature flag or non-empty valid result; otherwise `null` |
+| `custom_instructions` | `/backend-api/user_system_messages` | `account` / `route` | `true` for a valid contract response; otherwise follow the truth table below |
+| `codex` | `/backend-api/codex/environments` | `codex` / `route` | `true` for a valid non-empty result; `null` when empty |
+| `projects` | `/backend-api/projects` | `account` / `route` | no entitlement inference; a 404/405 proves only that this unestablished candidate route is `unsupported`, not that Projects are unavailable |
+| `voice_transcript`, `gpt_live` | no content/session probe | `voice` / `none` | `null`; a GET-only capability audit must not start Voice or read a conversation body |
 
-Truth table applied independently to every probe:
+Truth table applied independently to the exact surface exercised by every probe. A route result cannot be inherited as reachability proof for a distinct execution path:
 
 | Probe outcome | `reachable_now` | `entitled` | `status` |
 | --- | --- | --- | --- |
 | Valid 2xx minimum schema | `true` | capability-specific rule above | `ok` |
+| Valid catalog 2xx used only as indirect evidence for a distinct execution path | `null` | capability-specific rule above | `unverified` |
 | Explicit access boolean `false` in a valid response | `true` | `false` | `unavailable` |
 | 401 | `null` | `null` | `login_required` |
 | 403 without a safe explicit entitlement or retry code | `null` | `null` | `access_indeterminate` |
@@ -298,6 +309,8 @@ Truth table applied independently to every probe:
 | 2xx with malformed minimum schema | `null` | `null` | `contract_changed` |
 | No permitted probe | `null` | `null` | `unverified` |
 
+`reachable_now` describes the reachability of the exact scope named by `reachability_scope`, not whether the account is entitled to use the product feature. Therefore an explicit access response may truthfully report route reachability together with `entitled: false` and `status: "unavailable"`.
+
 `exposed_by_mcp` comes only from the packaged server registry for this release. `officially_supported` is `false` for every private consumer-account route in this table, even when OpenAI officially documents the product feature. It may become `true` only if OpenAI publishes a supported contract for this exact integration path. A static product-documentation claim is listed in `evidence_source` and `reason`; it never overrides a live truth value.
 
 ### 7.3 MCP resources
@@ -305,7 +318,7 @@ Truth table applied independently to every probe:
 Tools are used for live parameterized account queries. Resources are used for readable, non-secret release context:
 
 - `chatgpt://feature-coverage` — the packaged 0.0.12 coverage matrix, its evidence classes, known limitations, and the release observation date.
-- `chatgpt://update-evidence` — the packaged list of official release-note sources, checked timestamps, compatibility assumptions, and last public-radar result available at build time.
+- `chatgpt://update-evidence` — the packaged list of official release-note sources, checked timestamps, compatibility assumptions, and last public-surface-drift radar result available at build time. Its schema always includes `scope: "public_surface_drift"`, `account_contract_status: "not_checked"`, and `private_adapter_status: "not_checked"`.
 
 Both resources use `application/json` and a deterministic versioned schema. `update-evidence` contains the checked-in release snapshot, not a mutable GitHub Actions artifact. They contain no live account content. Large generated files are exposed by resource link or file reference rather than embedded as base64 tool output.
 
@@ -367,7 +380,7 @@ Privacy requirements:
 - use synthesized fixtures that model only the minimum observed schema;
 - never claim that consumer-account access is an official OpenAI API.
 
-The existing `GPT2AGENT_RAW_DUMP` escape hatch violates this boundary because it persists prompts, responses, resume tokens, and raw SSE objects. Version 0.0.12 removes the raw-dump behavior and all documentation that recommends it. Setting the legacy variable fails closed with an actionable message. The changelog and migration note also explain that `GPT2AGENT_ALLOW_REMOTE` no longer bypasses loopback safety. If diagnostic files are reintroduced later, they require a separate allowlisted, shape-only schema; file mode `0600` alone is not sufficient protection.
+The existing `GPT2AGENT_RAW_DUMP` escape hatch violates this boundary because it persists prompts, responses, resume tokens, and raw SSE objects. Version 0.0.12 removes the raw-dump behavior and all current documentation that recommends it. Setting the legacy variable fails closed with an actionable message. The same change removes the live `GPT2AGENT_ALLOW_REMOTE` opt-in path, `ok-remote` state, generated-config advice, and every current recommendation in server/setup help, README, SECURITY, config examples, Skills, and `docs/`. The positive remote-opt-in test becomes a negative regression proving that the legacy variable cannot bypass a non-loopback refusal. Historical changelog entries and immutable verification records remain historical rather than being rewritten; the new changelog and migration note state that the override no longer works. A final search for `GPT2AGENT_ALLOW_REMOTE` permits the name only in historical/migration text, this design, and negative regression tests. A separate final search for `GPT2AGENT_RAW_DUMP` permits historical/migration text, this design, the fail-closed runtime guard, and negative regression tests; it permits no active dump path or current user guidance. If diagnostic files are reintroduced later, they require a separate allowlisted, shape-only schema; file mode `0600` alone is not sufficient protection.
 
 ## 10. GPT-Live decision
 
@@ -375,8 +388,9 @@ GPT-Live cannot be exported as a supported direct MCP capability today. The curr
 
 Stable 0.0.12 coverage is limited to:
 
-- the live account's voice catalog through `list_voices`;
-- best-effort post-session transcript access through the existing conversation-history tools, subject to ChatGPT's transcript accuracy and retention behavior. This path remains `unverified` until an explicitly selected redacted conversation-body check proves the private adapter handles a Voice transcript shape.
+- the live account's voice catalog through `list_voices`.
+
+Official product documentation says a transcript is added to chat history after a Voice conversation, but that does not prove this private adapter materializes the transcript's content shape. Existing conversation-history tools may happen to expose it, but post-session transcript access is inventory-only and deferred in 0.0.12: `reachable_now: null`, `reachability_scope: "none"`, `status: "unverified"`, and no claim of stable MCP exposure. It may move to stable coverage only after an explicitly selected, content-safe redacted fixture and live check prove the conversation-history adapter handles the observed Voice shape.
 
 A later experimental account-session bridge may use the private browser WebRTC routes observed in the signed-in web application. Its MCP surface would be control-only, such as `start`, `status`, `send_text`, `end`, and `get_transcript`; audio would remain on local WebRTC. It must be optional, disabled by default, labeled private/experimental, and isolated in a TypeScript sidecar so private media churn cannot destabilize the Python read server.
 
@@ -402,13 +416,14 @@ Use synthesized fixtures for:
 - empty and populated `{items, cursor}` automation/Site envelopes;
 - Plugin list pagination and installed-plugin envelope differences;
 - Work model and voice normalization;
-- capability partial failures and truth-state separation;
+- Work-only model rejection on general `chat`/`agent` paths unless the exact slug also appears in the general catalog;
+- capability partial failures, truth-state separation, and proof that catalog reachability never promotes a distinct execution path to `reachable_now: true`;
 - redaction of sensitive fields and safe URL handling;
 - suppression of signed Site URLs and sanitization of `live_url`;
 - each typed backend exception and MCP error mapping;
 - refusal of every non-loopback HTTP bind, including the legacy override, plus loopback `Origin` validation;
 - fail-closed handling of the legacy raw-dump variable;
-- concurrency/rate limits, 429 cooldown, bounded retry, and safe `Retry-After` parsing;
+- forced-overlap token reload with request-local authorization, replacement of direct SSE/Sentinel session-header reads, shared-session concurrency isolation, concurrency/rate limits, 429 cooldown, bounded retry, and safe `Retry-After` parsing;
 - omission, acceptance, refresh, and rejection of `thinking_effort`;
 - public metadata resolver overrides, validation, caching, retry bounds, and fallback;
 - MCP resource schemas, URIs, and absence of account content;
@@ -419,7 +434,7 @@ Every adapter must distinguish an honestly empty collection from a malformed con
 
 ### 12.2 Local live contract tests
 
-An explicit live test group is opt-in from normal `pytest` and is never run in hosted CI. It is nevertheless a required manual pre-release gate, run by the release owner with a maintainer-controlled local ChatGPT Pro session. A checked-in generator emits a schema-validated, canonically serialized receipt containing schema version, package version, full Git commit SHA, Git tree SHA, wheel/sdist filenames and SHA-256 values from the same checkout, plan class, UTC timestamp, adapter status, counts, and redacted shape results. It never records account identity or content. The receipt file's SHA-256 is computed externally and recorded in release evidence.
+An explicit live test group is opt-in from normal `pytest` and is never run in hosted CI. It is nevertheless a required manual pre-release gate, run by the release owner with a maintainer-controlled local ChatGPT Pro session. A checked-in generator emits a schema-validated, canonically serialized receipt containing schema version, package version, full Git commit SHA, Git tree SHA, a `local_candidate_artifacts` object with wheel/sdist filenames, SHA-256 values, source commit/tree, and `build_origin: "local_live_gate"`, plan class, UTC timestamp, adapter status, counts, and redacted shape results. It never records account identity or content. The receipt file's SHA-256 is computed externally and recorded in release evidence.
 
 The live group must:
 
@@ -430,7 +445,9 @@ The live group must:
 - leave no snapshots, cookies, screenshots, or temporary account artifacts;
 - report entitlement, reachability, and official support separately.
 
-An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. Voice transcript parsing is not part of the required gate and remains marked unverified until a user explicitly selects an existing Voice conversation for a content-safe test.
+An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `voice_catalog`, `conversations`, `custom_gpts`, `memory`, `codex`, and `projects`; every other capability uses `item_contract_status: "not_applicable"`.
+
+Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. Voice transcript parsing is not part of the required gate and remains inventory-only and unverified until a user explicitly selects an existing Voice conversation for a content-safe test.
 
 The gate is invalidated by any subsequent source, test, dependency, build, or version change. It is run once on the final reviewed PR head and again on the merged `main` commit immediately before tagging. The pre-tag receipt becomes a GitHub Release asset; its local copy is deleted only after upload and digest verification.
 
@@ -440,7 +457,7 @@ The required PR pipeline continues to run Ruff, release-metadata verification, t
 
 The aggregate `required` job includes the package dry-run so branch protection has one reliable gate.
 
-### 12.4 Scheduled public compatibility radar
+### 12.4 Scheduled public-surface drift radar
 
 A separate scheduled/manual workflow runs without account credentials or repository secrets beyond the default read token. It checks:
 
@@ -450,7 +467,7 @@ A separate scheduled/manual workflow runs without account credentials or reposit
 - the current stable MCP v1 release and latest MCP specification date;
 - packaged fallback client/build metadata freshness.
 
-The radar writes a redacted JSON/Markdown evidence artifact and GitHub Actions annotations. Contract-marker loss fails the radar visibly; documentation fingerprint changes produce a review-needed result. It does not open a PR, modify source, access a ChatGPT account, or release automatically. A maintainer reviews the evidence, performs an opt-in local account contract check where needed, then ships a normal tested PR.
+The radar writes a redacted JSON/Markdown evidence artifact and GitHub Actions annotations. Contract-marker loss fails this public-surface drift radar visibly; documentation fingerprint changes produce a review-needed result. A green result proves only that the checked public documentation fingerprints and bundle markers remain present. It never establishes private-route reachability, adapter health, account entitlement, release readiness, or any `reachable_now` value, and the artifact records those statuses as `not_checked`. It does not open a PR, modify source, access a ChatGPT account, or release automatically. A maintainer reviews the evidence, performs an opt-in local account contract check where needed, then ships a normal tested PR.
 
 ## 13. Release and rollback workflow
 
@@ -461,12 +478,12 @@ Implementation starts in an isolated feature worktree after an implementation pl
 3. Run the full offline suite, Ruff, release verifier, package dry-run, secret scan, and `git diff --check`; commit the intended release candidate.
 4. Run the required local GET-only contract group on that commit and generate the non-identifying receipt defined in section 12.2 from the same checkout/artifacts.
 5. Open a PR, obtain independent review, resolve every thread, and require all CI gates green.
-6. After the final PR revision, rerun step 3 and the live gate. The receipt must name the exact reviewed PR-head commit/tree and candidate artifact hashes. Any later revision invalidates it.
-7. Merge to `main` without tagging. Check out the exact merged commit, verify it is on `origin/main`, rerun the package dry-run and live gate, and generate a new receipt naming the merged commit/tree and artifact hashes.
+6. After the final PR revision, rerun step 3 and the live gate. The receipt must name the exact reviewed PR-head commit/tree and `local_candidate_artifacts` hashes. Any later revision invalidates it.
+7. Merge to `main` without tagging. Check out the exact merged commit, verify it is on `origin/main`, rerun the package dry-run and live gate, and generate a new receipt naming the merged commit/tree and `local_candidate_artifacts` hashes.
 8. Create and push annotated `v0.0.12` only after step 7 passes. Include the pre-tag receipt SHA-256 in the annotated tag message.
-9. Let the existing OIDC release workflow build and publish. Verify PyPI filenames and SHA-256 hashes match that workflow's built artifacts, the GitHub Release exists, and a clean install reports 0.0.12.
+9. Let the existing OIDC release workflow build and publish. Record those independently rebuilt files as `release_workflow_artifacts`, including workflow run/job identity; verify PyPI filenames and SHA-256 hashes against that same workflow artifact set, verify the GitHub Release exists, and confirm a clean install reports 0.0.12. Do not compare `local_candidate_artifacts` hashes with `release_workflow_artifacts` unless reproducible builds become an explicit, separately tested release requirement.
 10. Attach the pre-tag receipt to the GitHub Release and verify its SHA-256 matches the tag annotation.
-11. Remove only owned worktrees, build output, logs, receipts, and temporary artifacts after required uploads. Preserve and report any pre-existing unrelated worktree changes instead of forcing global cleanliness.
+11. Remove only owned worktrees, build output, logs, receipts, and temporary artifacts after required uploads. Inventory pre-existing parent-workspace residue separately from Git worktree state, and delete or archive it only with owner authorization; preserve and report unrelated changes instead of forcing global cleanliness.
 
 If publication fails after any artifact reaches PyPI, fix forward with the existing immutable version and workflow retry semantics where possible, or a new patch version when artifact contents must change. Never move or silently replace a published tag.
 
@@ -480,7 +497,7 @@ The release candidate is ready to merge only when all of the following are true:
 - generic jobs and scheduled automations are represented by distinct tools and documentation;
 - all new read tools satisfy their documented schemas on synthesized variants and the release owner has completed the required local shape-only gate on the exact final reviewed PR-head commit; honest empty/unavailable outcomes are recorded separately from populated fixture coverage;
 - `thinking_effort` is omitted by default and validated against the selected live model when supplied;
-- feature status preserves entitlement, reachability, MCP exposure, official support, evidence source, and observation time separately;
+- feature status preserves surface, entitlement, reachability, reachability scope, MCP exposure, official support, evidence source, observation time, typed status/reason, and item-contract status separately;
 - the packaged coverage resource accounts for every existing MCP tool and every known feature in the dated decision matrix, including explicit deferred/unsupported entries;
 - MCP resources resolve with deterministic non-secret content;
 - new tools have explicit schemas, pagination, bounds, annotations, redaction, and typed errors;
@@ -488,11 +505,11 @@ The release candidate is ready to merge only when all of the following are true:
 - bundled Skill guidance is updated and trigger/package tests pass;
 - dependency metadata constrains the stable MCP v1 major;
 - no CI job contains a consumer ChatGPT credential;
-- the scheduled public radar reports evidence without mutating source or account state;
+- the scheduled public-surface drift radar reports only public drift evidence, explicitly records account/private adapter status as `not_checked`, and does not mutate source or account state;
 - the PR package dry-run installs and checks wheel and sdist cleanly;
 - the complete offline test matrix, lint, release checks, and independent review pass;
-- the candidate receipt records version 0.0.12, the final PR-head commit/tree, candidate wheel/sdist hashes, and redacted live results;
-- no unexplained owned residue remains; the implementation worktree contains only the intended commits and any unrelated user changes are preserved and reported.
+- the candidate receipt records version 0.0.12, the final PR-head commit/tree, `local_candidate_artifacts` wheel/sdist hashes, and redacted live results;
+- no unexplained owned residue remains; the implementation worktree contains only the intended commits, while parent-workspace residue and unrelated user changes are separately inventoried, preserved, and reported unless the owner authorizes cleanup.
 
 ### 14.2 Pre-tag acceptance on merged `main`
 
@@ -501,7 +518,7 @@ The annotated tag may be created only when:
 - the merged commit is verified on `origin/main` and contains the reviewed release-candidate tree;
 - the package/release dry-run passes from that exact merged commit;
 - the required local live gate passes from that exact merged commit;
-- the pre-tag receipt records version 0.0.12, merged commit/tree, wheel/sdist hashes, and redacted live results;
+- the pre-tag receipt records version 0.0.12, merged commit/tree, `local_candidate_artifacts` wheel/sdist hashes, and redacted live results;
 - the annotated tag message records the receipt SHA-256.
 
 ### 14.3 Post-publish completion
@@ -509,7 +526,7 @@ The annotated tag may be created only when:
 The release is complete only after:
 
 - the annotated `v0.0.12` tag is verified on the merged `origin/main` commit;
-- PyPI exposes the expected wheel and sdist and every filename/SHA-256 matches the workflow artifacts;
+- PyPI exposes the expected wheel and sdist and every filename/SHA-256 matches `release_workflow_artifacts`; those hashes are not compared with `local_candidate_artifacts` in this non-reproducible-build workflow;
 - the GitHub Release exists with the correct changelog section;
 - the attached pre-tag receipt matches the SHA-256 recorded in the annotated tag;
 - a clean environment installs from PyPI and reports `gpt2agent 0.0.12`;
