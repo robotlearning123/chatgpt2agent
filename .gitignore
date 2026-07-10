@@ -29,3 +29,8 @@ uv.lock
 
 # Logs
 *.log
+
+# Raw diagnostic data (unredacted)
+research/dr-*/events.jsonl
+gpt2agent-raw-dump*.jsonl
+.gpt2agent-raw-dump*.jsonl

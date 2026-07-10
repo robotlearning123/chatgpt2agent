@@ -1,0 +1,603 @@
+"""Offline regressions for v0.0.10 stream and Deep Research hardening."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import json
+import os
+import stat
+import time
+from copy import deepcopy
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+from gpt2agent import sentinel as sentinel_mod
+from gpt2agent import sse as sse_mod
+
+
+class _FrameResponse:
+    status_code = 200
+    text = ""
+
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+
+class _Backend:
+    class _Session:
+        headers: dict[str, str] = {"User-Agent": "test-agent"}
+
+    _session = _Session()
+
+    def _reload_token_if_stale(self) -> None:
+        pass
+
+    def post(self, *_: Any, **__: Any) -> dict:
+        return {
+            "limits_progress": [
+                {"feature_name": "deep_research", "remaining": 100}
+            ]
+        }
+
+
+class _SentinelStub:
+    def __init__(self, *_: Any, **__: Any) -> None:
+        pass
+
+    async def get_tokens(self) -> dict[str, str]:
+        return {"chat-requirements": "stub", "proof": "", "turnstile": ""}
+
+
+def _patch_sse_frames(
+    monkeypatch: pytest.MonkeyPatch, lines: list[str]
+) -> None:
+    class _FrameSession:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_FrameSession":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def post(self, *_: Any, **__: Any) -> _FrameResponse:
+            return _FrameResponse(lines)
+
+    monkeypatch.setattr(sse_mod, "AsyncSession", _FrameSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _SentinelStub)
+
+
+def _assistant_frame(text: str, status: str) -> str:
+    return "data: " + json.dumps(
+        {
+            "message": {
+                "id": "msg-1",
+                "author": {"role": "assistant"},
+                "recipient": "all",
+                "content": {"content_type": "text", "parts": [text]},
+                "status": status,
+            }
+        }
+    )
+
+
+def test_raw_dump_creates_private_file_under_permissive_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dump = tmp_path / "raw.jsonl"
+    monkeypatch.setenv("GPT2AGENT_RAW_DUMP", str(dump))
+
+    previous_umask = os.umask(0o022)
+    try:
+        sse_mod._raw_dump({"secret": "value"}, phase="test")
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(dump.stat().st_mode) == 0o600
+
+
+def test_raw_dump_tightens_existing_permissive_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dump = tmp_path / "raw.jsonl"
+    dump.write_text("old\n", encoding="utf-8")
+    dump.chmod(0o644)
+    monkeypatch.setenv("GPT2AGENT_RAW_DUMP", str(dump))
+
+    sse_mod._raw_dump({"new": True}, phase="test")
+
+    assert stat.S_IMODE(dump.stat().st_mode) == 0o600
+    assert len(dump.read_text(encoding="utf-8").splitlines()) == 2
+
+
+def test_complete_rejects_partial_text_at_raw_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sse_frames(monkeypatch, [_assistant_frame("partial answer", "in_progress")])
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="ended before completion"):
+        asyncio.run(
+            client.complete(
+                "gpt-5-3", [{"role": "user", "content": "question"}]
+            )
+        )
+
+
+def test_complete_accepts_explicit_success_at_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sse_frames(
+        monkeypatch, [_assistant_frame("complete answer", "finished_successfully")]
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        client.complete("gpt-5-3", [{"role": "user", "content": "question"}])
+    )
+
+    assert result == "complete answer"
+
+
+@pytest.mark.parametrize(
+    ("recipient", "content_type"),
+    [("api_tool.example", "text"), ("all", "thoughts")],
+)
+def test_complete_rejects_nonterminal_finished_message_at_eof(
+    monkeypatch: pytest.MonkeyPatch,
+    recipient: str,
+    content_type: str,
+) -> None:
+    frame = json.loads(_assistant_frame("not a final answer", "finished_successfully")[6:])
+    frame["message"]["recipient"] = recipient
+    frame["message"]["content"]["content_type"] = content_type
+    _patch_sse_frames(monkeypatch, ["data: " + json.dumps(frame)])
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="ended before completion"):
+        asyncio.run(
+            client.complete(
+                "gpt-5-3", [{"role": "user", "content": "question"}]
+            )
+        )
+
+
+def test_complete_uses_only_verified_poll_recovery_after_raw_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = json.loads(_assistant_frame("partial answer", "in_progress")[6:])
+    frame["conversation_id"] = "conv-recovery"
+    _patch_sse_frames(monkeypatch, ["data: " + json.dumps(frame)])
+
+    class _PollingBackend(_Backend):
+        def get(self, *_: Any, **__: Any) -> dict:
+            return {
+                "mapping": {
+                    "final": {
+                        "message": {
+                            "author": {"role": "assistant"},
+                            "content": {
+                                "content_type": "text",
+                                "parts": ["verified final answer"],
+                            },
+                            "status": "finished_successfully",
+                            "create_time": 1,
+                        }
+                    }
+                }
+            }
+
+    async def _no_sleep(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(sse_mod.asyncio, "sleep", _no_sleep)
+    client = sse_mod.ConversationClient(_PollingBackend())  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        client.complete(
+            "gpt-5-3",
+            [{"role": "user", "content": "question"}],
+            poll_async=True,
+        )
+    )
+
+    assert result == "verified final answer"
+
+
+def test_tool_call_rejects_partial_text_at_raw_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sse_frames(monkeypatch, [_assistant_frame("partial tool answer", "in_progress")])
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="ended before completion"):
+        asyncio.run(client.tool_call("run the tool"))
+
+
+def test_tool_call_accepts_explicit_success_at_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sse_frames(
+        monkeypatch,
+        [_assistant_frame("complete tool answer", "finished_successfully")],
+    )
+    client = sse_mod.ConversationClient(_Backend())  # type: ignore[arg-type]
+
+    result = asyncio.run(client.tool_call("run the tool"))
+
+    assert result["text"] == "complete tool answer"
+
+
+def _widget_fixture() -> dict:
+    return json.loads(
+        Path("tests/fixtures/heavy_dr_widget_state.json").read_text(
+            encoding="utf-8"
+        )
+    )["carrier_a_tool_text"]
+
+
+def _dispatch_detail() -> dict:
+    dispatch = (
+        '{"path": "/Deep Research App/implicit_link::'
+        'connector_openai_deep_research/start", "args": {"query": "test"}}'
+    )
+    return {
+        "mapping": {
+            "dispatch": {
+                "message": {
+                    "author": {"role": "assistant"},
+                    "recipient": "all",
+                    "content": {"content_type": "text", "parts": [dispatch]},
+                    "status": "finished_successfully",
+                    "create_time": 1,
+                    "metadata": {},
+                }
+            }
+        }
+    }
+
+
+def test_phase_two_poll_skips_finished_connector_dispatch() -> None:
+    responses = [_dispatch_detail(), _widget_fixture()]
+
+    class _PollingBackend(_Backend):
+        def __init__(self) -> None:
+            self.get_calls = 0
+
+        def get(self, *_: Any, **__: Any) -> dict:
+            response = responses[self.get_calls]
+            self.get_calls += 1
+            return response
+
+    backend = _PollingBackend()
+    client = sse_mod.ConversationClient(backend)  # type: ignore[arg-type]
+
+    async def _collect() -> list[dict]:
+        events: list[dict] = []
+        async for event in client._poll_dr_completion(
+            "conv-1", interval=0, max_wait=1
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_collect())
+    done = [event for event in events if event.get("type") == "done"]
+
+    assert backend.get_calls == 2
+    assert len(done) == 1
+    assert done[0]["text"].startswith("# Report A")
+
+
+def test_widget_report_rejects_assistant_carrier_and_keeps_tool_fixture() -> None:
+    tool_detail = _widget_fixture()
+    assistant_detail = deepcopy(tool_detail)
+    only_node = next(iter(assistant_detail["mapping"].values()))
+    only_node["message"]["author"]["role"] = "assistant"
+
+    assert sse_mod._dr_report_from_widget_state(assistant_detail) == ("", [])
+
+    text, references = sse_mod._dr_report_from_widget_state(tool_detail)
+    assert text.startswith("# Report A")
+    assert references
+
+
+def test_phase_two_done_preserves_phase_one_connector_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames = [
+        "data: "
+        + json.dumps(
+            {
+                "conversation_id": "conv-failed",
+                "v": {
+                    "message": {
+                        "id": "tool-call",
+                        "author": {"role": "assistant"},
+                        "recipient": "api_tool_chatgpt_deep_research",
+                        "content": {"content_type": "text", "parts": ["call"]},
+                        "status": "in_progress",
+                        "metadata": {},
+                    }
+                },
+            }
+        ),
+        "data: "
+        + json.dumps(
+            {
+                "v": {
+                    "message": {
+                        "id": "tool-error",
+                        "author": {"role": "tool"},
+                        "recipient": "all",
+                        "content": {
+                            "content_type": "text",
+                            "parts": ["Error: connector unavailable"],
+                        },
+                        "status": "finished_successfully",
+                        "metadata": {},
+                    }
+                }
+            }
+        ),
+        "data: [DONE]",
+    ]
+    _patch_sse_frames(monkeypatch, frames)
+
+    class _PollingBackend(_Backend):
+        def get(self, *_: Any, **__: Any) -> dict:
+            return _widget_fixture()
+
+    async def _no_sleep(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(sse_mod.asyncio, "sleep", _no_sleep)
+    client = sse_mod.ConversationClient(_PollingBackend())  # type: ignore[arg-type]
+
+    async def _collect() -> list[dict]:
+        events: list[dict] = []
+        async for event in client.deep_research_heavy("query"):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_collect())
+    assert any(event.get("type") == "tool_error" for event in events)
+    done = [event for event in events if event.get("type") == "done"][-1]
+    assert done["connector_failed"] is True
+
+
+class _SentinelBackend:
+    class _Session:
+        headers: dict[str, str] = {"User-Agent": "test-agent"}
+
+    _session = _Session()
+
+
+def _patch_sentinel_response(
+    monkeypatch: pytest.MonkeyPatch, payload: dict
+) -> None:
+    class _Response:
+        status_code = 200
+        text = json.dumps(payload)
+
+        def json(self) -> dict:
+            return payload
+
+    class _Session:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_Session":
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def post(self, *_: Any, **__: Any) -> _Response:
+            return _Response()
+
+    monkeypatch.setattr(sentinel_mod, "AsyncSession", _Session)
+    monkeypatch.setattr(sentinel_mod._pow, "get_requirements_token", lambda _: "p")
+
+
+def test_pow_solver_does_not_block_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sentinel_response(
+        monkeypatch,
+        {
+            "token": "chat-token",
+            "proofofwork": {
+                "required": True,
+                "seed": "seed",
+                "difficulty": "difficulty",
+            },
+        },
+    )
+    order: list[str] = []
+
+    def _slow_solver(*_: Any) -> str:
+        time.sleep(0.30)
+        order.append("solver")
+        return "proof-token"
+
+    monkeypatch.setattr(sentinel_mod._pow, "solve_pow", _slow_solver)
+
+    async def _heartbeat() -> None:
+        await asyncio.sleep(0.05)
+        order.append("heartbeat")
+
+    async def _run() -> dict[str, str]:
+        gate = sentinel_mod.SentinelGate(_SentinelBackend())  # type: ignore[arg-type]
+        result, _ = await asyncio.gather(gate.get_tokens(), _heartbeat())
+        return result
+
+    result = asyncio.run(_run())
+    assert order[0] == "heartbeat"
+    assert result["proof"] == "proof-token"
+
+
+def test_required_turnstile_without_dx_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sentinel_response(
+        monkeypatch,
+        {
+            "token": "chat-token",
+            "proofofwork": {"required": False},
+            "turnstile": {"required": True},
+        },
+    )
+    gate = sentinel_mod.SentinelGate(_SentinelBackend())  # type: ignore[arg-type]
+
+    with pytest.raises(
+        RuntimeError, match="required Turnstile challenge could not be solved"
+    ):
+        asyncio.run(gate.get_tokens())
+
+
+def test_required_pow_unsolved_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sentinel_response(
+        monkeypatch,
+        {
+            "token": "chat-token",
+            "proofofwork": {
+                "required": True,
+                "seed": "seed",
+                "difficulty": "difficulty",
+            },
+        },
+    )
+    monkeypatch.setattr(sentinel_mod._pow, "solve_pow", lambda *_: None)
+    gate = sentinel_mod.SentinelGate(_SentinelBackend())  # type: ignore[arg-type]
+
+    with pytest.raises(
+        RuntimeError, match="required POW challenge could not be solved"
+    ):
+        asyncio.run(gate.get_tokens())
+
+
+def test_required_turnstile_unsolved_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_sentinel_response(
+        monkeypatch,
+        {
+            "token": "chat-token",
+            "proofofwork": {"required": False},
+            "turnstile": {"required": True, "dx": "challenge"},
+        },
+    )
+    monkeypatch.setattr(sentinel_mod._turn, "solve_turnstile", lambda *_: None)
+    gate = sentinel_mod.SentinelGate(_SentinelBackend())  # type: ignore[arg-type]
+
+    with pytest.raises(
+        RuntimeError, match="required Turnstile challenge could not be solved"
+    ):
+        asyncio.run(gate.get_tokens())
+
+
+def _load_runner() -> ModuleType:
+    path = Path("gpt2agent/skills/deep-research/bin/deep_research.py")
+    spec = importlib.util.spec_from_file_location("_test_deep_research_runner", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _patch_runner_events(
+    monkeypatch: pytest.MonkeyPatch, runner: ModuleType, events: list[dict]
+) -> None:
+    async def _events():
+        for event in events:
+            yield event
+
+    class _Conversation:
+        def __init__(self, _: object) -> None:
+            pass
+
+        def deep_research(self, _: str):
+            return _events()
+
+        def deep_research_heavy(self, _: str):
+            return _events()
+
+    monkeypatch.setattr(runner, "BackendClient", lambda: object())
+    monkeypatch.setattr(runner, "ConversationClient", _Conversation)
+
+
+@pytest.mark.parametrize(
+    ("events", "case"),
+    [
+        (
+            [
+                {
+                    "type": "done",
+                    "text": "partial timeout",
+                    "terminated_abnormally": True,
+                    "timeout": True,
+                }
+            ],
+            "timeout",
+        ),
+        (
+            [
+                {
+                    "type": "done",
+                    "text": "partial abnormal",
+                    "terminated_abnormally": True,
+                }
+            ],
+            "abnormal",
+        ),
+        ([], "empty"),
+    ],
+)
+def test_bundled_runner_marks_incomplete_streams(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    events: list[dict],
+    case: str,
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(monkeypatch, runner, events)
+    out_dir = tmp_path / case
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status != 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "INCOMPLETE\t"
+    )
+    assert "incomplete" in capsys.readouterr().out.lower()
+
+
+def test_bundled_runner_keeps_clean_done_successful(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _load_runner()
+    _patch_runner_events(
+        monkeypatch,
+        runner,
+        [{"type": "done", "text": "complete report", "content_references": []}],
+    )
+    out_dir = tmp_path / "complete"
+
+    status = asyncio.run(runner._run("query", "light", out_dir))
+
+    assert status == 0
+    assert (out_dir / "status.txt").read_text(encoding="utf-8").startswith(
+        "DONE\t"
+    )

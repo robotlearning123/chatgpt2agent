@@ -56,6 +56,8 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
     t0 = time.time()
     n_events = 0
     seen_first_done = False
+    selected_done_complete = False
+    selected_done_reason = "no completed done event"
     light_final_text = ""
     light_refs: list = []
     light_groups: list = []
@@ -93,6 +95,15 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
                         light_final_text = txt
                         light_refs = ev.get("content_references", []) or light_refs
                         light_groups = ev.get("search_result_groups", []) or light_groups
+                        if ev.get("timeout"):
+                            selected_done_complete = False
+                            selected_done_reason = "polling timed out"
+                        elif ev.get("terminated_abnormally"):
+                            selected_done_complete = False
+                            selected_done_reason = "stream terminated abnormally"
+                        else:
+                            selected_done_complete = True
+                            selected_done_reason = ""
                     seen_first_done = True
                 elif et == "progress":
                     txt = ev.get("text", "")
@@ -149,6 +160,20 @@ async def _run(query: str, mode: str, out_dir: Path) -> int:
         meta_path.write_text(json.dumps(meta_data, indent=2, default=str))
 
     elapsed = time.time() - t0
+    if not selected_done_complete:
+        status_path.write_text(
+            f"INCOMPLETE\t{time.strftime('%Y-%m-%d %H:%M:%S')}\tmode={mode}\t"
+            f"elapsed={elapsed:.0f}s\tevents={n_events}\t"
+            f"body_chars={len(body)}\trefs={len(lines)}\t"
+            f"reason={selected_done_reason}\n"
+        )
+        print(
+            f"[incomplete] {selected_done_reason}; retry the run and inspect "
+            f"{events_path}",
+            flush=True,
+        )
+        return 3
+
     status_path.write_text(
         f"DONE\t{time.strftime('%Y-%m-%d %H:%M:%S')}\tmode={mode}\t"
         f"elapsed={elapsed:.0f}s\tevents={n_events}\t"
