@@ -318,15 +318,15 @@ intended annotated tag. This avoids silently including a later unrelated PR:
 
 ```bash
 set -euo pipefail
-git switch main
-git pull --ff-only origin main
 git fetch --no-tags origin main:refs/remotes/origin/main
 read -r -p "Merged release PR number: " PR_NUMBER
 RELEASE_SHA=$(gh pr view "$PR_NUMBER" --json mergeCommit,state \
   --jq 'select(.state == "MERGED") | .mergeCommit.oid')
 test -n "$RELEASE_SHA"
 git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+test -z "$(git status --porcelain)"
 git switch --detach "$RELEASE_SHA"
+trap 'git switch - >/dev/null || true' EXIT
 test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
 VERSION=$(python - <<'PY'
 try:
@@ -339,22 +339,37 @@ PY
 )
 TAG="v$VERSION"
 python scripts/verify_release.py --tag "$TAG"
+REMOTE_TAG_SHA="$(
+  git ls-remote --tags origin |
+    awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }'
+)"
+if [ -n "$REMOTE_TAG_SHA" ]; then
+  echo "Release tag already exists on origin: $TAG" >&2
+  exit 1
+fi
 git tag -a "$TAG" "$RELEASE_SHA" -m "gpt2agent $VERSION"
-git switch main
 git push origin "refs/tags/$TAG"
+trap - EXIT
+git switch -
 ```
 
 The release workflow (`.github/workflows/release.yml`) verifies every version
-surface and the CHANGELOG, proves the tagged commit is on `origin/main`, runs
-the test matrix, installs and tests the built wheel and sdist in clean
-environments, publishes to PyPI via OIDC trusted publishing, and posts a GitHub
-Release with that version's CHANGELOG body.
+surface and the CHANGELOG, reads the remote annotated tag target independently
+of checkout's runner-local tag ref, binds it to the event SHA, and proves that
+commit is on `origin/main`. It then runs the test matrix, installs and tests the
+built wheel and sdist in clean environments, publishes to PyPI via OIDC trusted
+publishing, and posts a GitHub Release with that version's CHANGELOG body.
 
 If a publish or downstream release job fails, use GitHub Actions' **Re-run
 failed jobs** on that same workflow run so it reuses the original build
 artifact. Do not re-run the whole workflow after any file reaches PyPI: Python
 sdists are not guaranteed byte-reproducible, and the hash guard intentionally
 rejects different rebuilt bytes for an existing version.
+
+If the source gate itself exposes a workflow defect before anything is
+published, fix the workflow on `main` and prepare the next version. Never
+delete, move, or reuse the failed protected release tag: reruns still execute
+the workflow stored at that immutable tagged commit.
 
 > PyPI publishing requires a Trusted Publisher for this repository, workflow
 > `release.yml`, and environment `pypi`. Keep that environment restricted to
