@@ -526,7 +526,18 @@ Every adapter must distinguish an honestly empty collection from a malformed con
 
 ### 12.2 Local live contract tests
 
-An explicit live test group is opt-in from normal `pytest` and is never run in hosted CI. It is nevertheless a required manual pre-release gate, run by the release owner with a maintainer-controlled local ChatGPT Pro session. A checked-in generator emits a schema-validated, canonically serialized receipt containing schema version, package version, full Git commit SHA, Git tree SHA, a `local_candidate_artifacts` object with wheel/sdist filenames, SHA-256 values, source commit/tree, and `build_origin: "local_live_gate"`, plan class, UTC timestamp, adapter status, counts, and redacted shape results. It never records account identity or content. The receipt file's SHA-256 is computed externally and recorded in release evidence.
+An explicit live test group is opt-in from normal `pytest` and is never run in
+hosted CI. It is nevertheless a required manual pre-release gate, run by the
+release owner with a maintainer-controlled local ChatGPT Pro session against the
+exact immutable artifact from successful main CI. A checked-in generator emits
+a schema-validated, canonically serialized receipt containing schema/package
+version, full Git commit/tree, `.github/workflows/ci.yml` push identity, run ID,
+producing attempt, artifact ID/digest/size/expiry, exact wheel/sdist
+filenames/sizes/SHA-256 values, `build_origin: "main_ci_package_artifact"`, plan
+class, UTC timestamps, adapter status/counts, and redacted shape results. It never
+records account identity or content. Its SHA-256 and artifact-set SHA-256 are
+committed into the annotated tag and public release evidence; the receipt stays
+in the approved local evidence store.
 
 The gate uses a checked-in exact GET allowlist derived from the permitted rows
 of the normative probe table. It also has an explicit denylist covering
@@ -550,7 +561,14 @@ An honestly empty collection or explicitly proven unavailable entitlement passes
 
 Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. No Voice route or conversation-body probe is part of the 0.0.12 gate.
 
-The gate is invalidated by any subsequent source, test, dependency, build, or version change. It is run once on the final reviewed PR head and again on the merged `main` commit immediately before tagging. The pre-tag receipt becomes a GitHub Release asset; its local copy is deleted only after upload and digest verification.
+The gate runs once after merge against the selected successful main-CI artifact,
+immediately before tagging. Any source change, newer package-producing attempt,
+artifact replacement, byte drift, or tag-identity mismatch invalidates it. An
+expired/deleted candidate before tagging requires a full main-CI rerun and new
+account gate. After tagging, candidate loss blocks the release; never rebuild or
+move the tag. The receipt remains local and historical verification can continue
+after normal Actions retention expiry when its exact files and metadata are
+retained.
 
 ### 12.3 Pull-request CI
 
@@ -577,14 +595,31 @@ Implementation starts in an isolated feature worktree after an implementation pl
 1. Implement adapters, resources, docs/Skill updates, tests, and CI radar.
 2. Bump all coordinated version metadata to 0.0.12 and add a complete changelog/migration entry before release-candidate verification.
 3. Run the full offline suite, Ruff, release verifier, package dry-run, secret scan, and `git diff --check`; commit the intended release candidate.
-4. Run the required local GET-only contract group on that commit and generate the non-identifying receipt defined in section 12.2 from the same checkout/artifacts.
-5. Open a PR, obtain independent review, resolve every thread, and require all CI gates green.
-6. After the final PR revision, rerun step 3 and the live gate. The receipt must name the exact reviewed PR-head commit/tree and `local_candidate_artifacts` hashes. Any later revision invalidates it.
-7. Merge to `main` without tagging. Check out the exact merged commit, verify it is on `origin/main`, rerun the package dry-run and live gate, and generate a new receipt naming the merged commit/tree and `local_candidate_artifacts` hashes.
-8. Create and push annotated `v0.0.12` only after step 7 passes. Include the pre-tag receipt SHA-256 in the annotated tag message.
-9. Let the existing OIDC release workflow build and publish. Record those independently rebuilt files as `release_workflow_artifacts`, including workflow run/job identity; verify PyPI filenames and SHA-256 hashes against that same workflow artifact set, verify the GitHub Release exists, and confirm a clean install reports 0.0.12. Do not compare `local_candidate_artifacts` hashes with `release_workflow_artifacts` unless reproducible builds become an explicit, separately tested release requirement.
-10. Attach the pre-tag receipt to the GitHub Release and verify its SHA-256 matches the tag annotation.
-11. Remove only owned worktrees, build output, logs, receipts, and temporary artifacts after required uploads. Inventory pre-existing parent-workspace residue separately from Git worktree state, and delete or archive it only with owner authorization; preserve and report unrelated changes instead of forcing global cleanliness.
+4. Open a PR, obtain independent review, resolve every thread, and require all CI gates green.
+5. After the final PR revision, rerun step 3 and the exact-head cross-model review. Any later revision invalidates that evidence.
+6. Merge to `main` without tagging and wait for the complete `ci.yml` push run on
+   the exact merge commit. Main CI builds once, tests the distributions, and
+   uploads an immutable candidate named by commit, run ID, and producing attempt.
+7. With at least 72 hours of retention headroom, download that exact candidate
+   and run the required trusted-local GET-only account gate. The receipt binds
+   commit/tree, `.github/workflows/ci.yml`, run ID, producing attempt, artifact
+   ID/digest/size/expiry, and both inner file hashes. Do not rebuild locally.
+8. Create annotated `v0.0.12` only after step 7 passes. Include exactly the eight
+   receipt/artifact identity lines emitted by the account verifier.
+9. The OIDC release workflow validates the pinned run and artifact live,
+   downloads by numeric artifact ID, reconstructs the account artifact-set
+   digest, and publishes those same bytes without invoking a build. Record the
+   full handoff identity in `release_workflow_artifacts`, verify PyPI and GitHub
+   Release filenames/hashes against it, and confirm a clean install reports 0.0.12.
+10. Verify the retained local receipt SHA-256 against the tag commitment and
+    keep the receipt local under the reviewed evidence policy; do not attach it
+    to Actions or the public GitHub Release.
+11. Classify the retained receipt and exact candidate under the local evidence
+    policy, then remove only other owned worktrees, build output, logs, and
+    temporary artifacts after required public uploads. Inventory pre-existing
+    parent-workspace residue separately from Git worktree state, and delete or
+    archive it only with owner authorization; preserve and report unrelated
+    changes instead of forcing global cleanliness.
 
 If publication fails after any artifact reaches PyPI, fix forward with the existing immutable version and workflow retry semantics where possible, or a new patch version when artifact contents must change. Never move or silently replace a published tag.
 
@@ -596,7 +631,10 @@ The release candidate is ready to merge only when all of the following are true:
 
 - mixed live app entries normalize correctly and no string IDs disappear;
 - generic jobs and scheduled automations are represented by distinct tools and documentation;
-- all new read tools satisfy their documented schemas on synthesized variants and the release owner has completed the required local shape-only gate on the exact final reviewed PR-head commit; honest empty/unavailable outcomes are recorded separately from populated fixture coverage;
+- all new read tools satisfy their documented schemas on synthesized variants;
+  the trusted local shape-only gate against the exact main-CI artifact is a
+  post-merge, pre-tag release requirement, and honest empty/unavailable outcomes
+  are recorded separately from populated fixture coverage;
 - `thinking_effort` is omitted by default and validated against the selected live model when supplied;
 - feature status preserves surface, entitlement, reachability, reachability scope, MCP exposure, official support, evidence source, observation time, typed status/reason, and item-contract status separately;
 - the packaged coverage resource accounts for every existing MCP tool and every known feature in the dated decision matrix, including explicit deferred/unsupported entries;

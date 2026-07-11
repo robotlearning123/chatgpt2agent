@@ -11,6 +11,15 @@
 - **Current review status:** complete; approved for TDD implementation
 - **Implementation/release status:** v0.0.12 approved for implementation with all Voice code moved to v0.0.13
 
+> **Superseded release-integrity conclusion (2026-07-11):** This document is
+> preserved as the provenance of what the earlier models actually reviewed, but
+> its independent local/release rebuild conclusion was invalidated by the exact-
+> artifact integrity finding. The current normative design builds once in main
+> CI, runs the account gate against that immutable candidate, and publishes the
+> same pinned artifact without rebuilding. That amended implementation is pending
+> fresh exact-candidate Grok, CCZ/GLM, and Opus review; final evidence must name the
+> exact Git SHA, and no code change may follow without invalidating that review.
+
 On 2026-07-10 the user narrowed v0.0.12 to exclude the Voice catalog and
 assigned that adapter to v0.0.13. The original PASS was not reused. Three fresh
 reviewers independently examined the complete amended file at the exact
