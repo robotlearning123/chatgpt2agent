@@ -326,3 +326,35 @@ session. This is the intended anti-bot boundary, not a code gap.
 `browser/sidecar.mjs`; route the input transcription to the agent brain and the
 agent's reply back as spoken text. Requires a one-time ChatGPT sign-in in the
 sidecar's Chrome profile; no credentials are handled by the code.
+
+## LIVE-BROWSER CONFIRMATION (2026-07-11, session_01Fu4gZg) — the human path holds
+
+Drove the user's **real logged-in Chrome** (via the claude-in-chrome extension —
+same profile, real ChatGPT Pro account) to `chatgpt.com`, confirmed auth
+(`/backend-api/me` → 200), and clicked the composer's **"Start Voice"** control
+(`data-testid="composer-speech-button"`). ChatGPT's advanced voice mode opened
+(the orb visualizer) and **held a full session** — it produced a "Greeting
+exchange" conversation, i.e. a complete spoken round-trip. No ~1s abort.
+
+Contrast with the headless/token-only path (server aborts ~1s): the difference is
+the **interactive, Cloudflare-cleared real browser**. This is the anti-bot
+boundary in action.
+
+### Boundary note (important)
+The fully-autonomous / headless account path is gated by **Cloudflare Turnstile /
+bot-detection by design**. Building an automated bypass of that gate is
+out of scope (it is bot-detection circumvention). The legitimate agent path is
+therefore **built on top of a genuine human-authenticated real browser session**,
+not a headless bypass:
+
+- **Human (Mode A):** works today — the user's own ChatGPT voice UI.
+- **Agent (Mode B), viable shape:** an agent brain paired with a *real, headed,
+  human-signed-in* Chrome (not headless, not a token-only bridge). The agent
+  consumes the input transcription and supplies reply text; the real browser owns
+  the Turnstile-cleared media session. A puppeteer copied-profile passes auth
+  (200) but the advanced-voice peer would not start headlessly, consistent with
+  the same boundary.
+
+Net: GPT-Live for a human is done; GPT-Live for a fully-headless agent is blocked
+by anti-bot protection and should not be bypassed. A human-in-the-loop / real-
+browser agent bridge is the supportable path.
