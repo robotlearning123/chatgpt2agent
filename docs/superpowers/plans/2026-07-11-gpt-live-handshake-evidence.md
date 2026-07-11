@@ -175,8 +175,38 @@ session and log the exact inner message sequence. This needs NO microphone/audio
 (read-only send/receive logging, forced-silent mic) and ~10s. It requires an
 authenticated browser the agent can drive.
 
-**Verified end-to-end: auth, routes, SDP exchange, ICE/DTLS, datachannel, the
-session state machine, client-side audio egress wiring, and the outbound
-envelope. NOT demonstrated: a full spoken round-trip — blocked on the runtime
-init/keepalive sequence, obtainable only by observing the real authenticated
-client.**
+### Outbound protocol CAPTURED from the real client (2026-07-11, owner-approved)
+
+Observed the authenticated web client via CDP (forced-silent mic + spoofed
+`permissions.query`/`enumerateDevices` so the app started without opening the
+real mic; the WebRTC is main-thread — caught by wrapping `RTCPeerConnection` →
+`createDataChannel` → `send`). The client sends **only two** datachannel message
+types, both in the `{type:"data_message", data:"<inner json>"}` envelope:
+
+1. **`track_state`** once on open — the init that declares the mic live:
+   `{type:"track_state", payload:{type:"track_state", track_id:"microphone", media_type:"audio", media_source:"microphone", state:"live"}}`
+2. **`client_metrics`** ~5–7×/sec — keepalive with audio stats
+   (`service_rtt_ms`, `output_audio_bytes_received`, `output_audio_packets_lost`, …).
+
+Applied both in `connect_live_audio.mjs`. **The session STILL closes ~1s after
+`listening`** — an application close by the server. Since the *real browser*
+client (observed with silent audio) stayed open 20s+ sending 152 messages, and my
+Node client sends the identical protocol + audio into werift, the remaining
+blocker is **werift↔OpenAI media/SRTP interop** (the server won't accept werift's
+audio media stream), NOT any ChatGPT-specific unknown.
+
+### Conclusion — every ChatGPT-specific unknown is resolved
+
+Auth, routes, SDP exchange, ICE/DTLS, datachannel, session state machine, and the
+FULL application protocol (`track_state` + `client_metrics`) are all captured and
+verified. A full spoken round-trip is **not** demonstrated, blocked solely on
+WebRTC-library media interop.
+
+**Viable path (task #3):** the real browser client works end-to-end, so make the
+sidecar **browser-based** — a headless Chrome launched with
+`--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>`,
+driving the account's own voice UI, with transcripts read off the datachannel via
+the proven `createDataChannel`→`send`/`onmessage` hook. That sidesteps werift's
+media-interop entirely and reuses the app's own (working) media stack. The werift
+path remains viable only if its RTCP/SRTP/RTP-timestamp interop with the OpenAI
+realtime server is debugged.
