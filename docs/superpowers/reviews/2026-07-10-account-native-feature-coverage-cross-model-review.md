@@ -82,7 +82,7 @@ No reviewer was allowed to treat one fact as proof of another.
 | --- | --- | --- | --- | --- |
 | Grok | Grok CLI `0.2.93`, explicitly selected `grok-4.5` | one turn, no memory, subagents, web, tools, or account access | `PASS_WITH_CHANGES` | `PASS` |
 | CCZ | Claude Code-compatible CLI `2.1.206` routed to `glm-5.2`; model usage confirmed `glm-5.2` | no tools, web, files, or account access; structured output captured in an owned temporary directory and deleted | `PASS_WITH_CHANGES` | `PASS` |
-| Opus | Claude Code `2.1.206`, `CLAUDE_CONFIG_DIR=/home/robot/.claude-cc2`, explicitly selected `claude-opus-4-8` | tools, MCP, Chrome, slash commands, web, account access, and session persistence disabled | `PASS_WITH_CHANGES` | `PASS` |
+| Opus | Claude Code `2.1.206`, isolated secondary profile, explicitly selected `claude-opus-4-8` | tools, MCP, Chrome, slash commands, web, account access, and session persistence disabled | `PASS_WITH_CHANGES` | `PASS` |
 
 The final Opus micro-review examined the current exact numbered excerpts, completed in 30.999 seconds, and reported zero web requests, permission denials, or tool calls. The final Grok micro-review completed in about 22 seconds. The final CCZ micro-review returned `PASS` and recorded only `glm-5.2` in `modelUsage`.
 
@@ -261,28 +261,21 @@ The current official Codex guidance favors:
 
 For gpt2agent this means one bounded read tool per coherent account job, explicit schemas and annotations, no opaque raw payload tool, a bundled Skill kept in sync with the server, stdio by default, and loopback-only HTTP until real transport authentication exists.
 
-## 10. Parent-workspace hygiene audit
+## 10. Parent-workspace hygiene boundary
 
-The actual Git repository is `/home/robot/workspace/47-chatgpt2agent/gpt2agent`. The parent `/home/robot/workspace/47-chatgpt2agent` is not a Git worktree.
+The release repository may live inside a larger, non-versioned operator workspace.
+That external workspace can contain historical logs, review notes, active worktrees,
+or artifacts owned by other lanes. Its machine-specific inventory is intentionally
+excluded from this public review.
 
-Strict `AUDIT-*.md` matching returned zero files. Two likely intended files use underscores. The seven primary hygiene files total 1,981,636 bytes:
-
-| Parent-workspace file | Size | Classification | Proposed disposition after owner approval |
-| --- | ---: | --- | --- |
-| `cx-fix.log` | 1,287,331 B | merged work; sensitive historical session log | delete |
-| `cx-simplify.log` | 341,893 B | superseded v1 review | delete with v1 summary |
-| `cx-simplify2.log` | 325,051 B | stale snapshot with some residual backlog | extract verified backlog, then delete |
-| `SIMPLIFY-REPORT.md` | 4,093 B | superseded v1 summary | delete |
-| `SIMPLIFY-PLAN-v2.md` | 3,622 B | partially useful but stale | refresh backlog into tracked plan/issue, then delete |
-| `AUDIT_2026-05-15.md` | 7,673 B | historical audit referenced by a commit | privately archive or extract residuals, then delete |
-| `AUDIT_2026-06-18.md` | 11,973 B | completed audit source-of-truth | archive/delete with its GOAL/VERIFY bundle |
-
-Five associated files belong to the same cleanup decision: three `cx-*-prompt.txt` files, `GOAL_audit-remediation.md`, and `VERIFY_audit-remediation_2026-06-18.md`. All 12 candidates total 1,994,979 bytes.
-
-None is tracked by either checked repository, present in Git object history, open according to `lsof`, or needed by an active worktree. All have mode `0664`. The three logs contain session/conversation identifiers, although a bounded scan found no token-like secret, bearer value, cookie, email, or API key. They should not remain world/group-readable or be moved into the public repository.
-
-No file was deleted, moved, or chmodded because the request authorized inspection, not destruction of files created by other sessions. If retained temporarily, changing the three logs to `0600` is the minimum risk reduction, but that is also a mutation requiring owner approval under the workspace agreement.
+Release automation must not move, delete, publish, or change permissions on files
+outside the repository. A separate local audit classifies external artifacts and
+checks active worktrees and processes first. Any approved cleanup happens only
+after the release, uses a recoverable quarantine rather than deletion, and leaves
+active or ambiguously owned files untouched.
 
 ## 11. Remaining gate
 
-The design and cross-model review are ready for user re-approval. Code, dependency, CI, version, PR, tag, PyPI, and release changes must not begin until that approval because the corrected design materially defines feature scope and safety boundaries.
+The design and cross-model review are approved for implementation. Merge, tag,
+PyPI publication, and release still require the exact-commit account receipt,
+green required checks, resolved review threads, and a non-author approval.
