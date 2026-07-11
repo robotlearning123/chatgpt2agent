@@ -217,6 +217,54 @@ media-interop entirely and reuses the app's own (working) media stack. The werif
 path remains viable only if its RTCP/SRTP/RTP-timestamp interop with the OpenAI
 realtime server is debugged.
 
+## CORRECTED DIAGNOSIS (2026-07-11) — the blocker is the handshake, not werift
+
+Ran a headless Chrome demo (`sidecar/browser/demo-headless.mjs`): the **browser's
+own WebRTC** (fake WAV mic, Node does the SDP POST via curl_cffi) connected —
+`connecting → connected`, datachannel open, `state_update idle→listening` — and
+then **closed ~1s later, identically to werift.** So the ~1s close is NOT
+werift-specific media egress (earlier conclusion retracted); a real Chrome peer
+does the same.
+
+The difference from the real logged-in client is the **handshake completeness**.
+The voice client's actual SDP exchange (bundle `4813494d`) is:
+
+```js
+const body = new FormData();
+body.append("sdp", offer.sdp);
+body.append("session", JSON.stringify(sessionObj));   // NOT raw application/sdp
+const headers = {
+  ...authHeaders(accessToken),          // zr({accessToken}) — more than a bare Bearer
+  ...routingHeaders(url),               // qNe(...) → X-OpenAI-Target-*
+  [ProofTokenHeader]: sentinelProof,    // pL.ProofToken — a Sentinel proof-of-work!
+};
+await fetch(realtimeUrl, { method: "POST", body, headers });
+```
+
+`sessionObj` carries `voice_session_id` (client-generated UUID), `protocol:
+"transceiver"`, `integrated_mode`, etc. So a **bare `application/sdp` + Bearer**
+POST (what all my attempts used) returns a lenient `201` but a **degraded,
+ephemeral session** the server tears down right after `listening`. The persistent
+session needs the **FormData(sdp+session) body + the Sentinel `ProofToken`**
+(gpt2agent already has a Sentinel solver in `gpt2agent/sentinel.py`) + the proper
+auth/routing headers.
+
+**Tested:** `FORMDATA=1 node browser/demo-headless.mjs` posts a
+`FormData(sdp + session={voice_session_id,protocol,integrated_mode})` (via
+`curl_cffi` `CurlMime`, no ProofToken). Result: still `HTTP 201` but a *different*
+answer (1694 vs 1516 bytes) and the browser peer went `connecting → failed` — so a
+guessed/minimal `session` object + missing ProofToken yields an unconnectable
+answer. The complete handshake (correct `session` fields + Sentinel `ProofToken` +
+auth/routing headers) is the remaining work.
+
+**This redirects the whole effort:** neither werift nor a browser media stack was
+ever the problem — the handshake was incomplete. Next step (autonomous-capable):
+build the FormData handshake with a `session` object + a realtime Sentinel
+ProofToken, and the same headless-browser demo should hold the session →
+transcription → response. The logged-in Mac client does all this natively (its
+own fetch supplies the session, cookies, and proof token), which is why the
+browser-sidecar-on-Mac path works.
+
 ### werift wiring check (for whoever debugs the werift path)
 
 Confirmed NOT a wiring bug: `pc.addTransceiver(track,{direction:"sendrecv"})`
