@@ -298,3 +298,31 @@ UDP→rtpSource→writeRtp→onReceiveRtp→sender is connected. The audio still
 reaching the server points to werift's **SRTP keying / DTLS for the audio m-line
 or the RTP formatting the OpenAI server accepts** — deep media internals, uncertain
 payoff. The browser-sidecar path avoids all of it.
+
+## INDEPENDENT CONFIRMATION (2026-07-11, macOS, session_01Fu4gZg) — server-side abort, media is fine
+
+Re-ran the headless real-Chrome bare-`application/sdp` path on the Mac (the box
+with a real mic) and instrumented `RTCPeerConnection.getStats()` + the exact
+datachannel close event. Findings that tighten the diagnosis:
+
+- **Outbound audio DOES egress.** `outbound-rtp(audio)` `packetsSent` climbs
+  35 → 287 over 6s (bytes 2458 → 21023). So the browser's SRTP audio reaches the
+  server continuously — the "no media / werift SRTP" hypothesis is dead for good;
+  a real Chrome sends audio fine and the session still dies.
+- **The close is a SERVER-INITIATED SCTP abort.** `dc.onerror` fires
+  `"User-Initiated Abort, reason="` ~1s after `state_update: idle→listening`,
+  then `onclose`. The server accepts the lenient 201, starts the session, and
+  then actively tears down the datachannel — it is not a network/ICE failure and
+  not a client timeout.
+
+So the ~1s death is a **server-side session-validation rejection**, consistent
+with the Turnstile wall: the token-only handshake yields a session the server
+invalidates shortly after start, regardless of correct media + app protocol.
+A logged-in real browser (`browser/sidecar.mjs`) — which solves Cloudflare
+Turnstile natively via the interactive widget — remains the path that holds the
+session. This is the intended anti-bot boundary, not a code gap.
+
+**Agent (Mode B) path forward:** drive a logged-in Chrome (fake-WAV mic) with
+`browser/sidecar.mjs`; route the input transcription to the agent brain and the
+agent's reply back as spoken text. Requires a one-time ChatGPT sign-in in the
+sidecar's Chrome profile; no credentials are handled by the code.
