@@ -589,7 +589,7 @@ retained.
 
 ### 12.3 Pull-request CI
 
-The required PR pipeline continues to run Ruff, release-metadata verification, the offline test matrix on supported Python and OS versions, Windows package smoke tests, and ShellCheck. It additionally builds wheel and sdist, runs `twine check`, installs both artifacts in clean environments, checks packaged Skills/resources, and runs the narrow sdist tests. This is a release dry-run only: it never uploads to PyPI or creates a GitHub release.
+The required PR pipeline continues to run Ruff, release-metadata verification, the offline test matrix on supported Python and OS versions, Windows package smoke tests, and ShellCheck. It additionally performs two clean wheel/sdist builds, deterministically normalizes each sdist, requires both artifact formats to be byte-identical across builds, runs `twine check`, installs the retained first-build artifacts in clean environments, checks packaged Skills/resources, and runs the narrow sdist tests. This is a release dry-run only: it never uploads to PyPI or creates a GitHub release.
 
 The aggregate `required` job includes the package dry-run so branch protection has one reliable gate.
 
@@ -615,8 +615,9 @@ Implementation starts in an isolated feature worktree after an implementation pl
 4. Open a PR, obtain independent review, resolve every thread, and require all CI gates green.
 5. After the final PR revision, rerun step 3 and the exact-head cross-model review. Any later revision invalidates that evidence.
 6. Merge to `main` without tagging and wait for the complete `ci.yml` push run on
-   the exact merge commit. Main CI builds once, tests the distributions, and
-   uploads an immutable candidate named by commit, run ID, and producing attempt.
+   the exact merge commit. Main CI performs two clean normalized builds, requires
+   byte-identical wheel and sdist outputs, tests the first artifact set, and
+   uploads that immutable candidate named by commit, run ID, and producing attempt.
 7. With at least 72 hours of retention headroom, download that exact candidate
    and run the required trusted-local GET-only account gate. The receipt binds
    commit/tree, `.github/workflows/ci.yml`, run ID, producing attempt, artifact
