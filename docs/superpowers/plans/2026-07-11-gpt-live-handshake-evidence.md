@@ -94,3 +94,35 @@ items, observable once a real peer connects.
 
 The SDP-exchange control plane — the thing that was blocked — is now verified
 end-to-end. `src/adapter.mjs::exchangeSdp` is exactly this call.
+
+## Full WebRTC connection — SUCCEEDED from Node (2026-07-11)
+
+`sidecar/experiments/connect_live.mjs` (werift peer + `sdp_exchange.py` for the
+POST) established a **real WebRTC session to live GPT-Live** — no browser, no mic:
+
+```
+[ice] checking -> completed -> connected
+[sdp_exchange] HTTP 201
+[conn] connecting -> connected            # ICE + DTLS complete
+[dc] open                                 # negotiated datachannel id:0 open
+[msg 1] state_update: idle -> listening   # server accepted the session
+```
+
+So ICE/DTLS/SCTP all interoperate with werift and the account token alone.
+
+### Datachannel protocol (observed, consumer-specific — NOT raw Realtime API)
+
+Inbound messages are wrapped in an envelope:
+
+```json
+{"type":"data_message","data":"{\"type\":\"state_update\",\"payload\":{\"type\":\"state_update\",\"previous_state\":\"idle\",\"new_state\":\"listening\",\"delay_s\":null}}"}
+```
+
+i.e. outer `data_message` → inner event (`state_update` with
+`previous_state`/`new_state`). The session state machine begins `idle →
+listening`. It then closes within ~1s because the peer sends **no audio** (audio
+was `recvonly`); GPT-Live drops an idle listening session. Keeping it alive and
+getting a transcript/response requires sending an Opus audio track (ffmpeg +
+werift `OpusRtpPayload`/`RtpBuilder` — available) and matching the outbound
+envelope. That is the remaining media step (task #3), not a control-plane
+unknown.
