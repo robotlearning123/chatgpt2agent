@@ -126,15 +126,29 @@ listening`, then closes within ~1s.
 
 `sidecar/experiments/connect_live_audio.mjs` sends a TTS utterance (`mb voice` →
 mp3 → `ffmpeg -c:a libopus -f rtp` → werift `MediaStreamTrackFactory.rtpSource`
-UDP → the WebRTC audio track). Verified aligned: audio starts on datachannel
-open, Opus PT matches offer/answer (96/96), and ffmpeg SSRC matches werift's
-declared `a=ssrc`. Result: the session still reaches `listening` and drops ~1s
-later — **GPT-Live is not decoding the sent audio** (no transcription event
-appears). The egress path (werift SRTP sender actually forwarding the
-rtpSource-injected RTP with correct timestamps) is the open item; the fix likely
-needs werift's canonical media-send path rather than raw RTP forwarding.
+UDP → the WebRTC audio track). Three real werift wiring bugs were found and fixed
+along the way:
 
-**So, verified end-to-end: auth, routes, SDP exchange, ICE/DTLS, datachannel,
-and the session state machine. Open (task #3): server-side audio decode (getting
-the human's Opus to actually reach GPT-Live's recognizer) and the outbound
-command envelope, then the Mode B loop.**
+1. `rtpSource` returns an **array `[track, port, dispose]`**, not `{track}` — the
+   original object-destructure left the track `undefined` (no audio track added).
+2. Passing werift's random `a=ssrc` (often > 2^31) to ffmpeg's `-ssrc` throws
+   `Numerical result out of range` and ffmpeg sent **0 packets** — dropped `-ssrc`
+   (werift re-stamps SSRC in its sender anyway).
+3. `pc.addTransceiver("audio", {track})` ignores the track — werift's signature is
+   `addTransceiver(trackOrKind, opts)`, so the track must be the **first arg**.
+
+After all three: ffmpeg delivers **328 RTP packets** into werift and the track is
+wired to the sender. **Yet the session still reaches `listening` and closes ~1s
+later, with no transcription** — the same ~1s close as the no-audio run, so it is
+**not** an audio-VAD timeout. It is the client failing to send an expected
+**outbound datachannel init message** (the web client keeps the session alive
+with one). That outbound envelope/type is **obfuscated in the current bundle**
+(the `.send(...)` construction did not yield to static grep; the deploy also
+rotates chunk hashes), and is the concrete remaining wall.
+
+**Verified end-to-end: auth, routes, SDP exchange, ICE/DTLS, datachannel, the
+session state machine, and client-side audio egress wiring. Open (task #3):
+reverse-engineer the outbound datachannel init/keepalive message to hold the
+session past `listening`, then the transcription arrives and the Mode B loop
+(transcript → agent → speak) closes. A full spoken round-trip is NOT yet
+demonstrated.**
