@@ -216,3 +216,13 @@ the proven `createDataChannel`→`send`/`onmessage` hook. That sidesteps werift'
 media-interop entirely and reuses the app's own (working) media stack. The werift
 path remains viable only if its RTCP/SRTP/RTP-timestamp interop with the OpenAI
 realtime server is debugged.
+
+### werift wiring check (for whoever debugs the werift path)
+
+Confirmed NOT a wiring bug: `pc.addTransceiver(track,{direction:"sendrecv"})`
+registers the track with the sender and the sender subscribes to
+`track.onReceiveRtp` (2 subscribers), and `sender.sendRtp` exists. So the chain
+UDP→rtpSource→writeRtp→onReceiveRtp→sender is connected. The audio still not
+reaching the server points to werift's **SRTP keying / DTLS for the audio m-line
+or the RTP formatting the OpenAI server accepts** — deep media internals, uncertain
+payoff. The browser-sidecar path avoids all of it.
