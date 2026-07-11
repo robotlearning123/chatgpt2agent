@@ -1,6 +1,6 @@
 # Account-native feature coverage and compatibility design
 
-- **Status:** Conversation-approved for implementation; post-review scope amendment applied
+- **Status:** Amended exact-design review complete; approved for TDD implementation
 - **Date:** 2026-07-10
 - **Target release:** gpt2agent 0.0.12
 - **Primary constraint:** Use the signed-in consumer ChatGPT account session only. Do not use an OpenAI API key, the OpenAI API, Realtime API billing, or a second service credential.
@@ -14,6 +14,12 @@ but it does not register `list_voices`, probe a Voice route in its release
 gate, start a Voice session, or ship audio/media code. The prior cross-model
 review remains useful finding provenance, but its exact-design PASS is stale
 until the amended release candidate is reviewed again.
+
+Two independent repository audits then found a shared-authorization race, an
+additional diagnostic persistence path in the bundled Deep Research runner,
+and several private-route envelope variants that the first design did not
+freeze precisely. The corrections below are release-blocking refinements, not
+an expansion of Voice scope.
 
 ## 1. Context
 
@@ -119,7 +125,7 @@ The 0.0.12 release will:
 6. Tighten the existing MCP dependency to the stable v1 line without adding another runtime package.
 7. Add package/release dry-run coverage to pull requests and a scheduled, no-secret public-surface drift radar.
 8. Preserve the existing local-account privacy boundary and prove a complete PR-to-release workflow for 0.0.12.
-9. Close two existing account-exposure escape hatches: unauthenticated non-loopback HTTP and unredacted raw SSE dumps.
+9. Close existing account-exposure persistence and transport paths: unauthenticated non-loopback HTTP, unredacted raw SSE dumps, and default Deep Research diagnostic event persistence.
 
 ## 4. Non-goals
 
@@ -149,11 +155,11 @@ justify it.
 Performance rules for the Python path are:
 
 - reuse the existing authenticated HTTP client and per-thread connection caches for ordinary calls;
-- snapshot a reloaded bearer token under the existing lock and pass authorization as request-local headers on every authenticated request instead of mutating shared session headers;
+- snapshot a reloaded bearer token under the existing lock and pass authorization as request-local headers on every authenticated request instead of mutating shared session headers; every logical tool operation that makes multiple authenticated requests obtains exactly one immutable snapshot at entry and passes that same snapshot through every phase so token rotation cannot mix identities inside one operation; a rotation takes effect on the next operation, while an expired mid-operation snapshot fails safely and the caller retries the whole operation;
 - avoid a browser launch or manifest fetch on every tool call;
-- fetch independent account capability endpoints concurrently with a small cap only after tests prove token reload, request-local headers, cookies, and the shared `curl_cffi.Session` remain isolated; otherwise serialize the probe group;
+- query account capability endpoints serially in 0.0.12; consider bounded fan-out only in a later benchmarked release after auth/session isolation is proven;
 - use bounded pagination and return cursors instead of collecting an unbounded account history;
-- cache only non-content model/build metadata in memory for a short process-local lifetime;
+- cache only non-content model metadata for 60 seconds, with separate general and Work namespaces; bind entries to a non-secret authentication-generation counter and clear them on token-source/mtime change so one account's catalog is never reused after rotation;
 - refresh model metadata once after a validation mismatch before returning an error;
 - never persist conversations, prompts, transcripts, cookies, bearer tokens, or raw account payloads.
 
@@ -180,11 +186,19 @@ Optional future lane, not in 0.0.12 or 0.0.13:
 Python MCP control plane <-> TypeScript AgentRTC media/control plane <-> coding runtimes
 ```
 
-The server continues to prefer local stdio. Stdout is reserved for MCP protocol frames and logs go to stderr. For 0.0.12, HTTP is strictly loopback-only: the `GPT2AGENT_ALLOW_REMOTE` bypass is removed and every non-loopback bind is refused. Local HTTP also validates any supplied `Origin` against the configured loopback origin/port to prevent DNS rebinding; clients that do not send a browser `Origin` remain supported. Remote serving is deferred until the server has transport authentication; a warning plus a firewall recommendation is not an adequate control for a full-account proxy.
+The server continues to prefer local stdio. Stdout is reserved for MCP protocol frames and logs go to stderr. For 0.0.12, HTTP is strictly loopback-only: the `GPT2AGENT_ALLOW_REMOTE` bypass is removed and every non-loopback bind is refused. The MCP SDK's native transport security accepts loopback browser Origins on any port, rejects non-loopback Host/Origin values to prevent DNS rebinding, and supports clients that omit browser Origin. Remote serving is deferred until the server has transport authentication; a warning plus a firewall recommendation is not an adequate control for a full-account proxy.
 
-A future remote deployment must use Streamable HTTP, validate `Origin`, bind safely, and add OAuth 2.1/PKCE with audience validation; account tokens must never be passed through from an MCP client.
+A future remote deployment must use Streamable HTTP, validate `Origin`, bind safely, and add OAuth 2.1/PKCE with audience validation; account tokens must never be passed through from an MCP client. Version 0.0.12 uses the MCP SDK's native transport-security middleware: invalid Host is rejected, a non-loopback Origin is rejected, a valid loopback Origin on any loopback port is accepted, and clients that omit browser Origin remain supported. It does not duplicate that middleware or require the browser Origin port to equal the MCP server port.
 
-The backend adds a dependency-free process-wide concurrency limiter and conservative per-route invocation limits. Limits are configurable only within safe documented bounds, do not expose account state, and fail with retry guidance instead of queuing without bound. A 429 response activates route cooldown from a safe `Retry-After` value when present; it is never blindly retried in a tight loop. The installed `curl_cffi` line documents `Session` as thread-safe but recommends a separate session per thread; its per-thread handles do not make concurrent mutation of shared session headers a supported contract. The implementation therefore makes authorization request-local, synchronizes token snapshots, replaces all SSE/Sentinel reads of mutable session authorization with the same snapshot helper, and passes a forced-overlap concurrency test before enabling fan-out.
+The backend adds a dependency-free process-wide in-flight limiter and guarded per-route cooldown state. The default global limit is four and the hard configuration range is one through eight. Acquisition waits at most one second and then fails with retry guidance instead of queuing without bound. The limiter uses monotonic time, releases in `finally` after success, failure, or cancellation, and never sleeps while holding its state lock. A 429 activates only that normalized route's cooldown; numeric or HTTP-date `Retry-After` values are accepted only when valid and are capped at 60 seconds, while invalid values use a conservative bounded fallback. Simultaneous updates retain the later cooldown. Broader invented per-route quotas are deferred because the private service exposes no stable quota contract.
+
+The installed `curl_cffi` line documents `Session` as thread-safe but recommends a separate session per thread; its per-thread handles do not make concurrent mutation of shared session headers a supported contract. The implementation therefore makes authorization request-local, synchronizes token snapshots, passes one immutable snapshot through each compound SSE/Sentinel operation, and uses serialized capability probes in 0.0.12 even after forced-overlap tests pass. Capability fan-out is deferred until a later benchmark demonstrates that its latency benefit justifies the additional shared-session risk.
+
+Ordinary JSON account responses are capped at 4 MiB using both a validated
+`Content-Length` check when present and an actual byte-length check before JSON
+decoding. Oversized responses are `contract_changed`; no response prefix or body
+is exposed. Streaming conversation responses keep their existing separately
+bounded parser and are not buffered through this JSON path.
 
 ## 7. MCP surface
 
@@ -202,7 +216,7 @@ Ordering follows the backend response and duplicate IDs are not silently invente
 
 #### `list_tasks(limit=20)`
 
-Keep the existing return shape and route for backward compatibility. Change its public description to “background/asynchronous ChatGPT jobs” and remove the scheduled-task claim from documentation. Validate `limit` within a documented bounded range.
+Keep the existing return shape and route for backward compatibility. Change its public description to “background/asynchronous ChatGPT jobs” and remove the scheduled-task claim from documentation. Validate `limit` as an integer from 1 through 100.
 
 #### `chat(prompt, model, temporary, thinking_effort=None)`
 
@@ -219,6 +233,16 @@ The selected `model` must appear in the general `/backend-api/models` catalog. A
 
 Each tool has one job, a bounded input schema, a structured output schema, and MCP annotations with `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and an accurate `openWorldHint`. New paginated list tools return `{"items": [...], "cursor": string|null}`.
 
+Each paginated invocation returns exactly one backend page and never auto-follows
+a cursor. A backend cursor is opaque, printable, at most 2,048 characters, and
+is passed only to the route and query field defined for that tool; `null` means
+end of list. Unless a tool defines a smaller limit, a returned backend page is
+capped at 100 normalized items and a larger page without a usable continuation
+contract is `contract_changed`. Unknown object fields are ignored, but only the
+explicit envelope discriminators and field variants below are accepted; a
+missing list, wrong type, or unknown envelope is `contract_changed`. An explicit
+empty accepted list is an honest empty result, not a malformed contract.
+
 #### `list_scheduled_tasks(cursor=None)`
 
 - Route: `GET /backend-api/automations`
@@ -226,6 +250,7 @@ Each tool has one job, a bounded input schema, a structured output schema, and M
 - Envelope: `items`, `cursor`
 - Normalize only observed stable fields: `id`, `updated_at`, `next_run_times`, `is_enabled`, `target_time_utc`.
 - Require only a usable item ID. `next_run_times`, `is_enabled`, and `target_time_utc` are nullable because paused/finished schemas have not been observed live; if `next_run_times` is present and non-null, validate that it is an array.
+- Return at most 100 items in the single backend page. The backend cursor is passed through unchanged after validation; no cursor means end of list.
 
 The current web client also uses `paused` and `finished`. Those filters and a broader all-automations tool are deferred until live non-empty samples can establish honest normalized contracts.
 
@@ -235,38 +260,40 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 - Query: `scope`, bounded `limit`, and `pageToken` only when `cursor` is present.
 - Valid observed scopes: `USER`, `WORKSPACE`.
 - Preferred current-web envelope: `plugins`, `pagination.next_page_token`; current-web items require `id` and `release`.
-- Also accept the live-account catalog envelope `list`, whose observed items expose `id`, `name`, `marketplace_name`, `version`, and `enabled` without a nested release.
+- For that current-web variant, `release` must be an object. Project direct scalar item fields only when their names match the allowlist; additionally map only `release.version` to `release_version`. No other nested `release` content is exposed in 0.0.12. A page containing more items than the requested `limit` is `contract_changed` even when a next token exists, because truncating it could skip entries.
+- Also accept the live-account root-array envelope observed on 2026-07-10, whose items expose `id`, `name`, `marketplace_name`, `version`, and `enabled` without a nested release. This route returned 1,000 items while ignoring `limit=1`. For this variant, implement deterministic adapter-side pagination: derive a non-sensitive catalog fingerprint from ordered normalized IDs, return at most `limit` items, and use an opaque local cursor containing only the fingerprint and next offset. A later page re-fetches the array and rejects a stale fingerprint as `contract_changed`; it never caches or embeds names or account content in the cursor.
 - Return only this allowlisted scalar projection: `id`, redacted `name`, redacted `marketplace_name`, redacted `display_name`, `version`, `enabled`, `scope`, `status`, `installation_policy`, `release_version`, `skill_names`, `disabled_skill_names`, `app_ids`, `app_template_ids`, `canonical_connector_ids`, `mcp_server_keys`, and string-valued `capability_names`. Missing fields remain `null`; values are never fabricated across variants.
 - Do not return release descriptions, prompts/default prompts, skill descriptions/interfaces, template descriptions/reasons, icons, screenshots, developer URLs, owner IDs, workspace IDs, or unknown nested objects.
 - Bound `limit` to 1–50, cursors to 2,048 printable characters, names/IDs/versions/status scalars to 256 characters, and every projected nested string list to 100 entries. Apply secret/PII redaction to strings, drop non-string list entries, and return `contract_changed` when required identity fields or envelope types are invalid.
-- If the legacy `list` envelope exceeds the requested limit without a usable continuation token, return `contract_changed` rather than silently truncate an unpageable catalog.
+- Reject malformed, oversized, or fingerprint-mismatched local cursors as `invalid_input` or `contract_changed` as applicable; never silently truncate an unpageable catalog without a continuation signal.
+- Reserve the printable prefix `g2a-local-v1:` for adapter-side cursors. An inbound cursor with that prefix is parsed locally and is never sent as `pageToken`; every other validated cursor is treated as an opaque backend token and sent as `pageToken`. A backend token using the reserved prefix is rejected as `contract_changed` rather than ambiguously reinterpreted.
 - Do not return owner account IDs or workspace IDs unless a documented use case and redaction review is added.
 
 #### `list_installed_plugins()`
 
 - Route: `GET /backend-api/plugins/installed`
 - Send no pagination query.
-- Accept the current-web `plugins` envelope and the live-account `results` plus `page` envelope. Return `{"items": [...]}`; the first-release tool does not claim pagination because the current web client sends an empty query and supplies no continuation request.
+- Accept the current-web root `plugins` list envelope and the live-account nested `{"plugins": {"results": [...], "page": {...}}}` envelope observed on 2026-07-10. Return `{"items": [...]}`; the first-release tool does not claim pagination because the current web client sends an empty query and supplies no continuation request.
 - Use the same exact allowlist and bounds as `list_plugins`; the live-account variant may derive only scalar IDs/names from `marketplace`, `apps`, and `skills` without returning those objects.
 - Populate `enabled` and `disabled_skill_names` when supplied by the installation record.
-- If the legacy `page` reports `has_more: true`, return `contract_changed`; no continuation query is supported by the observed installed-plugin contract.
+- If the nested `page` reports `has_more: true`, return `contract_changed`; no continuation query is supported by the observed installed-plugin contract.
 - A response with neither a `plugins` nor a `results` list is `contract_changed`, not an empty list.
 
 #### `list_work_models()`
 
 - Route: `GET /backend-api/tpp/models/`
-- Return a list of account-visible Work model records with `surface: "work"`, slug/identifier, title, token limit, reasoning configuration, and observed default effort where present.
+- Require an object envelope with a `models` list. Return `{"items": [...]}` containing account-visible Work model records with `surface: "work"`, `slug`, `title`, `max_tokens`, `reasoning_type`, `configurable_thinking_effort`, `default_thinking_effort`, and a bounded scalar projection of `thinking_efforts`. Ignore the separate category/version/UI objects observed in the live envelope.
 - Do not infer general chat-model availability from this Work-only catalog. Treat each Work identifier as opaque and Work-only unless the exact slug independently appears in the general `/backend-api/models` catalog. Do not merge a Work-only slug into `list_models`, suggest it for `chat`/`agent`, or use it for general-chat `thinking_effort` validation; a known Work-only slug supplied to those tools returns `unsupported`.
 
 #### `sites_access()`
 
 - Route: `GET /backend-api/websites/access`
-- Return the normalized entitlement/access flags without account identifiers.
+- Return exactly `enabled`, `custom_domains_enabled`, and `requires_workspace_slug` as nullable booleans. The live response's `workspace_slug` is deliberately omitted because it can identify an organization or workspace. Unknown fields are ignored and a non-object or invalid known-field type is `contract_changed`.
 
 #### `list_sites(limit=20, cursor=None)`
 
 - Route: `GET /backend-api/websites`
-- Query: bounded `limit`; use `after=cursor` for subsequent pages.
+- Query: integer `limit` from 1 through 100; use `after=cursor` for subsequent pages.
 - Envelope: `items`, `cursor`.
 - Normalize observed fields: `id`, redacted `title`, redacted `slug`, `status`, `updated_at`, `disabled_by`, and `sharing` with `access_mode`, `user_count`, and `group_count`.
 - Do not return `live_url`, `preview_url`, or `screenshot_url` in 0.0.12 because the empty live account sample cannot prove which URL shapes are public. Expose only `has_live_url`, `has_preview`, and `has_screenshot` booleans.
@@ -274,10 +301,17 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 
 #### `account_capabilities()`
 
-- Query the fixed probe table below with a small concurrency cap only through the concurrency-safe request path defined in section 6; otherwise query it serially. Adding, removing, or changing a probe is a reviewed contract change, not an adapter guess.
+- Query the fixed probe table below serially through the concurrency-safe request path defined in section 6, using one immutable authentication snapshot for the full invocation. Adding, removing, parallelizing, or changing a probe is a reviewed contract change, not an adapter guess. Each request uses the backend's normal bounded timeout and 4 MiB response cap; the full call has a 90-second wall-clock budget. A permitted probe not started because that budget is exhausted receives `status: "temporarily_failed"`, `reachable_now: null`, `entitled: null`, and the safe reason `probe budget exhausted`; successful earlier records remain intact.
 - Return `{"schema_version": "1", "observed_at": <UTC ISO-8601>, "capabilities": [...]}`. Every record has `id`, `surface` (`chat`, `work`, `codex`, `account`, or `voice`), `entitled`, `reachable_now`, `reachability_scope` (`catalog`, `route`, `execution_path`, or `none`), `exposed_by_mcp`, `officially_supported`, `evidence_source` (a bounded list of `official_doc`, `public_bundle`, `live_account`, or `packaged_contract`), `observed_at`, `status`, a non-sensitive `reason`, and `item_contract_status` (`live_verified`, `public_bundle_only`, `unverified_live`, or `not_applicable`). The last field is universal so consumers do not guess whether it is omitted; non-collection capabilities use `not_applicable`, and populated-item evidence is never overloaded into `status` or `evidence_source`.
 - Partial failure does not erase successful evidence. Failed lanes receive a typed status and `reachable_now: null` unless the response proves `false`.
 - Do not include email, account IDs, raw flags, cookies, request headers, prompts, conversation titles, or content.
+- Runtime `item_contract_status` uses the same checked-in evidence matrix as the live gate: a valid populated live item is `live_verified`; a packaged public-bundle fixture with no populated live item is `public_bundle_only`; neither is `unverified_live`; non-collections are `not_applicable`. This field describes item-schema evidence only and never changes the route-level status.
+
+A server 401 during a multi-probe invocation is recorded as `login_required`
+for that probe and the remaining probes use the same snapshot, normally yielding
+the same safe status; the implementation does not rotate identity or retry
+internally. “Caller retries the whole operation” means a new external tool call,
+which obtains the next authentication generation.
 
 `surface` and `reachability_scope` are deterministic contract fields, not inferences from success. The scope names what the packaged probe actually exercises even when it fails: `catalog` for a catalog read, `route` for a feature-specific route/envelope check, `execution_path` only for a separately approved execution probe, and `none` when the available evidence does not exercise that capability's path.
 
@@ -285,12 +319,12 @@ Normative probe table:
 
 | Capability IDs | GET probe | `surface` / `reachability_scope` | Entitlement rule |
 | --- | --- | --- | --- |
-| `chat_models` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `catalog` | `true` for a valid non-empty general catalog; this probe establishes only catalog reachability |
-| `agent_mode`, `code_interpreter`, `canvas`, `image_generation`, `deep_research` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `none` | On a valid catalog 2xx, `true` only when the catalog explicitly advertises the capability; otherwise `null`. Because this GET does not execute these distinct paths, leave `reachable_now: null` and `status: "unverified"`. For every non-success outcome of the shared GET, copy only the applicable typed `status` and entitlement result from the truth table into these execution-capability records; keep `reachable_now: null` and `reachability_scope: "none"`. Only the separate `chat_models` record applies the catalog probe's reachability value |
+| `chat_models` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `catalog` | `true` for a valid non-empty general catalog and `null` for a valid empty catalog; this probe establishes only catalog reachability |
+| `agent_mode`, `code_interpreter`, `canvas`, `image_generation`, `deep_research` | `/backend-api/models?history_and_training_disabled=false` | `chat` / `none` | Apply only the exact catalog predicates defined immediately below. A matched predicate sets `entitled: true`; an unmatched predicate stays `null` and never becomes `false`. Because this GET does not execute these distinct paths, leave `reachable_now: null` and `status: "unverified"`. For every non-success outcome of the shared GET, copy only the applicable typed `status` and entitlement result from the truth table into these execution-capability records; keep `reachable_now: null` and `reachability_scope: "none"`. Only the separate `chat_models` record applies the catalog probe's reachability value |
 | `work_models` | `/backend-api/tpp/models/` | `work` / `catalog` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
 | `apps` | `/backend-api/apps/list` | `account` / `catalog` | `true` for a valid non-empty account catalog; `null` for a valid empty catalog |
-| `plugins` | `/backend-api/plugins/list?scope=USER&limit=1` | `account` / `catalog` | `true` when a valid catalog item or explicit access field exists; `null` for a valid empty catalog |
-| `installed_plugins` | `/backend-api/plugins/installed` | `account` / `catalog` | inherit proven Plugin entitlement; an empty valid installed list does not mean `false` |
+| `plugins` | `/backend-api/plugins/list?scope=USER&limit=1` | `account` / `catalog` | `true` for a valid non-empty catalog and `null` for a valid empty catalog; 0.0.12 defines no separate Plugin-access field because no exact allowlisted field has been observed |
+| `installed_plugins` | `/backend-api/plugins/installed` | `account` / `catalog` | A valid non-empty installed list is `true`. A valid empty list inherits `true` or explicit `false` only from the successfully established `plugins` catalog entitlement; otherwise it is `null`. If the installed route itself has any non-success or malformed outcome, its entitlement is `null` and its typed status follows the truth table, regardless of a successful Plugin catalog probe |
 | `background_jobs` | `/backend-api/tasks?limit=1` | `account` / `route` | `true` for a valid non-empty account result; `null` for a valid empty result |
 | `scheduled_automations` | `/backend-api/automations?filter=scheduled` | `account` / `route` | use only an explicit account feature/access boolean; otherwise `null`, including a valid empty result |
 | `sites` | `/backend-api/websites/access`, then `/backend-api/websites?limit=1` when access is true/unknown | `account` / `route` | use only the explicit boolean access result; never infer `false` from an empty Site list |
@@ -301,6 +335,35 @@ Normative probe table:
 | `custom_instructions` | `/backend-api/user_system_messages` | `account` / `route` | `true` for a valid contract response; otherwise follow the truth table below |
 | `codex` | `/backend-api/codex/environments` | `codex` / `route` | `true` for a valid non-empty result; `null` when empty |
 | `projects` | `/backend-api/projects` | `account` / `route` | no entitlement inference; a 404/405 proves only that this unestablished candidate route is `unsupported`, not that Projects are unavailable |
+
+The indirect model-capability predicates inspect only string values in each
+validated general-catalog model's `slug` and `enabled_tools` list; they do not
+search descriptions, titles, tags, unknown fields, nested objects, or Work
+models. `agent_mode` matches an exact `slug == "agent-mode"` or exact
+`enabled_tools` value `agent_mode`; `code_interpreter` matches only exact
+`enabled_tools` value `code_interpreter`; `canvas` matches only exact
+`enabled_tools` value `canvas`; `image_generation` matches exact
+`enabled_tools` value `image_gen_tool_enabled` or `dalle_3`; and
+`deep_research` matches exact `slug == "research"` or exact `enabled_tools`
+value `deep_research`. Unknown strings are ignored. The current 2026-07-10
+shape-only account sample grounded the `canvas`, `image_gen_tool_enabled`,
+`dalle_3`, and `research` markers; the conservative Agent and Code Interpreter
+markers deliberately remain unmatched unless a future catalog returns those
+exact values. Changing this allowlist requires a reviewed contract update and
+fixtures; mere absence never proves lack of account entitlement.
+
+The two-step `sites` probe has a fixed partial-failure rule. A valid explicit
+`enabled: false` access response returns `reachable_now: true`,
+`entitled: false`, and `status: "unavailable"` without requesting the list.
+A valid access response with `enabled: true` or `enabled: null` continues to the
+list request. If that list succeeds, the combined record is reachable and keeps
+the explicit true or null entitlement from access. If the list fails, the
+combined record has `reachable_now: null`, preserves only an explicit true
+entitlement from the valid access response, and uses the list request's typed
+failure status. If the access request itself fails or is malformed, do not issue
+the list request; set entitlement and reachability to null and use the access
+request's typed failure status. No result from the Site list may invent or
+override access entitlement.
 
 Truth table applied independently to the exact surface exercised by every probe. A route result cannot be inherited as reachability proof for a distinct execution path:
 
@@ -330,6 +393,14 @@ Tools are used for live parameterized account queries. Resources are used for re
 - `chatgpt://update-evidence` — the packaged list of official release-note sources, checked timestamps, compatibility assumptions, and last public-surface-drift radar result available at build time. Its schema always includes `scope: "public_surface_drift"`, `account_contract_status: "not_checked"`, and `private_adapter_status: "not_checked"`.
 
 Both resources use `application/json` and a deterministic versioned schema. `update-evidence` contains the checked-in release snapshot, not a mutable GitHub Actions artifact. They contain no live account content. Large generated files are exposed by resource link or file reference rather than embedded as base64 tool output.
+
+Both are static packaged resources registered at those two exact URIs and read
+through `importlib.resources`; listing resources advertises the same URI and
+MIME metadata, and reading performs no network access or account query. They do
+not implement runtime refresh, ETag, or mutable cache semantics. Their schemas
+enumerate every bounded status value used by this release, including the four
+`item_contract_status` values defined above, and package tests compare canonical
+JSON bytes from source, wheel, and sdist.
 
 ### 7.4 Errors and compatibility status
 
@@ -368,7 +439,7 @@ The implementation will apply these rules consistently:
 - Keep Skill trigger descriptions precise enough that a client can select them without reading the body.
 - Keep Skill instructions focused and progressively disclose the packaged tool reference. Prefer instructions over scripts; scripts must be deterministic when needed.
 - Test Skill metadata, trigger examples/non-examples, package inclusion, reference links, and a practical size budget for `SKILL.md`.
-- Keep the stable MCP major pinned as `mcp>=1.27,<2` for this release. Upgrading to v2 requires a separate compatibility change after it is stable and tested.
+- Keep the existing supported floor and pin the stable MCP major as `mcp>=1.26,<2`. CI tests both an explicit 1.26 minimum-dependency lane and the normally resolved latest v1 line (1.28.1 observed on PyPI on 2026-07-10). The native Host/Origin transport-security behavior and tool/resource registration used by this release are contract-tested in both lanes. Upgrading to v2 requires a separate compatibility change after it is stable and tested.
 
 The bundled gpt2agent Skill and tool reference will be updated in the same feature PR so installed guidance cannot lag the server surface.
 
@@ -389,7 +460,9 @@ Privacy requirements:
 - use synthesized fixtures that model only the minimum observed schema;
 - never claim that consumer-account access is an official OpenAI API.
 
-The existing `GPT2AGENT_RAW_DUMP` escape hatch violates this boundary because it persists prompts, responses, resume tokens, and raw SSE objects. Version 0.0.12 removes the raw-dump behavior and all current documentation that recommends it. Setting the legacy variable fails closed with an actionable message. The same change removes the live `GPT2AGENT_ALLOW_REMOTE` opt-in path, `ok-remote` state, generated-config advice, and every current recommendation in server/setup help, README, SECURITY, config examples, Skills, and `docs/`. The positive remote-opt-in test becomes a negative regression proving that the legacy variable cannot bypass a non-loopback refusal. Historical changelog entries and immutable verification records remain historical rather than being rewritten; the new changelog and migration note state that the override no longer works. A final search for `GPT2AGENT_ALLOW_REMOTE` permits the name only in historical/migration text, this design, and negative regression tests. A separate final search for `GPT2AGENT_RAW_DUMP` permits historical/migration text, this design, the fail-closed runtime guard, and negative regression tests; it permits no active dump path or current user guidance. If diagnostic files are reintroduced later, they require a separate allowlisted, shape-only schema; file mode `0600` alone is not sufficient protection.
+The existing `GPT2AGENT_RAW_DUMP` escape hatch violates this boundary because it persists prompts, responses, resume tokens, and raw SSE objects. Version 0.0.12 removes the raw-dump behavior and all current documentation that recommends it. Setting the legacy variable fails closed with an actionable message. The bundled Deep Research runner also stops writing `events.jsonl` by default: an explicitly requested final report may contain the user's requested answer, but diagnostic artifacts must be allowlisted shape-only metadata and must never contain tokens, prompts, response text, resume tokens, or raw events. Synthetic-secret tests inspect every generated artifact except an explicitly requested final report.
+
+The same change removes the live `GPT2AGENT_ALLOW_REMOTE` opt-in path, `ok-remote` state, generated-config advice, and every current recommendation in server/setup help, README, SECURITY, config examples, Skills, and `docs/`. The positive remote-opt-in test becomes a negative regression proving that the legacy variable cannot bypass a non-loopback refusal. Historical changelog entries and immutable verification records remain historical rather than being rewritten; the new changelog and migration note state that the override no longer works. A final search for `GPT2AGENT_ALLOW_REMOTE` permits the name only in historical/migration text, this design, and negative regression tests. A separate final search for `GPT2AGENT_RAW_DUMP` permits historical/migration text, this design, the fail-closed runtime guard, and negative regression tests; it permits no active dump path or current user guidance. If diagnostic files are reintroduced later, they require a separate allowlisted, shape-only schema; file mode `0600` alone is not sufficient protection.
 
 ## 10. GPT-Live decision
 
@@ -412,15 +485,9 @@ attached or exported.
 
 ## 11. Browser-client metadata drift
 
-Hard-coded `_CLIENT_VERSION` and `_CLIENT_BUILD` values are retained only as packaged fallback values. A small resolver will:
+Version 0.0.12 keeps checked-in `_CLIENT_VERSION` and `_CLIENT_BUILD` values and accepts only explicit, strictly validated diagnostic environment overrides. Runtime manifest scraping and automatic request retry are deferred: changing headers during an account request would couple a large public-page parser to every private adapter and make failures harder to classify. The scheduled public-surface radar reports drift so a maintainer can update the packaged values through a normal tested PR.
 
-1. accept explicit validated environment overrides for diagnosis;
-2. use a process-local last-known-good value when already resolved;
-3. optionally inspect public ChatGPT bootstrap/manifest metadata at most once per process when a compatibility refresh is requested;
-4. validate extracted values against strict length and character rules;
-5. fall back safely to packaged values when public discovery fails.
-
-The resolver extracts metadata only; it never downloads or executes arbitrary code, rewrites source, changes account settings, or persists account data. A failed request may trigger one metadata refresh and one retry only when the request is safe and idempotent.
+The radar follows only an HTTPS allowlist of official OpenAI/ChatGPT hosts, disables cross-host redirects, requires an expected textual content type, caps each response at 2 MiB, uses a 10-second request timeout and bounded total runtime, never executes downloaded code, and stores only normalized fingerprints and marker presence. A radar result never mutates runtime metadata or retries a private account request.
 
 ## 12. Testing strategy
 
@@ -440,8 +507,10 @@ Use synthesized fixtures for:
 - refusal of every non-loopback HTTP bind, including the legacy override, plus loopback `Origin` validation;
 - fail-closed handling of the legacy raw-dump variable;
 - forced-overlap token reload with request-local authorization, replacement of direct SSE/Sentinel session-header reads, shared-session concurrency isolation, concurrency/rate limits, 429 cooldown, bounded retry, and safe `Retry-After` parsing;
+- same-snapshot pairing across every compound SSE/Sentinel operation and rotation only between operations;
+- default absence of Deep Research event persistence and synthetic-secret absence from every diagnostic artifact;
 - omission, acceptance, refresh, and rejection of `thinking_effort`;
-- public metadata resolver overrides, validation, caching, retry bounds, and fallback;
+- strict diagnostic metadata overrides plus public-radar domain, redirect, content-type, response-size, timeout, and no-execution controls;
 - MCP resource schemas, URIs, and absence of account content;
 - tool annotations and structured output schemas;
 - Skill triggers, packaged references, and wheel/sdist inclusion.
@@ -452,6 +521,14 @@ Every adapter must distinguish an honestly empty collection from a malformed con
 
 An explicit live test group is opt-in from normal `pytest` and is never run in hosted CI. It is nevertheless a required manual pre-release gate, run by the release owner with a maintainer-controlled local ChatGPT Pro session. A checked-in generator emits a schema-validated, canonically serialized receipt containing schema version, package version, full Git commit SHA, Git tree SHA, a `local_candidate_artifacts` object with wheel/sdist filenames, SHA-256 values, source commit/tree, and `build_origin: "local_live_gate"`, plan class, UTC timestamp, adapter status, counts, and redacted shape results. It never records account identity or content. The receipt file's SHA-256 is computed externally and recorded in release evidence.
 
+The gate uses a checked-in exact GET allowlist derived from the normative probe
+table. It also has an explicit denylist covering `/backend-api/settings/voices`,
+every Voice/realtime/call/session path, WebRTC, transcript/conversation bodies,
+and any endpoint not named by the allowlist. A test fails if a 0.0.12 live-gate
+request attempts a denied or unknown route. Voice audit evidence may appear only
+as dated static provenance in the packaged inventory; the gate never refreshes
+it.
+
 The live group must:
 
 - issue GET requests only;
@@ -461,7 +538,7 @@ The live group must:
 - leave no snapshots, cookies, screenshots, or temporary account artifacts;
 - report entitlement, reachability, and official support separately.
 
-An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `conversations`, `custom_gpts`, `memory`, `codex`, and `projects`; every other capability uses `item_contract_status: "not_applicable"`.
+An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `conversations`, `custom_gpts`, `memory`, and `codex`; every other capability, including the unsupported candidate `projects` route, uses `item_contract_status: "not_applicable"`.
 
 Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. No Voice route or conversation-body probe is part of the 0.0.12 gate.
 
@@ -475,7 +552,7 @@ The aggregate `required` job includes the package dry-run so branch protection h
 
 ### 12.4 Scheduled public-surface drift radar
 
-A separate scheduled/manual workflow runs without account credentials or repository secrets beyond the default read token. It checks:
+A separate scheduled/manual workflow runs daily at 13:17 UTC and on manual dispatch without account credentials or repository secrets beyond the default read token. It checks:
 
 - official ChatGPT release notes, What's New, Voice, Work, Sites, and Plugins pages for a normalized content fingerprint;
 - the official Codex changelog;
@@ -483,7 +560,7 @@ A separate scheduled/manual workflow runs without account credentials or reposit
 - the current stable MCP v1 release and latest MCP specification date;
 - packaged fallback client/build metadata freshness.
 
-The radar writes a redacted JSON/Markdown evidence artifact and GitHub Actions annotations. Contract-marker loss fails this public-surface drift radar visibly; documentation fingerprint changes produce a review-needed result. A green result proves only that the checked public documentation fingerprints and bundle markers remain present. It never establishes private-route reachability, adapter health, account entitlement, release readiness, or any `reachable_now` value, and the artifact records those statuses as `not_checked`. It does not open a PR, modify source, access a ChatGPT account, or release automatically. A maintainer reviews the evidence, performs an opt-in local account contract check where needed, then ships a normal tested PR.
+The radar writes a redacted JSON/Markdown evidence artifact retained for 30 days and GitHub Actions annotations. Contract-marker loss fails that standalone radar workflow visibly; documentation fingerprint changes produce a warning and review-needed result without failure. The radar is not a dependency of the PR aggregate `required` job and cannot block an unrelated release by itself. A green result proves only that the checked public documentation fingerprints and bundle markers remain present. It never establishes private-route reachability, adapter health, account entitlement, release readiness, or any `reachable_now` value, and the artifact records those statuses as `not_checked`. It does not open a PR, modify source, access a ChatGPT account, or release automatically. A maintainer reviews the evidence, performs an opt-in local account contract check where needed, then ships a normal tested PR.
 
 ## 13. Release and rollback workflow
 

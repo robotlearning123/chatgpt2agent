@@ -2,16 +2,59 @@
 
 - **Date:** 2026-07-10 EDT
 - **Baseline design commit:** `36ab2b9d87652403a9f89b573aee0a7a0241b17e`
-- **Final reviewed design SHA-256:** `fc8a3fff4f32d70671d944bf6851b5fa31f6ae7cd1004659030c2ba1e8d24b31`
-- **Final diff SHA-256 against baseline:** `43db44e881630ce02cbcbe9b9cd6b1a8246bcdd6cc59afe4945db3ba9470f23d`
+- **Original reviewed design SHA-256:** `fc8a3fff4f32d70671d944bf6851b5fa31f6ae7cd1004659030c2ba1e8d24b31`
+- **Amended normative review SHA-256:** `9ae60793e9421d946894dbd480d89d7b1ca4d5cd8e30de1fb36c8d9b25a96f58` (63,473 bytes)
+- **Approved-file SHA-256:** `3ca3f0b9db7b2fce53056a3bb754eb084b35cafc1d918c345c2f2e931751e979` (63,459 bytes)
+- **Approved-file diff SHA-256 against baseline:** `d89a8816244ba7a549ed7d00a389eb8f46b6656c6ef69106a3238914ddf142cc`
 - **Original exact-design verdict:** PASS after corrections
-- **Current review status:** re-review required after the approved scope amendment
+- **Amended exact-design verdict:** zero blockers from Grok 4.5, GLM-5.2, and Claude Opus 4.8
+- **Current review status:** complete; approved for TDD implementation
 - **Implementation/release status:** v0.0.12 approved for implementation with all Voice code moved to v0.0.13
 
-The SHA-256 values above identify the originally reviewed design. On
-2026-07-10 the user narrowed v0.0.12 to exclude the Voice catalog and assigned
-that adapter to v0.0.13. This is a risk-reducing scope change, but the original
-exact-design PASS is not reused as a verdict for the amended release candidate.
+On 2026-07-10 the user narrowed v0.0.12 to exclude the Voice catalog and
+assigned that adapter to v0.0.13. The original PASS was not reused. Three fresh
+reviewers independently examined the complete amended file at the exact
+normative hash above after the release-audit corrections were applied.
+
+After those runs, the first metadata line changed from “amended re-review
+pending” to “review complete; approved for TDD implementation.” That
+administrative status-only change produced the approved-file hash above; no
+normative requirement changed. The reviewed hash and the current file hash are
+both retained so the evidence boundary is explicit rather than silently
+claiming the reviewers saw a later byte sequence.
+
+## Amended exact-design re-review
+
+| Lane | Exact runtime/model | Isolation | Result | Blockers |
+| --- | --- | --- | --- | ---: |
+| Grok | Grok CLI `0.2.93` (`f00f96316d`), `grok-4.5` | verbatim input; web, memory, subagents, plan, tools, and MCP disabled | `PASS` | 0 |
+| CCZ | `ccz` -> Claude Code `2.1.206`, explicitly routed to `glm-5.2` | no Chrome/session persistence/slash commands/tools; strict empty MCP and hooks/plugins | `PASS_WITH_CHANGES` | 0 |
+| Opus | `cc2` -> Claude Code `2.1.206`, `claude-opus-4-8`, account-2 OAuth | low effort; no Chrome/session persistence/slash commands/tools; strict empty MCP and hooks/plugins | `PASS` | 0 |
+
+The compact findings below normalize wording for the durable review record; the
+verdict and blocker arrays are unchanged from the exact model outputs:
+
+```json
+{"model_claim":"amended-0.0.12-account-design-rereview","verdict":"PASS","blockers":[],"nonblocking_findings":["installed_plugins false inheritance is currently unreachable because the Plugin catalog has no explicit false rule","capability probes must reuse the same strict envelope validators as their tools","unnamed automation or memory flags must remain null until reviewed"]}
+{"model_claim":"9ae60793e9421d946894dbd480d89d7b1ca4d5cd8e30de1fb36c8d9b25a96f58","verdict":"PASS_WITH_CHANGES","blockers":[],"nonblocking_findings":["make the installed-Plugin item bound explicit in implementation","retain strict required release handling for the current Plugin envelope","the USER probe does not prove WORKSPACE-only Plugin entitlement","keep public_bundle_only grounded in the checked-in evidence matrix","execute serial probes in normative table order"]}
+{"model_claim":"claude-opus-4-8","verdict":"PASS","blockers":[],"nonblocking_findings":["fail closed if a root-array Plugin catalog exceeds the JSON bound","use a bounded per-probe timeout inside the 90-second aggregate budget","compute the Plugin catalog record before installed-Plugin inheritance"]}
+```
+
+The non-blocking findings are implementation assertions, not permission to
+weaken the design. In particular, the implementation must run the normative
+probe table top-to-bottom, reuse each adapter's exact validator, treat absent
+unnamed feature flags as null, cap an unpageable installed-Plugin response, and
+preserve USER versus WORKSPACE evidence scope.
+
+The final successful runs took approximately 44.8 seconds (Grok), 142.1 seconds
+(GLM), and 15.2 seconds (Opus). The first final-hash Opus attempt used maximum
+effort and hit the 210-second hard timeout without output; it was excluded. A
+bounded low-effort retry succeeded. The default Claude account was also
+excluded after its organization policy refused subscription access. Earlier
+results on the superseded `77a6bc...` and `cf5269...` hashes, an interrupted CCZ
+run, and truncated harness streams were not counted. No result was relabeled as
+another model, no reviewer accessed the account or repository through tools,
+and no reviewer artifact or process remained afterward.
 
 ## 1. Scope and evidence boundary
 
@@ -33,7 +76,7 @@ The review kept four facts separate:
 
 No reviewer was allowed to treat one fact as proof of another.
 
-## 2. Reviewer provenance
+## 2. Original pre-amendment reviewer provenance
 
 | Lane | CLI and model | Isolation | Initial result | Final result |
 | --- | --- | --- | --- | --- |
