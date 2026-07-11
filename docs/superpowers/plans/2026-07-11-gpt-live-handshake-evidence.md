@@ -146,9 +146,37 @@ with one). That outbound envelope/type is **obfuscated in the current bundle**
 (the `.send(...)` construction did not yield to static grep; the deploy also
 rotates chunk hashes), and is the concrete remaining wall.
 
+### Outbound transport confirmed; the init/keepalive sequence is the wall
+
+The voice client chunk (`4813494d`) sends over the datachannel via:
+
+```js
+publishData: async (e) => {                      // e = binary buffer
+  if (dc.readyState !== "open") throw Error("Data channel is not open");
+  const n = new TextDecoder().decode(e);
+  dc.send(JSON.stringify({ type: "data_message", data: n }));  // same envelope both ways
+}
+```
+
+So the outbound envelope is confirmed `{type:"data_message", data:<string>}`. The
+connection sequence has phases `preConnectionSetup → audioInputAcquisition →
+audioTransceiverSetup → postConnectionSetup → qualityMonitorSetup`, and a
+`ConnectionQualityChanged` channel. But the **specific inner message(s)** the
+client calls `publishData` with right after open — the thing that holds the
+session past `listening` — is emitted by a voice-command layer buried in the
+4.5 MB minified chunk that static grep can't practically trace, and blind Node
+guessing (wrapped/unwrapped `session.update`, ± audio) has been ruled out (all
+close at ~1s identically).
+
+**Autonomous reverse-engineering is exhausted here.** The reliable next step is to
+observe the real authenticated client at RUNTIME — instrument `RTCDataChannel`
+`.send`/`.onmessage` (or `publishData`) on a logged-in `chatgpt.com` voice
+session and log the exact inner message sequence. This needs NO microphone/audio
+(read-only send/receive logging, forced-silent mic) and ~10s. It requires an
+authenticated browser the agent can drive.
+
 **Verified end-to-end: auth, routes, SDP exchange, ICE/DTLS, datachannel, the
-session state machine, and client-side audio egress wiring. Open (task #3):
-reverse-engineer the outbound datachannel init/keepalive message to hold the
-session past `listening`, then the transcription arrives and the Mode B loop
-(transcript → agent → speak) closes. A full spoken round-trip is NOT yet
-demonstrated.**
+session state machine, client-side audio egress wiring, and the outbound
+envelope. NOT demonstrated: a full spoken round-trip — blocked on the runtime
+init/keepalive sequence, obtainable only by observing the real authenticated
+client.**
