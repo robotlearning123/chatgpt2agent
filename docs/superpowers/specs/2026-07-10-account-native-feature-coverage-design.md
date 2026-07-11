@@ -539,6 +539,18 @@ records account identity or content. Its SHA-256 and artifact-set SHA-256 are
 committed into the annotated tag and public release evidence; the receipt stays
 in the approved local evidence store.
 
+Build/install subprocesses receive only an allowlisted
+runtime/locale/certificate environment; proxy variables are not forwarded
+because proxy URLs can carry credentials. The live-probe subprocess receives an
+isolated mode-0700 credential-discovery home with only a mode-0600 minimal Codex
+auth file, and child `TEMP`/`TMP`/`TMPDIR` paths resolve to private per-step
+directories. This prevents normal environment and home-directory discovery of
+operator GitHub, release, publish, SSH, cloud, and arbitrary injected
+credentials, but it is not an OS filesystem sandbox. The current installed
+candidate still receives the selected ChatGPT access token to execute its live
+adapter, so this is not an account-auth isolation boundary;
+trusted-transport/offline-candidate hardening remains a separate requirement.
+
 The gate uses a checked-in exact GET allowlist derived from the permitted rows
 of the normative probe table. It also has an explicit denylist covering
 conversation summaries and bodies, memories, custom instructions,
@@ -604,8 +616,11 @@ Implementation starts in an isolated feature worktree after an implementation pl
    and run the required trusted-local GET-only account gate. The receipt binds
    commit/tree, `.github/workflows/ci.yml`, run ID, producing attempt, artifact
    ID/digest/size/expiry, and both inner file hashes. Do not rebuild locally.
-8. Create annotated `v0.0.12` only after step 7 passes. Include exactly the eight
-   receipt/artifact identity lines emitted by the account verifier.
+8. Immediately before tag creation, re-fetch the complete pinned run artifact
+   list, revalidate every recorded field with at least one hour of retention
+   headroom, and reject any newer candidate-producing attempt. Then create
+   annotated `v0.0.12` with exactly the eight receipt/artifact identity lines
+   emitted by the account verifier.
 9. The OIDC release workflow validates the pinned run and artifact live,
    downloads by numeric artifact ID, reconstructs the account artifact-set
    digest, and publishes those same bytes without invoking a build. Record the
@@ -647,7 +662,7 @@ The release candidate is ready to merge only when all of the following are true:
 - the scheduled public-surface drift radar reports only public drift evidence, explicitly records account/private adapter status as `not_checked`, and does not mutate source or account state;
 - the PR package dry-run installs and checks wheel and sdist cleanly;
 - the complete offline test matrix, lint, release checks, and independent review pass;
-- the candidate receipt records version 0.0.12, the final PR-head commit/tree, `local_candidate_artifacts` wheel/sdist hashes, and redacted live results;
+- no account receipt is claimed for the PR head; that gate runs only after merge against the immutable main-CI candidate;
 - no unexplained owned residue remains; the implementation worktree contains only the intended commits, while parent-workspace residue and unrelated user changes are separately inventoried, preserved, and reported unless the owner authorizes cleanup.
 
 ### 14.2 Pre-tag acceptance on merged `main`
@@ -657,6 +672,9 @@ The annotated tag may be created only when:
 - the merged commit is verified on `origin/main` and contains the reviewed release-candidate tree;
 - the package/release dry-run passes from that exact merged commit;
 - the required local live gate passes from that exact merged commit;
+- the complete pinned run artifact list was revalidated immediately before tag
+  creation with at least one hour of retention headroom and no newer
+  candidate-producing attempt;
 - the pre-tag receipt records version 0.0.12, merged commit/tree, `local_candidate_artifacts` wheel/sdist hashes, and redacted live results;
 - the annotated tag message records the receipt SHA-256.
 
@@ -665,9 +683,9 @@ The annotated tag may be created only when:
 The release is complete only after:
 
 - the annotated `v0.0.12` tag is verified on the merged `origin/main` commit;
-- PyPI exposes the expected wheel and sdist and every filename/SHA-256 matches `release_workflow_artifacts`; those hashes are not compared with `local_candidate_artifacts` in this non-reproducible-build workflow;
+- PyPI exposes the expected wheel and sdist and every filename/SHA-256 matches both `release_workflow_artifacts` and the retained local receipt's `local_candidate_artifacts` because the workflow publishes the exact account-tested bytes;
 - the GitHub Release exists with the correct changelog section;
-- the attached pre-tag receipt matches the SHA-256 recorded in the annotated tag;
+- the retained local pre-tag receipt matches the SHA-256 recorded in the annotated tag and is not attached to the public release;
 - a clean environment installs from PyPI and reports `gpt2agent 0.0.12`;
 - all owned release artifacts and temporary worktrees are removed, while unrelated user changes are preserved and reported.
 
