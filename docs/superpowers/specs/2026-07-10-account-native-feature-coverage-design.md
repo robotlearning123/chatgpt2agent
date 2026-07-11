@@ -265,7 +265,7 @@ The current web client also uses `paused` and `finished`. Those filters and a br
 - Valid observed scopes: `USER`, `WORKSPACE`.
 - Preferred current-web envelope: `plugins`, `pagination.next_page_token`; current-web items require `id` and `release`.
 - For that current-web variant, `release` must be an object. Project direct scalar item fields only when their names match the allowlist; additionally map only `release.version` to `release_version`. No other nested `release` content is exposed in 0.0.12. A page containing more items than the requested `limit` is `contract_changed` even when a next token exists, because truncating it could skip entries.
-- Also accept the live-account root-array envelope observed on 2026-07-10, whose items expose `id`, `name`, `marketplace_name`, `version`, and `enabled` without a nested release. This route returned 1,000 items while ignoring `limit=1`. For this variant, implement deterministic adapter-side pagination: derive a non-sensitive catalog fingerprint from ordered normalized IDs, return at most `limit` items, and use an opaque local cursor containing only the fingerprint and next offset. A later page re-fetches the array and rejects a stale fingerprint as `contract_changed`; it never caches or embeds names or account content in the cursor.
+- Also accept the live-account root-array envelope observed on 2026-07-10, whose items expose `id`, `name`, `marketplace_name`, `version`, and `enabled` without a nested release. This route returned 1,000 items while ignoring `limit=1`. For this variant, implement deterministic adapter-side pagination within one server process: derive a process-local keyed HMAC from ordered validated pre-redaction IDs, return at most `limit` items, and use an opaque local cursor containing only the HMAC and next offset. A later page re-fetches the array and rejects a stale fingerprint as `contract_changed`; it never caches names or account content, and the cursor cannot serve as an offline raw-ID oracle.
 - Return only this allowlisted scalar projection: `id`, redacted `name`, redacted `marketplace_name`, redacted `display_name`, `version`, `enabled`, `scope`, `status`, `installation_policy`, `release_version`, `skill_names`, `disabled_skill_names`, `app_ids`, `app_template_ids`, `canonical_connector_ids`, `mcp_server_keys`, and string-valued `capability_names`. Missing fields remain `null`; values are never fabricated across variants.
 - Do not return release descriptions, prompts/default prompts, skill descriptions/interfaces, template descriptions/reasons, icons, screenshots, developer URLs, owner IDs, workspace IDs, or unknown nested objects.
 - Bound `limit` to 1–50, cursors to 2,048 printable characters, names/IDs/versions/status scalars to 256 characters, and every projected nested string list to 100 entries. Apply secret/PII redaction to strings, drop non-string list entries, and return `contract_changed` when required identity fields or envelope types are invalid.
@@ -589,7 +589,7 @@ retained.
 
 ### 12.3 Pull-request CI
 
-The required PR pipeline continues to run Ruff, release-metadata verification, the offline test matrix on supported Python and OS versions, Windows package smoke tests, and ShellCheck. It additionally builds wheel and sdist, runs `twine check`, installs both artifacts in clean environments, checks packaged Skills/resources, and runs the narrow sdist tests. This is a release dry-run only: it never uploads to PyPI or creates a GitHub release.
+The required PR pipeline continues to run Ruff, release-metadata verification, the offline test matrix on supported Python and OS versions, Windows package smoke tests, and ShellCheck. It additionally performs two clean wheel/sdist builds, deterministically normalizes each sdist, requires both artifact formats to be byte-identical across builds, runs `twine check`, installs the retained first-build artifacts in clean environments, checks packaged Skills/resources, and runs the narrow sdist tests. This is a release dry-run only: it never uploads to PyPI or creates a GitHub release.
 
 The aggregate `required` job includes the package dry-run so branch protection has one reliable gate.
 
@@ -615,8 +615,9 @@ Implementation starts in an isolated feature worktree after an implementation pl
 4. Open a PR, obtain independent review, resolve every thread, and require all CI gates green.
 5. After the final PR revision, rerun step 3 and the exact-head cross-model review. Any later revision invalidates that evidence.
 6. Merge to `main` without tagging and wait for the complete `ci.yml` push run on
-   the exact merge commit. Main CI builds once, tests the distributions, and
-   uploads an immutable candidate named by commit, run ID, and producing attempt.
+   the exact merge commit. Main CI performs two clean normalized builds, requires
+   byte-identical wheel and sdist outputs, tests the first artifact set, and
+   uploads that immutable candidate named by commit, run ID, and producing attempt.
 7. With at least 72 hours of retention headroom, download that exact candidate
    and run the required trusted-local GET-only account gate. The receipt binds
    commit/tree, `.github/workflows/ci.yml`, run ID, producing attempt, artifact
