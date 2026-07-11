@@ -202,6 +202,12 @@ FULL application protocol (`track_state` + `client_metrics`) are all captured an
 verified. A full spoken round-trip is **not** demonstrated, blocked solely on
 WebRTC-library media interop.
 
+**Decisive diagnostic (`SILENCE=1`):** werift sending *continuous silence* (what
+the browser client sends and survives 20s+ on) STILL app-closes ~1s after
+`listening`. So werift's audio **SRTP egress does not reach the server at all** —
+the server closes because it receives no valid audio media despite
+`track_state=live`. This is the confirmed root cause, not a protocol/timing gap.
+
 **Viable path (task #3):** the real browser client works end-to-end, so make the
 sidecar **browser-based** — a headless Chrome launched with
 `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=<wav>`,
