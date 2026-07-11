@@ -1,0 +1,869 @@
+"""Tests for the commit-pinned exact GitHub Release publisher action."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import io
+import sys
+from copy import deepcopy
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ACTION_ROOT = PROJECT_ROOT / ".github" / "actions" / "publish-exact-github-release"
+ACTION_YAML = ACTION_ROOT / "action.yml"
+PUBLISHER = ACTION_ROOT / "publish.py"
+TAG_OBJECT = "1" * 40
+COMMIT = "2" * 40
+TREE = "3" * 40
+
+
+def _load_publisher():
+    spec = importlib.util.spec_from_file_location("exact_release_publisher", PUBLISHER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+publisher = _load_publisher()
+
+
+def _expected_assets() -> dict[str, Any]:
+    return {
+        name: publisher.ExpectedAsset(len(payload), hashlib.sha256(payload).hexdigest())
+        for name, payload in {
+            "gpt2agent-1.2.3-py3-none-any.whl": b"wheel",
+            "gpt2agent-1.2.3.tar.gz": b"sdist",
+            "release-workflow-artifacts.json": b"evidence",
+        }.items()
+    }
+
+
+def _release(*, draft: bool = True, immutable: bool = False) -> dict[str, Any]:
+    return {
+        "id": 42,
+        "tag_name": "v1.2.3",
+        "name": "v1.2.3",
+        "body": "release notes\n",
+        "prerelease": False,
+        "draft": draft,
+        "immutable": immutable,
+    }
+
+
+def _assets(expected: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": index,
+            "name": name,
+            "state": "uploaded",
+            "size": record.size,
+            "digest": f"sha256:{record.sha256}",
+        }
+        for index, (name, record) in enumerate(expected.items(), start=101)
+    ]
+
+
+def _immutable_settings(*, enabled: bool = True) -> dict[str, bool]:
+    return {"enabled": enabled, "enforced_by_owner": False}
+
+
+class _FakeGitHub:
+    def __init__(
+        self,
+        release: dict[str, Any],
+        assets: list[dict[str, Any]],
+        *,
+        ambiguous_patch: bool = False,
+        ambiguous_patch_applies: bool = True,
+        change_second_snapshot: bool = False,
+        mutate_asset_during_patch: bool = False,
+        mutate_metadata_after_public_get: bool = False,
+        immutable_settings: list[object] | None = None,
+    ) -> None:
+        self.release = deepcopy(release)
+        self.assets = deepcopy(assets)
+        self.ambiguous_patch = ambiguous_patch
+        self.ambiguous_patch_applies = ambiguous_patch_applies
+        self.change_second_snapshot = change_second_snapshot
+        self.mutate_asset_during_patch = mutate_asset_during_patch
+        self.mutate_metadata_after_public_get = mutate_metadata_after_public_get
+        self.immutable_settings = deepcopy(
+            immutable_settings
+            if immutable_settings is not None
+            else [_immutable_settings(), _immutable_settings()]
+        )
+        self.calls: list[tuple[str, str, str, object | None]] = []
+        self.release_gets = 0
+        self.immutable_setting_gets = 0
+
+    def __call__(self, method: str, path: str, token: str, payload: object | None):
+        base = "/repos/robotlearning123/gpt2agent/releases/42"
+        immutable_settings_path = "/repos/robotlearning123/gpt2agent/immutable-releases"
+        expected_token = "settings-token" if path == immutable_settings_path else "release-token"
+        assert token == expected_token
+        self.calls.append((method, path, token, payload))
+        if method == "GET" and path == immutable_settings_path:
+            response = self.immutable_settings[self.immutable_setting_gets]
+            self.immutable_setting_gets += 1
+            return deepcopy(response)
+        if method == "GET" and path == base:
+            self.release_gets += 1
+            response = deepcopy(self.release)
+            if self.change_second_snapshot and self.release_gets == 2:
+                response["body"] = "changed before publish\n"
+            if self.mutate_metadata_after_public_get and response.get("draft") is False:
+                # GitHub permits title/notes edits after immutable publication.
+                # The returned snapshot was exact, but it is never a CAS lease.
+                self.release["body"] = "changed after public snapshot\n"
+            return response
+        if method == "GET" and path == f"{base}/assets?per_page=100":
+            return deepcopy(self.assets)
+        if method == "GET" and path == "/repos/robotlearning123/gpt2agent/git/ref/tags/v1.2.3":
+            return {
+                "ref": "refs/tags/v1.2.3",
+                "object": {"type": "tag", "sha": TAG_OBJECT},
+            }
+        if method == "GET" and path == f"/repos/robotlearning123/gpt2agent/git/tags/{TAG_OBJECT}":
+            return {
+                "sha": TAG_OBJECT,
+                "tag": "v1.2.3",
+                "object": {"type": "commit", "sha": COMMIT},
+            }
+        if method == "GET" and path == f"/repos/robotlearning123/gpt2agent/git/commits/{COMMIT}":
+            return {"sha": COMMIT, "tree": {"sha": TREE}}
+        if method == "PATCH" and path == base and payload == {"draft": False}:
+            if not self.ambiguous_patch or self.ambiguous_patch_applies:
+                if self.mutate_asset_during_patch:
+                    # Model an out-of-band write after the final GET and just
+                    # before GitHub freezes the published assets and tag.
+                    self.assets[0]["digest"] = "sha256:" + "0" * 64
+                self.release["draft"] = False
+                self.release["immutable"] = True
+            if self.ambiguous_patch:
+                self.ambiguous_patch = False
+                raise ValueError("ambiguous transport failure")
+            return deepcopy(self.release)
+        raise AssertionError(f"unexpected request: {method} {path} {payload!r}")
+
+
+def _publish(api: _FakeGitHub, expected: dict[str, Any]) -> str:
+    return publisher.publish_exact_release(
+        "robotlearning123/gpt2agent",
+        42,
+        "v1.2.3",
+        "release notes\n",
+        False,
+        expected,
+        "release-token",
+        "settings-token",
+        expected_tag_object=TAG_OBJECT,
+        expected_commit=COMMIT,
+        expected_tree=TREE,
+        release_request_json=api,
+        settings_request_json=api,
+        sleep=lambda delay: None,
+    )
+
+
+def _preflight(api: _FakeGitHub, expected: dict[str, Any]) -> None:
+    publisher.preflight_exact_release_draft(
+        "robotlearning123/gpt2agent",
+        42,
+        "v1.2.3",
+        "release notes\n",
+        False,
+        expected,
+        "release-token",
+        expected_tag_object=TAG_OBJECT,
+        expected_commit=COMMIT,
+        expected_tree=TREE,
+        release_request_json=api,
+    )
+
+
+def test_action_is_isolated_and_does_not_put_token_on_command_line() -> None:
+    action = ACTION_YAML.read_text(encoding="utf-8")
+    source = PUBLISHER.read_text(encoding="utf-8")
+
+    assert "using: composite" in action
+    assert "  mode:" in action
+    mode_inputs = action.split("  mode:", 1)[1].split("  github-token:", 1)[0]
+    assert "    required: true" in mode_inputs
+    assert "/usr/bin/env -i" in action
+    assert "/usr/bin/python3 -I -S -B" in action
+    assert "immutability-token:" in action
+    immutability_input = action.split("immutability-token:", 1)[1].split(
+        "repository:", 1
+    )[0]
+    assert "required: false" in immutability_input
+    assert 'case "$INPUT_MODE" in' in action
+    assert 'printf \'%s\' "$INPUT_GITHUB_TOKEN" |' in action
+    assert 'printf \'%s\\0%s\' "$INPUT_GITHUB_TOKEN" "$INPUT_IMMUTABILITY_TOKEN" |' in action
+    assert "GH_TOKEN=" not in action
+    assert "--draft-preflight" in action
+    assert "--token-stdin" in action
+    assert "--github-token" not in action
+    assert "--immutability-token" not in action
+    assert "actions/checkout" not in action
+    assert 'method not in {"GET", "PATCH"}' in source
+    assert 'payload != {"draft": False}' in source
+    assert "os.environ" not in source
+    assert '"POST"' not in source
+    assert "hmac.compare_digest" in source
+
+
+def test_exact_draft_is_validated_twice_and_patched_by_numeric_id() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(_release(), _assets(expected))
+    release_path = "/repos/robotlearning123/gpt2agent/releases/42"
+    assets_path = f"{release_path}/assets?per_page=100"
+    settings_path = "/repos/robotlearning123/gpt2agent/immutable-releases"
+
+    assert _publish(api, expected) == "published"
+
+    patch_calls = [call for call in api.calls if call[0] == "PATCH"]
+    assert patch_calls == [
+        ("PATCH", release_path, "release-token", {"draft": False})
+    ]
+    assert api.calls == [
+        ("GET", release_path, "release-token", None),
+        ("GET", assets_path, "release-token", None),
+        ("GET", settings_path, "settings-token", None),
+        ("GET", release_path, "release-token", None),
+        ("GET", assets_path, "release-token", None),
+        ("GET", settings_path, "settings-token", None),
+        (
+            "GET",
+            "/repos/robotlearning123/gpt2agent/git/ref/tags/v1.2.3",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            f"/repos/robotlearning123/gpt2agent/git/tags/{TAG_OBJECT}",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            f"/repos/robotlearning123/gpt2agent/git/commits/{COMMIT}",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            "/repos/robotlearning123/gpt2agent/git/ref/tags/v1.2.3",
+            "release-token",
+            None,
+        ),
+        ("PATCH", release_path, "release-token", {"draft": False}),
+        ("GET", release_path, "release-token", None),
+        ("GET", assets_path, "release-token", None),
+        (
+            "GET",
+            "/repos/robotlearning123/gpt2agent/git/ref/tags/v1.2.3",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            f"/repos/robotlearning123/gpt2agent/git/tags/{TAG_OBJECT}",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            f"/repos/robotlearning123/gpt2agent/git/commits/{COMMIT}",
+            "release-token",
+            None,
+        ),
+        (
+            "GET",
+            "/repos/robotlearning123/gpt2agent/git/ref/tags/v1.2.3",
+            "release-token",
+            None,
+        ),
+    ]
+    assert len(api.calls) == 17
+    assert {method for method, _, _, _ in api.calls} <= {"GET", "PATCH"}
+
+
+def test_exact_numeric_draft_preflight_is_read_only_and_binds_live_tag() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(_release(), _assets(expected))
+    base = "/repos/robotlearning123/gpt2agent"
+
+    _preflight(api, expected)
+
+    assert api.calls == [
+        ("GET", f"{base}/releases/42", "release-token", None),
+        ("GET", f"{base}/releases/42/assets?per_page=100", "release-token", None),
+        ("GET", f"{base}/git/ref/tags/v1.2.3", "release-token", None),
+        ("GET", f"{base}/git/tags/{TAG_OBJECT}", "release-token", None),
+        ("GET", f"{base}/git/commits/{COMMIT}", "release-token", None),
+        ("GET", f"{base}/git/ref/tags/v1.2.3", "release-token", None),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("wrong-same-name-digest", "digest"),
+        ("missing", "exact asset set"),
+        ("extra", "exact asset set"),
+        ("malformed", "asset ID"),
+    ],
+)
+def test_draft_preflight_rejects_adversarial_assets_without_publication(
+    mutation: str,
+    message: str,
+) -> None:
+    expected = _expected_assets()
+    assets = _assets(expected)
+    if mutation == "wrong-same-name-digest":
+        assets[0]["digest"] = "sha256:" + "0" * 64
+    elif mutation == "missing":
+        assets.pop()
+    elif mutation == "extra":
+        assets.append(
+            {
+                "id": 999,
+                "name": "unreviewed.txt",
+                "state": "uploaded",
+                "size": 1,
+                "digest": "sha256:" + "0" * 64,
+            }
+        )
+    else:
+        assets[0].pop("id")
+    api = _FakeGitHub(_release(), assets)
+
+    with pytest.raises(ValueError, match=message):
+        _preflight(api, expected)
+
+    assert api.calls
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+
+
+@pytest.mark.parametrize("body", ["release notes", "different release notes\n"])
+def test_draft_preflight_rejects_truncated_or_wrong_body_without_publication(
+    body: str,
+) -> None:
+    expected = _expected_assets()
+    release = _release()
+    release["body"] = body
+    api = _FakeGitHub(release, _assets(expected))
+
+    with pytest.raises(ValueError, match="body does not exactly match"):
+        _preflight(api, expected)
+
+    assert api.calls
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+
+
+def test_exact_published_immutable_rerun_is_a_noop_success() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(_release(draft=False, immutable=True), _assets(expected))
+
+    assert _publish(api, expected) == "already-published"
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+    assert api.immutable_setting_gets == 0
+
+
+def test_disabled_immutable_setting_fails_before_patch() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        immutable_settings=[_immutable_settings(enabled=False)],
+    )
+
+    with pytest.raises(ValueError, match="immutable-release setting"):
+        _publish(api, expected)
+
+    assert api.immutable_setting_gets == 1
+    assert all(method != "PATCH" for method, _, _, _ in api.calls)
+
+
+def test_immutable_setting_enabled_to_disabled_drift_fails_before_patch() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        immutable_settings=[
+            _immutable_settings(),
+            _immutable_settings(enabled=False),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="immutable-release setting"):
+        _publish(api, expected)
+
+    assert api.immutable_setting_gets == 2
+    assert all(method != "PATCH" for method, _, _, _ in api.calls)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        None,
+        [],
+        {"enabled": True},
+        {"enabled": True, "enforced_by_owner": False, "unexpected": False},
+        {"enabled": 1, "enforced_by_owner": False},
+        {"enabled": True, "enforced_by_owner": 0},
+    ],
+)
+def test_malformed_immutable_setting_response_fails_before_patch(
+    settings: object,
+) -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        immutable_settings=[settings],
+    )
+
+    with pytest.raises(ValueError, match="immutable-release setting"):
+        _publish(api, expected)
+
+    assert all(method != "PATCH" for method, _, _, _ in api.calls)
+
+
+def test_ambiguous_patch_is_recovered_only_by_exact_immutable_readback() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(_release(), _assets(expected), ambiguous_patch=True)
+
+    assert _publish(api, expected) == "published-after-ambiguous-response"
+    assert sum(method == "PATCH" for method, _, _, _ in api.calls) == 1
+    assert api.immutable_setting_gets == 2
+
+
+def test_ambiguous_unapplied_patch_rechecks_setting_before_retry() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        ambiguous_patch=True,
+        ambiguous_patch_applies=False,
+        immutable_settings=[
+            _immutable_settings(),
+            _immutable_settings(),
+            _immutable_settings(enabled=False),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="immutable-release setting"):
+        _publish(api, expected)
+
+    assert sum(method == "PATCH" for method, _, _, _ in api.calls) == 1
+    assert api.immutable_setting_gets == 3
+
+
+def test_changed_second_snapshot_fails_before_patch() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        change_second_snapshot=True,
+    )
+
+    with pytest.raises(ValueError, match="body"):
+        _publish(api, expected)
+
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+
+
+def test_privileged_asset_mutation_during_patch_is_detected_after_publish() -> None:
+    """The documented update has no precondition/CAS; frozen drift cannot be undone."""
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        mutate_asset_during_patch=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="published release did not become exact and immutable",
+    ):
+        _publish(api, expected)
+
+    assert sum(method == "PATCH" for method, _, _, _ in api.calls) == 1
+    assert api.release["draft"] is False
+    assert api.release["immutable"] is True
+    assert api.assets[0]["digest"] == "sha256:" + "0" * 64
+
+
+def test_public_metadata_exactness_is_only_a_point_in_time_snapshot() -> None:
+    expected = _expected_assets()
+    api = _FakeGitHub(
+        _release(),
+        _assets(expected),
+        mutate_metadata_after_public_get=True,
+    )
+
+    assert _publish(api, expected) == "published"
+    assert api.release["draft"] is False
+    assert api.release["immutable"] is True
+    assert api.release["body"] == "changed after public snapshot\n"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("id", 43, "ID"),
+        ("tag_name", "v1.2.4", "tag"),
+        ("name", "wrong", "name"),
+        ("body", "release notes", "body"),
+        ("prerelease", True, "prerelease"),
+        ("draft", False, "immutable"),
+        ("immutable", True, "immutable"),
+    ],
+)
+def test_mismatched_draft_metadata_fails_before_patch(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    expected = _expected_assets()
+    release = _release()
+    release[field] = value
+    api = _FakeGitHub(release, _assets(expected))
+
+    with pytest.raises(ValueError, match=message):
+        _publish(api, expected)
+
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("extra", "exact asset set"),
+        ("missing", "exact asset set"),
+        ("duplicate-name", "duplicate asset names"),
+        ("duplicate-id", "unique IDs"),
+        ("state", "not uploaded"),
+        ("size", "size"),
+        ("digest", "digest"),
+    ],
+)
+def test_mismatched_draft_assets_fail_before_patch(mutation: str, message: str) -> None:
+    expected = _expected_assets()
+    assets = _assets(expected)
+    if mutation == "extra":
+        assets.append(
+            {"id": 999, "name": "extra", "state": "uploaded", "size": 0, "digest": "sha256:" + "0" * 64}
+        )
+    elif mutation == "missing":
+        assets.pop()
+    elif mutation == "duplicate-name":
+        assets[1]["name"] = assets[0]["name"]
+    elif mutation == "duplicate-id":
+        assets[1]["id"] = assets[0]["id"]
+    elif mutation == "state":
+        assets[0]["state"] = "new"
+    elif mutation == "size":
+        assets[0]["size"] += 1
+    else:
+        assets[0]["digest"] = "sha256:" + "0" * 64
+    api = _FakeGitHub(_release(), assets)
+
+    with pytest.raises(ValueError, match=message):
+        _publish(api, expected)
+
+    assert all(method == "GET" for method, _, _, _ in api.calls)
+
+
+def test_missing_numeric_draft_fails_without_fallback_creation() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def missing(method: str, path: str, token: str, payload: object | None):
+        calls.append((method, path))
+        raise ValueError("GitHub API request failed with HTTP 404")
+
+    with pytest.raises(ValueError, match="HTTP 404"):
+        publisher.publish_exact_release(
+            "robotlearning123/gpt2agent",
+            42,
+            "v1.2.3",
+            "release notes\n",
+            False,
+            _expected_assets(),
+            "release-token",
+            "settings-token",
+            expected_tag_object=TAG_OBJECT,
+            expected_commit=COMMIT,
+            expected_tree=TREE,
+            release_request_json=missing,
+            settings_request_json=missing,
+            sleep=lambda delay: None,
+        )
+
+    assert calls == [("GET", "/repos/robotlearning123/gpt2agent/releases/42")]
+
+
+def test_local_inputs_are_exact_regular_bounded_files(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    wheel = dist / "gpt2agent-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    (dist / "gpt2agent-1.2.3.tar.gz").write_bytes(b"sdist")
+    evidence = tmp_path / "release-workflow-artifacts.json"
+    evidence.write_bytes(b"evidence")
+
+    expected = publisher.expected_release_assets(dist, evidence, "1.2.3")
+    assert set(expected) == {wheel.name, "gpt2agent-1.2.3.tar.gz", evidence.name}
+
+    (dist / "extra").write_bytes(b"unexpected")
+    with pytest.raises(ValueError, match="exact release files"):
+        publisher.expected_release_assets(dist, evidence, "1.2.3")
+    (dist / "extra").unlink()
+
+    wheel.unlink()
+    wheel.symlink_to(evidence)
+    with pytest.raises(ValueError, match="regular file"):
+        publisher.expected_release_assets(dist, evidence, "1.2.3")
+
+
+def test_local_oversized_asset_is_rejected_before_hashing(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    wheel = dist / "gpt2agent-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    (dist / "gpt2agent-1.2.3.tar.gz").write_bytes(b"sdist")
+    evidence = tmp_path / "release-workflow-artifacts.json"
+    evidence.write_bytes(b"evidence")
+    with wheel.open("wb") as stream:
+        stream.truncate(publisher.MAX_ASSET_BYTES + 1)
+
+    with pytest.raises(ValueError, match="size limit"):
+        publisher.expected_release_assets(dist, evidence, "1.2.3")
+
+
+def test_request_layer_rejects_collection_creation_without_network() -> None:
+    with pytest.raises(ValueError, match="disallowed"):
+        publisher._request_release_json(
+            "POST",
+            "/repos/robotlearning123/gpt2agent/releases",
+            "token",
+            {"draft": False},
+        )
+
+
+def test_request_layers_enforce_token_specific_api_surfaces_without_network() -> None:
+    release_path = "/repos/robotlearning123/gpt2agent/releases/42"
+    settings_path = "/repos/robotlearning123/gpt2agent/immutable-releases"
+
+    with pytest.raises(ValueError, match="disallowed"):
+        publisher._request_release_json("GET", settings_path, "release-token", None)
+    with pytest.raises(ValueError, match="disallowed"):
+        publisher._request_settings_json("GET", release_path, "settings-token", None)
+    with pytest.raises(ValueError, match="disallowed"):
+        publisher._request_settings_json(
+            "PATCH", settings_path, "settings-token", {"draft": False}
+        )
+
+
+def _main_args(tmp_path: Path) -> list[str]:
+    return [
+        "--token-stdin",
+        "--repository",
+        "robotlearning123/gpt2agent",
+        "--release-id",
+        "42",
+        "--tag",
+        "v1.2.3",
+        "--tag-object",
+        TAG_OBJECT,
+        "--commit",
+        COMMIT,
+        "--tree",
+        TREE,
+        "--version",
+        "1.2.3",
+        "--expected-prerelease",
+        "false",
+        "--notes",
+        str(tmp_path / "notes"),
+        "--dist",
+        str(tmp_path / "dist"),
+        "--evidence",
+        str(tmp_path / "evidence"),
+    ]
+
+
+def test_main_reads_two_tokens_byte_exactly_from_stdin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    release_token = b"github-release-token-byte-canary"
+    settings_token = b"github-settings-token-byte-canary"
+    observed: list[tuple[str, str]] = []
+
+    class Stdin:
+        buffer = io.BytesIO(release_token + b"\x00" + settings_token)
+
+    monkeypatch.setattr(publisher.sys, "stdin", Stdin())
+    monkeypatch.setattr(publisher, "_read_notes", lambda path: "notes\n")
+    monkeypatch.setattr(
+        publisher,
+        "expected_release_assets",
+        lambda dist, evidence, version: _expected_assets(),
+    )
+
+    def publish(*args, **kwargs):
+        observed.append((args[6], args[7]))
+        return "published"
+
+    monkeypatch.setattr(publisher, "publish_exact_release", publish)
+
+    assert publisher.main(_main_args(tmp_path)) == 0
+    assert observed == [(release_token.decode("utf-8"), settings_token.decode("utf-8"))]
+    output = capsys.readouterr().out
+    assert "github-release-token-byte-canary" not in output
+    assert "github-settings-token-byte-canary" not in output
+
+
+def test_draft_preflight_main_reads_one_bounded_token_without_publication_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    token = b"github-draft-preflight-token-byte-canary"
+    observed: list[tuple[str, str]] = []
+
+    class Stdin:
+        buffer = io.BytesIO(token)
+
+    monkeypatch.setattr(publisher.sys, "stdin", Stdin())
+    monkeypatch.setattr(publisher, "_read_notes", lambda path: "notes\n")
+    monkeypatch.setattr(
+        publisher,
+        "expected_release_assets",
+        lambda dist, evidence, version: _expected_assets(),
+    )
+
+    def preflight(*args, **kwargs):
+        observed.append((args[0], args[6]))
+
+    monkeypatch.setattr(publisher, "preflight_exact_release_draft", preflight)
+
+    assert publisher.main(["--draft-preflight", *_main_args(tmp_path)]) == 0
+    assert observed == [
+        ("robotlearning123/gpt2agent", token.decode("utf-8"))
+    ]
+    assert "github-draft-preflight-token-byte-canary" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "token_pair",
+    [
+        b"",
+        b"release-without-separator",
+        b"release\x00settings\x00extra",
+        b"\x00settings",
+        b"release\x00",
+        b"x" * 4097 + b"\x00settings",
+        b"release\x00" + b"x" * 4097,
+        b"\xff\x00settings",
+        b"release\x00\xff",
+        b"release\n\x00settings",
+        b"release\x00settings\r",
+        b"release\t\x00settings",
+        b"release\x00settings\x7f",
+        b"same-token\x00same-token",
+    ],
+)
+def test_main_rejects_invalid_stdin_token_pair_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    token_pair: bytes,
+) -> None:
+    calls = 0
+
+    class Stdin:
+        buffer = io.BytesIO(token_pair)
+
+    def publish(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return "published"
+
+    monkeypatch.setattr(publisher.sys, "stdin", Stdin())
+    monkeypatch.setattr(publisher, "_read_notes", lambda path: "notes\n")
+    monkeypatch.setattr(
+        publisher,
+        "expected_release_assets",
+        lambda dist, evidence, version: _expected_assets(),
+    )
+    monkeypatch.setattr(publisher, "publish_exact_release", publish)
+
+    assert publisher.main(_main_args(tmp_path)) == 1
+    assert calls == 0
+
+
+def test_main_accepts_maximum_bounded_distinct_token_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[tuple[str, str]] = []
+
+    class Stdin:
+        buffer = io.BytesIO(b"r" * 4096 + b"\x00" + b"s" * 4096)
+
+    monkeypatch.setattr(publisher.sys, "stdin", Stdin())
+    monkeypatch.setattr(publisher, "_read_notes", lambda path: "notes\n")
+    monkeypatch.setattr(
+        publisher,
+        "expected_release_assets",
+        lambda dist, evidence, version: _expected_assets(),
+    )
+
+    def publish(*args, **kwargs):
+        observed.append((args[6], args[7]))
+        return "published"
+
+    monkeypatch.setattr(publisher, "publish_exact_release", publish)
+
+    assert publisher.main(_main_args(tmp_path)) == 0
+    assert observed == [("r" * 4096, "s" * 4096)]
+
+
+def test_settings_preflight_reads_only_its_bounded_stdin_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: list[tuple[str, str]] = []
+
+    class Stdin:
+        buffer = io.BytesIO(b"settings-preflight-token-canary")
+
+    monkeypatch.setattr(publisher.sys, "stdin", Stdin())
+    monkeypatch.setattr(
+        publisher,
+        "require_immutable_releases_enabled",
+        lambda repository, token: observed.append((repository, token)),
+    )
+
+    assert publisher.main(
+        [
+            "--settings-preflight",
+            "--settings-token-stdin",
+            "--repository",
+            "robotlearning123/gpt2agent",
+        ]
+    ) == 0
+    assert observed == [
+        ("robotlearning123/gpt2agent", "settings-preflight-token-canary")
+    ]
+    assert "settings-preflight-token-canary" not in capsys.readouterr().out

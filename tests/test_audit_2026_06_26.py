@@ -27,6 +27,8 @@ class _Resp:
     def __init__(self, status, text, *, json_exc=False, json_val=None):
         self.status_code = status
         self.text = text
+        self.content = text.encode()
+        self.headers: dict[str, str] = {}
         self._json_exc = json_exc
         self._json_val = json_val
 
@@ -41,7 +43,10 @@ class _Sess:
         self._resp = resp
         self.headers: dict = {}
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, _url, **kwargs):
+        callback = kwargs.get("content_callback")
+        if callback is not None:
+            callback(self._resp.content)
         return self._resp
 
 
@@ -50,17 +55,21 @@ class _Sess:
 
 def test_backend_get_non_json_2xx_raises_clean_error(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     _mk_codex_auth(tmp_path)
     from gpt2agent import backend as be
 
     client = be.BackendClient()
     client._session = _Sess(_Resp(200, "<html>cloudflare</html>", json_exc=True))
-    with pytest.raises(RuntimeError, match="non-JSON 2xx"):
+    from gpt2agent.errors import BackendContractError
+
+    with pytest.raises(BackendContractError, match="expected a JSON 2xx response"):
         client.get("/backend-api/me")
 
 
 def test_backend_get_empty_2xx_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     _mk_codex_auth(tmp_path)
     from gpt2agent import backend as be
 
@@ -71,16 +80,19 @@ def test_backend_get_empty_2xx_returns_none(tmp_path, monkeypatch):
 
 def test_backend_get_redacts_secret_in_non_json_error(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     _mk_codex_auth(tmp_path)
     from gpt2agent import backend as be
 
     client = be.BackendClient()
     leak = "Bearer eyJ" + "a" * 40 + " gateway boom"
     client._session = _Sess(_Resp(200, leak, json_exc=True))
-    with pytest.raises(RuntimeError) as ei:
+    from gpt2agent.errors import BackendContractError
+
+    with pytest.raises(BackendContractError) as ei:
         client.get("/x")
     assert "eyJ" + "a" * 40 not in str(ei.value)
-    assert "<REDACTED>" in str(ei.value)
+    assert "gateway boom" not in str(ei.value)
 
 
 # ── C4: heavy DR captures top-level conversation_id so Phase-2 poll fires ──────
@@ -92,9 +104,9 @@ class _FrameResp:
     def __init__(self, lines):
         self._lines = lines
 
-    async def aiter_lines(self):
+    async def aiter_content(self):
         for ln in self._lines:
-            yield ln
+            yield (ln + "\n").encode()
 
 
 class _FrameSession:
@@ -125,6 +137,9 @@ class _PollBackend:
     def _reload_token_if_stale(self):
         pass
 
+    def request_headers(self):
+        return dict(self._session.headers)
+
     def post(self, *a, **k):
         return {"limits_progress": [{"feature_name": "deep_research", "remaining": 9}]}
 
@@ -136,7 +151,7 @@ class _StubSentinel:
     def __init__(self, *a, **k):
         pass
 
-    async def get_tokens(self):
+    async def get_tokens(self, _operation_headers=None):
         return {"chat-requirements": "x", "proof": "", "turnstile": ""}
 
 
@@ -251,6 +266,9 @@ def test_stream_tolerates_null_message_frame(monkeypatch):
 
         def _reload_token_if_stale(self):
             pass
+
+        def request_headers(self):
+            return dict(self._session.headers)
 
     monkeypatch.setattr(sse_mod, "AsyncSession", lambda *a, **k: _FrameSession(frames))
     monkeypatch.setattr(sse_mod, "SentinelGate", _StubSentinel)

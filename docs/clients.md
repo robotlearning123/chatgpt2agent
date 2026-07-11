@@ -93,9 +93,9 @@ Add the same `mcpServers` block (see above) to Cline's settings file
 Point it at the command `gpt2agent` with args `["run", "--stdio"]`. That's all most
 hosts need.
 
-## HTTP transport (advanced, not recommended)
+## Network transport
 
-stdio is the default and safest. The HTTP transport is **unauthenticated** and
-proxies your full account, so it binds `127.0.0.1` only and refuses non-loopback
-hosts unless you set `GPT2AGENT_ALLOW_REMOTE=1` (put it behind your own auth proxy).
-See the README's **Security & risk** section.
+Version 0.0.12 is stdio-only. URL installation and the legacy HTTP launch flag
+fail closed because loopback TCP does not provide per-user account isolation.
+Use the spawned stdio configurations above. Network support may return only
+with request authentication or an equivalent per-user boundary.

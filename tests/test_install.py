@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import gpt2agent.install as install_module
 from gpt2agent.install import (
     SUPPORTED_CLIENTS,
     _remove_toml_section,
@@ -21,6 +22,7 @@ from gpt2agent.install import (
     install_claude_skill,
     install_codex,
     install_cursor,
+    run_install,
     install_windsurf,
     install_zed,
 )
@@ -80,12 +82,20 @@ def test_claude_idempotent(tmp_path: Path) -> None:
     assert cfg.read_text() == snap
 
 
-def test_claude_http_transport(tmp_path: Path) -> None:
+def test_claude_http_transport_is_rejected_before_write(tmp_path: Path) -> None:
     cfg = tmp_path / "claude.json"
-    install_claude_code(config_path=cfg, transport="http", http_port=9001)
-    data = json.loads(cfg.read_text())
-    assert data["mcpServers"]["gpt2agent"]["type"] == "url"
-    assert data["mcpServers"]["gpt2agent"]["url"] == "http://localhost:9001/mcp"
+    with pytest.raises(ValueError, match="HTTP transport is disabled"):
+        install_claude_code(config_path=cfg, transport="http", http_port=9001)
+    assert not cfg.exists()
+
+
+def test_claude_rejects_unknown_transport_before_write(tmp_path: Path) -> None:
+    cfg = tmp_path / "claude.json"
+
+    with pytest.raises(ValueError, match="transport must be 'stdio'"):
+        install_claude_code(config_path=cfg, transport="websocket")
+
+    assert not cfg.exists()
 
 
 def test_claude_rejects_broken_json(tmp_path: Path) -> None:
@@ -276,6 +286,12 @@ def test_skill_install(tmp_path: Path) -> None:
     assert ga.exists()
     assert (ga / "SKILL.md").exists()
     assert (ga / "tools-reference.md").exists()
+    assert [entry["path"].name for entry in result["skills"]] == [
+        "deep-research",
+        "gpt2agent",
+    ]
+    # Preserve the historical top-level result for existing callers.
+    assert result["path"] == ga
 
 
 def test_skill_backup_on_overwrite(tmp_path: Path) -> None:
@@ -584,6 +600,7 @@ def test_install_codex_defaults_to_selected_codex_home(
 
 def test_detect_clients_with_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     assert detect_clients() == []
 
     (tmp_path / ".claude").mkdir()
@@ -686,3 +703,126 @@ def test_json_host_dry_run_no_write(tmp_path: Path) -> None:
 def test_supported_clients_lists_all_hosts() -> None:
     for name in ("claude-code", "codex", "cursor", "windsurf", "claude-desktop", "zed"):
         assert name in SUPPORTED_CLIENTS
+
+
+# ── top-level HTTP install contract ────────────────────────────────────────
+
+
+@pytest.mark.parametrize("client", ["codex", "all"])
+def test_install_rejects_unknown_transport_before_any_mutation(
+    client: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    claude_config = home / ".claude.json"
+    claude_config.write_text('{"marker": "keep-claude"}\n')
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    codex_config = codex_home / "config.toml"
+    codex_config.write_text('model = "keep-codex"\n')
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    installer_calls: list[str] = []
+
+    def record_installer(name, installer):
+        def wrapped(*args, **kwargs):
+            installer_calls.append(name)
+            return installer(*args, **kwargs)
+
+        return wrapped
+
+    for name in ("install_claude_code", "install_codex", "install_claude_skill"):
+        monkeypatch.setattr(
+            install_module,
+            name,
+            record_installer(name, getattr(install_module, name)),
+        )
+
+    before = {
+        path.relative_to(home): path.read_bytes()
+        for path in home.rglob("*")
+        if path.is_file()
+    }
+
+    status = run_install(
+        client=client,
+        transport="websocket",
+        install_skill=True,
+    )
+
+    captured = capsys.readouterr()
+    after = {
+        path.relative_to(home): path.read_bytes()
+        for path in home.rglob("*")
+        if path.is_file()
+    }
+    assert status == 1
+    assert "transport must be 'stdio'" in captured.err
+    assert installer_calls == []
+    assert after == before
+
+
+def test_http_install_rejects_codex_before_writing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    codex_home = tmp_path / "codex"
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    status = run_install(client="codex", transport="http", install_skill=False)
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "HTTP transport is disabled" in captured.err
+    assert not (codex_home / "config.toml").exists()
+
+
+def test_http_install_rejects_mixed_auto_detect_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True)
+    codex_home = home / ".codex"
+    codex_home.mkdir()
+    codex_config = codex_home / "config.toml"
+    codex_config.write_text('model = "keep-me"\n')
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    status = run_install(client="all", transport="http", install_skill=True)
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "HTTP transport is disabled" in captured.err
+    assert not (home / ".claude.json").exists()
+    assert codex_config.read_text() == 'model = "keep-me"\n'
+    assert not codex_config.with_name("config.toml.bak-gpt2agent").exists()
+    assert not (claude_dir / "skills").exists()
+
+
+def test_http_install_rejects_claude_before_writing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(home / "missing-codex"))
+
+    status = run_install(
+        client="all",
+        transport="http",
+        http_port=9123,
+        install_skill=False,
+    )
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "HTTP transport is disabled" in captured.err
+    assert not (home / ".claude.json").exists()
+    assert "http://localhost:9123/mcp" not in captured.out

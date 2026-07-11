@@ -9,6 +9,8 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from gpt2agent._secure_file import write_private_json
+
 # ── colours ────────────────────────────────────────────────────────────────
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
@@ -114,34 +116,33 @@ def get_token() -> str:
 
 
 def save_token(token: str) -> None:
-    d = Path.home() / ".gpt2agent"
-    d.mkdir(exist_ok=True)
-    p = d / "token.json"
-    # Open 0o600 up front so the bearer token is never briefly world-readable
-    # between write and chmod under a permissive umask.
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        # O_CREAT's mode is ignored if the file already exists; tighten an
-        # existing 0644 token.json explicitly (after O_TRUNC, before writing).
-        os.fchmod(fd, 0o600)
-    except (OSError, AttributeError):
-        pass  # non-POSIX (e.g. Windows lacks fchmod)
-    with os.fdopen(fd, "w") as f:
-        json.dump({"access_token": token}, f)
+    write_private_json(
+        Path.home() / ".gpt2agent" / "token.json",
+        {"access_token": token},
+    )
 
 
 # ── plan detection ──────────────────────────────────────────────────────────
 
 
-def detect_plan() -> str:
-    """Probe chatgpt.com/backend-api/me via BackendClient. Returns pro/plus/free."""
+def detect_plan(client=None) -> str:
+    """Measure the authenticated account entitlement. Returns pro/plus/free."""
+    owns_client = client is None
     try:
         from gpt2agent.backend import BackendClient
 
-        bc = BackendClient()
+        bc = BackendClient() if client is None else client
         acct = bc.get("/backend-api/accounts/check/v4-2023-04-27")
     except Exception as exc:
         raise RuntimeError(f"Could not verify ChatGPT account: {exc}") from exc
+    finally:
+        if owns_client and "bc" in locals():
+            close = getattr(getattr(bc, "_session", None), "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
 
     accounts = (acct or {}).get("accounts") if isinstance(acct, dict) else None
     if not isinstance(accounts, dict) or not accounts:
@@ -153,16 +154,14 @@ def detect_plan() -> str:
             ent = a.get("entitlement")
             if not isinstance(ent, dict):
                 continue
-            plan = str(ent.get("subscription_plan") or "").lower()
+            plan = str(ent.get("subscription_plan") or "").strip().lower()
             active = ent.get("has_active_subscription")
             if active is False:
                 verified_plans.append("free")
-            elif "pro" in plan:
+            elif active is True and plan in {"pro", "chatgptpro"}:
                 verified_plans.append("pro")
-            elif "plus" in plan:
+            elif active is True and plan in {"plus", "chatgptplus"}:
                 verified_plans.append("plus")
-            elif "free" in plan:
-                verified_plans.append("free")
 
     for plan in ("pro", "plus", "free"):
         if plan in verified_plans:
@@ -177,12 +176,12 @@ MCP_PORT = 9000
 
 
 def write_mcp_config(plan: str) -> None:
-    from gpt2agent.install import _atomic_write, _backup
+    from gpt2agent.install import _ConfigTransaction
 
     chat_model = "gpt-5-5-pro" if plan == "pro" else "gpt-5-3"
     cfg = f"""[server]
-# Loopback only — the HTTP transport is unauthenticated and proxies your full
-# ChatGPT account. To expose it, set host explicitly AND GPT2AGENT_ALLOW_REMOTE=1.
+# Retained for config compatibility. Version 0.0.12 supports stdio only and
+# does not bind these values.
 host = "127.0.0.1"
 port = {MCP_PORT}
 
@@ -191,11 +190,10 @@ chat = "{chat_model}"
 """
     # Users hand-edit this file (models, host opt-ins); don't clobber their
     # copy silently — keep a .bak and write atomically.
-    if MCP_CONFIG_PATH.exists():
-        if MCP_CONFIG_PATH.read_text() == cfg:
-            return
-        _backup(MCP_CONFIG_PATH)
-    _atomic_write(MCP_CONFIG_PATH, cfg)
+    transaction = _ConfigTransaction(MCP_CONFIG_PATH)
+    if transaction.exists and transaction.text == cfg:
+        return
+    transaction.commit(cfg)
 
 
 # ── final summary ────────────────────────────────────────────────────────────

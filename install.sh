@@ -5,7 +5,6 @@
 #   curl -fsSL https://raw.githubusercontent.com/robotlearning123/gpt2agent/main/install.sh | bash
 #   ./install.sh                                          # from a checkout
 #   ./install.sh --client claude-code                     # install for one client only
-#   ./install.sh --transport http --port 9000             # use HTTP transport
 #   ./install.sh --no-skill                               # skip the deep-research skill
 #   ./install.sh --no-register                            # install package only; skip client wiring
 #   ./install.sh --source <path-or-git-url>               # install from a local path or git URL
@@ -25,7 +24,6 @@ h1()   { printf "\n${BOLD}%s${RESET}\n" "$*"; }
 
 CLIENT="all"
 TRANSPORT="stdio"
-PORT="9000"
 SKILL_FLAG=""
 REGISTER=1
 SOURCE="gpt2agent"  # default: PyPI
@@ -35,17 +33,22 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --client)       CLIENT="$2"; shift 2 ;;
     --transport)    TRANSPORT="$2"; shift 2 ;;
-    --port)         PORT="$2"; shift 2 ;;
+    --port)         err "--port is unavailable because HTTP transport is disabled; use stdio."; exit 2 ;;
     --no-skill)     SKILL_FLAG="--no-skill"; shift ;;
     --no-register)  REGISTER=0; shift ;;
     --source)       SOURCE="$2"; SOURCE_EXPLICIT=1; shift 2 ;;
     -h|--help)
-      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) err "Unknown option: $1"; exit 2 ;;
   esac
 done
+
+if [[ $TRANSPORT != "stdio" ]]; then
+  err "HTTP transport is disabled because loopback TCP cannot isolate your ChatGPT account; use stdio."
+  exit 2
+fi
 
 h1 "gpt2agent installer"
 
@@ -94,16 +97,39 @@ ok "pipx: $(pipx --version 2>/dev/null || echo present)"
 
 # --- 3. install gpt2agent -------------------------------------------------
 
-# A forced install keeps an existing pipx virtual environment and ignores
-# --python. Replace the named environment first so both the requested source
-# and the compatible interpreter are honored. A failed removal is fatal.
+# A forced install keeps an existing pipx virtual environment, ignores
+# --python, and removes that environment if installation fails. Move an
+# existing environment aside first so the requested interpreter is honored
+# and any failed or interrupted replacement can restore the previous install.
 if ! PIPX_HOME_DIR=$(pipx environment --value PIPX_HOME); then
   err "Could not determine pipx's environment location. Upgrade pipx and retry."
   exit 1
 fi
-if [[ -d "$PIPX_HOME_DIR/venvs/gpt2agent" ]]; then
-  info "Replacing existing gpt2agent pipx environment (injected packages are removed)"
-  pipx uninstall gpt2agent
+PIPX_VENV_DIR="$PIPX_HOME_DIR/venvs/gpt2agent"
+PIPX_BACKUP_DIR=""
+restore_pipx_environment() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [[ -n "$PIPX_BACKUP_DIR" && -d "$PIPX_BACKUP_DIR" && ! -L "$PIPX_BACKUP_DIR" ]]; then
+    rm -rf -- "$PIPX_VENV_DIR"
+    if ! mv -- "$PIPX_BACKUP_DIR" "$PIPX_VENV_DIR"; then
+      err "Upgrade failed and the previous pipx environment could not be restored from $PIPX_BACKUP_DIR"
+      status=1
+    fi
+  fi
+  exit "$status"
+}
+if [[ -L "$PIPX_VENV_DIR" || ( -e "$PIPX_VENV_DIR" && ! -d "$PIPX_VENV_DIR" ) ]]; then
+  err "Existing pipx environment path must be a real directory: $PIPX_VENV_DIR"
+  exit 1
+fi
+if [[ -d "$PIPX_VENV_DIR" && ! -L "$PIPX_VENV_DIR" ]]; then
+  info "Replacing existing gpt2agent pipx environment (restored automatically on failure)"
+  PIPX_BACKUP_DIR=$(mktemp -d "$PIPX_HOME_DIR/.gpt2agent-upgrade.XXXXXXXX")
+  rmdir -- "$PIPX_BACKUP_DIR"
+  trap restore_pipx_environment EXIT
+  trap 'exit 130' HUP INT TERM
+  mv -- "$PIPX_VENV_DIR" "$PIPX_BACKUP_DIR"
 fi
 
 if [[ $SOURCE_EXPLICIT -eq 1 && -d "$SOURCE" ]]; then
@@ -124,11 +150,20 @@ else
   fi
 fi
 
-if ! command -v gpt2agent >/dev/null 2>&1; then
-  err "gpt2agent not on PATH after install. Open a new shell and re-run."
+PIPX_APP="$PIPX_VENV_DIR/bin/gpt2agent"
+if [[ ! -f "$PIPX_APP" || ! -x "$PIPX_APP" || -L "$PIPX_APP" ]]; then
+  err "The new pipx environment does not contain an executable gpt2agent app."
+  exit 1
+fi
+if ! "$PIPX_APP" --version >/dev/null 2>&1; then
+  err "The new pipx environment's gpt2agent app failed its version smoke test."
   exit 1
 fi
 ok "gpt2agent installed"
+if ! command -v gpt2agent >/dev/null 2>&1; then
+  info "gpt2agent is installed at $PIPX_APP but its app directory is not on PATH."
+  info "Run 'pipx ensurepath', then open a new shell."
+fi
 
 # --- 4. codex login check --------------------------------------------------
 
@@ -144,14 +179,19 @@ fi
 # --- 5. register with clients ----------------------------------------------
 
 if [[ $REGISTER -eq 1 ]]; then
-  ARGS=(install --client "$CLIENT" --transport "$TRANSPORT" --http-port "$PORT")
+  ARGS=(install --client "$CLIENT" --transport "$TRANSPORT")
   if [[ -n "$SKILL_FLAG" ]]; then ARGS+=("$SKILL_FLAG"); fi
-  gpt2agent "${ARGS[@]}"
+  "$PIPX_APP" "${ARGS[@]}"
 else
   info "Skipping client registration (--no-register). Run later:"
-  info "  gpt2agent install --client $CLIENT"
+  info "  $PIPX_APP install --client $CLIENT"
+fi
+if [[ -n "$PIPX_BACKUP_DIR" ]]; then
+  rm -rf -- "$PIPX_BACKUP_DIR"
+  PIPX_BACKUP_DIR=""
+  trap - EXIT HUP INT TERM
 fi
 
 h1 "Done."
-echo "  Try:  gpt2agent run --stdio   (manual smoke test)"
+echo "  Try:  $PIPX_APP run --stdio   (manual smoke test)"
 echo "  Or restart your MCP client (Claude Code / Codex) so it picks up the new server."

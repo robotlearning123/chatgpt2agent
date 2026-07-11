@@ -6,6 +6,218 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-07-11
+
+Account-native discovery and release-safety update. The public surface grows
+from 25 to 32 MCP tools and adds two deterministic MCP resources without adding
+Voice, audio, browser-cookie export, or an OpenAI API fallback.
+
+### Added
+
+- Seven read-only discovery tools: `list_scheduled_tasks`, `list_plugins`,
+  `list_installed_plugins`, `list_work_models`, `sites_access`, `list_sites`, and
+  `account_capabilities`. They use bounded allowlists and typed contract errors
+  rather than returning private backend payloads.
+- Two packaged, account-independent MCP resources:
+  `chatgpt://feature-coverage` records the release contract and
+  `chatgpt://update-evidence` records the public-surface evidence snapshot.
+- Every one of the 32 tools now declares all four MCP tool annotations:
+  read-only, destructive, idempotent, and open-world hints.
+- `chat` accepts an optional model-aware `thinking_effort`. A supplied value is
+  checked against the selected general ChatGPT model's live catalog. Both
+  `chat` and `agent` validate their selected general-model slug; Work-only model
+  identifiers stay isolated from those paths.
+- Safe machine-readable backend failures distinguish unavailable, unsupported,
+  changed-contract, temporary, indeterminate-access, invalid-input,
+  login-required, and unverified outcomes without retaining response bodies,
+  URLs, headers, or account content.
+
+### Changed
+
+- `list_tasks` is now documented and validated as the generic asynchronous-job
+  surface. Scheduled automations are a separate contract exposed by
+  `list_scheduled_tasks`; neither tool claims to enumerate the other's jobs.
+- Apps/connectors and Plugins are separate surfaces. `list_apps` accepts the
+  observed string and object variants, while the two Plugin tools normalize the
+  catalog and installed-plugin envelopes independently. Every projected Plugin
+  string is secret/PII-redacted, while process-local keyed pagination
+  fingerprints bind the validated pre-redaction identities so ordered Plugin
+  identity changes still fail closed without exposing an offline ID oracle.
+- `list_work_models` reports Work metadata without merging Work-only identifiers
+  into `list_models` or suggesting them for `chat`.
+- The bundled Deep Research runner persists only the requested `report.md` and a
+  shape-only `status.txt`. It no longer writes raw event or server-metadata
+  artifacts, and its citation list now uses the same bounded, secret-filtering
+  Markdown projection as the MCP Deep Research tools.
+- The Python MCP dependency is bounded to the stable v1 line
+  (`mcp>=1.26,<2`). CI verifies both 1.26.0 and the latest resolvable v1 release.
+- Collection adapters now reject a blank 2xx body as a changed contract instead
+  of presenting it as an honestly empty account collection.
+- File metadata, account status, scheduled automations, conversation detail,
+  and Codex task creation now return bounded allowlisted projections rather
+  than opaque private-backend objects. Malformed backend-generated file IDs are
+  classified as changed contracts before any URL is built.
+- Plain `gpt2agent run` now defaults to stdio. Version 0.0.12 disables HTTP;
+  the legacy launch flag fails before constructing the account server.
+- The shell installer drives registration through the exact pipx-installed app
+  path, so a successful upgrade is not rolled back merely because the pipx app
+  directory is not yet visible in the current shell's `PATH`.
+- Optional image-asset enrichment preserves typed changed-contract and
+  indeterminate-access results while continuing to suppress exception details.
+  A 422 against a backend-produced file identifier is classified as contract
+  drift rather than caller input, and the docs now state that download/info
+  enrichment is optional per asset.
+
+### Security
+
+- Authorization is request-local. A multi-request operation captures one bearer
+  snapshot so token rotation cannot mix authentication generations inside the
+  same operation, and the shared HTTP session no longer stores Authorization.
+- Account requests never follow redirects, preventing account headers or prompt
+  bodies from being forwarded through an upstream redirect. The `curl_cffi`
+  floor is now 0.15.0, excluding CVE-2026-33752.
+- Account sessions use the directly declared `certifi` bundle, explicitly clear
+  libcurl proxy selection, and ignore ambient CA/proxy variables. A present
+  `SSLKEYLOGFILE` fails before account transport import or I/O; removing it is
+  not presented as a control because libcurl can retain an already-open keylog.
+  Embedded callers must use a fresh dedicated process.
+- Private-backend JSON is capped at 4 MiB before retention, and account SSE
+  streams are capped at 64 MiB with a 4 MiB pending-line limit. A process-wide
+  request policy permits
+  four ordinary REST/JSON requests in flight by default, accepts a bounded 1-8
+  override, fails fast when saturated, and applies route-local 429 cooldowns
+  with Retry-After capped at 60 seconds. Direct SSE/Sentinel streams remain
+  separately bounded by endpoint timeouts and serial heavy-DR guidance.
+- Network transport is disabled because loopback TCP cannot isolate the account
+  from other local users or processes. Legacy HTTP launch and URL-install paths
+  fail closed before server construction or configuration writes.
+- The former raw SSE/poll dump is gone. Setting its legacy environment variable
+  fails before account access and writes no file.
+- Capability probes share one auth snapshot, a 90-second budget enforced by
+  each request's remaining timeout, strict known GET routes, and shape-only
+  results. Automatic capability and release-receipt probes do not request
+  conversation summaries, memories, or custom instructions; those private
+  surfaces remain available only through their explicitly invoked MCP tools.
+  Voice, realtime, transcript, conversation body, write, unknown, and off-host
+  routes are outside the probe contract.
+- Visually hidden ChatGPT messages are excluded from streaming, async polling,
+  conversation detail, tool-call, and Deep Research transcript output. Chat,
+  Agent, and Custom GPT replies always end with one authoritative server receipt,
+  using a bounded category or `none`; only the final footer is trustworthy.
+  Private dispatch payloads remain hidden. Regular response text and heavy-DR
+  progress are held until late visibility metadata can no longer revoke them.
+  Unsupported late message mutations now revoke the buffered candidate,
+  metadata JSON-pointer patches are bounded before allocation, malformed poll
+  lifecycles fail closed, and a completed Deep Research widget is accepted only
+  when its carrier remains the newest lifecycle.
+- File-download projections accept only absolute public HTTPS destinations,
+  while preserving valid signed queries. Common provider secrets,
+  credential-bearing database URLs, label-aware assignments, and PEM private
+  keys are redacted before private text reaches MCP clients.
+- Citation projection drops query keys or values that still contain a percent
+  escape after one decode, preventing downstream double-decoding from revealing
+  encoded credentials or PII. Local Plugin pagination accepts only canonical,
+  unpadded Base64URL cursors.
+- The shell installer rejects a symlinked or non-directory pipx environment
+  before mutation. Config backups read content and permissions from one open
+  regular-file descriptor so a concurrent symlink swap cannot widen a secret
+  backup.
+- Image generation follows the observed prepare/conduit `/f` v1 stream and
+  accepts an asset only when its visible carrier is bound to the current stream
+  by the observed dispatch or a same-message marker and has image-generation
+  provenance. These private routes remain undocumented and may change.
+- Live validation on 2026-07-10 confirmed image generation in the authenticated
+  website, while the direct client failed closed before prepare on changed
+  required-Turnstile instructions. Catalog entitlement is not reported as live
+  image execution reachability.
+- Sentinel tokens and challenges have protocol-specific type, format, and size
+  bounds before solver dispatch; malformed challenges and solver failures become
+  static contract errors without retaining exception content.
+- `custom_instructions_set` remains serialized within one server process. Two
+  independently running gpt2agent processes can still race a read-modify-write;
+  operators should avoid concurrent writers.
+
+### CI / Release
+
+- The stable `Required checks` gate now includes the full OS/Python suite,
+  Ruff, ShellCheck, both MCP v1 compatibility lanes, and a wheel/sdist dry-run
+  installed into clean environments.
+- The locked package lane builds twice from cleaned state, rewrites bounded
+  sdist container metadata under a fixed source epoch with an isolated,
+  dependency-free fail-closed normalizer, and revalidates member types and
+  payload hashes. The rewriter validates complete tar framing and bounds
+  PAX/GNU extended metadata before Python's tar parser materializes it. CI then
+  requires byte-identical wheel and sdist pairs before Twine, package smoke,
+  and retention of the first set; the release workflow relays those exact bytes
+  and never normalizes or rebuilds them.
+- CI audits resolved application dependencies, the minimum supported
+  `curl_cffi` release, and the hash-locked account-gate runtime for known
+  vulnerabilities. A credential-free CI lane also bootstraps that runtime from
+  scratch and verifies its exact distribution, file, ownership, mode, import,
+  and isolated-CPython closure.
+- A separate daily no-secret public-surface radar checks bounded official/public
+  sources, emits only redacted summaries, retains evidence for 30 days, and does
+  not pretend to verify a private account adapter.
+- The private account gate runs only on a trusted local machine against the
+  exact candidate commit. Its verifier-owned bounded transport reads the bearer
+  directly and measures the active Pro entitlement instead of trusting a caller
+  label; candidate wheel/sdist bytes are never installed, imported, or executed
+  on that credential host. Main CI runs one closed synthetic adapter corpus
+  against both package formats and requires identical output. The sanitized
+  receipt keeps live shape classes separate from fixed offline adapter counts,
+  is freshness-bounded before tagging, and remains local. The live transport is
+  loaded only from a new owner-private, hash-locked CPython 3.12 environment
+  under `-I -S -B`; the short-lived release App token never reaches Python or a
+  process argument.
+- The read-only governance audit binds the release-tag App, Required-checks App,
+  and independent PyPI gate to an explicit reviewed policy. Tag creation and
+  no-bypass tag immutability are audited as separate rules, and main-branch
+  bypasses, stale approvals, unresolved threads, or non-strict checks fail the
+  release gate.
+- The release coordinator independently revalidates the pinned candidate and
+  receipt before creating a new annotated tag through the policy-bound App. Its
+  tag message is one exact canonical, duplicate-key-free, closed-schema JSON
+  envelope binding repository, tag, version, source commit/tree, receipt and
+  artifact-set digests, and complete candidate identity. Release evidence binds
+  that metadata to the tag object, workflow identity, and exact wheel/sdist
+  hashes. The receipt is never attached; its digest is the public commitment.
+- The commit-pinned `softprops/action-gh-release` step creates or resolves the
+  exact-tag draft and uploads the reviewed assets by tag. The separately pinned
+  repository-owned action neither creates the draft nor uploads or deletes
+  assets; it uses the resulting numeric release ID for read-only preflight and
+  the final publication PATCH/readback. It validates the complete release before and
+  after making it public, requires the immutable public readback, and permits an
+  already-public rerun only for an exact match. The complete draft precedes
+  irreversible PyPI publication and is revalidated after the public-package
+  canary. GitHub and PyPI still have no cross-registry atomic transaction. The
+  documented GitHub REST release update exposes no conditional precondition/CAS
+  contract. A privileged writer can race the final validation and PATCH;
+  readback detects asset/tag mismatches observable during its bounded checks but
+  cannot roll back the frozen asset/tag state or PyPI bytes safely or
+  automatically. Title and release notes remain editable after publication;
+  their exactness is point-in-time at readback and therefore also depends on
+  privileged-writer governance. Independent restricted tag creation and
+  protected-environment approval remain required controls.
+- GitHub Release notes are extracted by the same exact-version CHANGELOG parser
+  used by release metadata verification, so regex-like version near-matches
+  cannot select another section.
+
+### Migration
+
+- Remove `GPT2AGENT_ALLOW_REMOTE` and `GPT2AGENT_RAW_DUMP` from current launch
+  scripts. Both legacy variables now fail closed; the first cannot enable a
+  non-loopback bind and the second cannot create diagnostic files.
+- Use stdio for local MCP clients. Remove existing HTTP service units and rerun
+  `gpt2agent install` to restore a spawned stdio entry. Network support requires
+  request authentication or an equivalent per-user boundary.
+- Deep Research automation should consume `report.md` plus `status.txt`, not
+  `events.jsonl` or `meta.json`.
+- Voice remains outside 0.0.12. A bounded read-only voice catalog is planned for
+  0.0.13; GPT-Live audio is not exposed as a supported MCP/account capability,
+  and later AgentRTC/WebRTC work is a separate transport project.
+- See [`docs/migration-0.0.12.md`](docs/migration-0.0.12.md) for the upgrade
+  checklist and compatibility notes.
+
 ## [0.0.11] - 2026-07-10
 
 Recovery release carrying forward every change in the

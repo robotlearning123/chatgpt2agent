@@ -22,15 +22,48 @@ not bugs:
 - **ToS / account risk.** Using this likely violates the OpenAI Terms of Service;
   automated traffic can get an account rate-limited, challenged, or banned. Use an
   account you can afford to lose.
-- **Unauthenticated HTTP transport.** The HTTP transport has no auth and exposes
-  the whole account. It binds `127.0.0.1` by default and refuses non-loopback
-  binds unless `GPT2AGENT_ALLOW_REMOTE=1` is set. Prefer the stdio transport.
-- **Limited PII redaction.** Returned conversation/memory text strips only emails
-  and phone numbers; treat output as non-anonymized.
+- **Network transport is disabled in 0.0.12.** Loopback TCP cannot isolate a
+  full account from other users and processes on the same machine. The legacy
+  HTTP flag and URL installer fail closed; use stdio. Any future network
+  transport must authenticate every request with a per-launch secret or an
+  equivalent per-user boundary.
+- **Run the account transport in its dedicated MCP process.** Account sessions
+  ignore ambient proxy and CA-bundle variables, use the directly declared
+  `certifi` trust bundle, and fail before account I/O when `SSLKEYLOGFILE` is
+  present. Libcurl can retain a TLS key-log file that trusted embedded code
+  opened and then removed from the environment; that prior in-process state is
+  not detectable. Do not embed gpt2agent after unrelated curl traffic or load
+  untrusted code in its process.
+- **Limited output redaction.** Returned text masks emails, phone numbers,
+  common provider tokens, label-aware credential assignments,
+  credential-bearing database URLs, and PEM private keys, but names, addresses,
+  identifiers, and other sensitive content remain. Treat output as
+  non-anonymized.
+- **Hidden ChatGPT messages are not transcript output.** Internal messages
+  marked visually hidden are dropped from public transcript adapters. Every
+  `chat`, `agent`, and `gpt_chat` completion ends with one authoritative final
+  fixed-category receipt, including `none` when no tool activity was observed.
+  Only that final footer is trusted; model-authored lookalikes earlier in the
+  body are ordinary text. Private dispatch and response bodies are withheld.
+- **Process-local write serialization.** Custom-instruction partial updates are
+  serialized within one server process. Independently running gpt2agent
+  processes do not share that lock and can still race a read-modify-write.
+- **Private account gates run locally.** Release account gates run only
+  on a trusted local machine. The verifier owns the bearer and direct bounded
+  `curl_cffi` transport; downloaded wheel/sdist candidates remain inert during
+  that live gate. Candidate imports and adapter execution happen only in the
+  credential-free main-CI package job against a closed synthetic corpus, or in
+  an OS-isolated no-auth environment. Cookies, bearer tokens, raw responses,
+  unsanitized receipts, and the sanitized receipt itself must never be uploaded
+  to hosted CI or a public release. Hosted automation receives only its SHA-256
+  commitment. Safe publication also requires independent live tag-creation and
+  protected-environment approval controls, with self-review and administrator
+  bypass disabled; without them, do not tag or publish.
 
 In-scope reports we want to hear about: token/secret leakage in logs or errors,
-ways to bypass the loopback/`GPT2AGENT_ALLOW_REMOTE` bind guard, injection that
-makes a tool act on attacker-controlled data, or unsafe file/permission handling.
+ways to expose a network transport or cross the stdio process boundary, injection that makes a
+tool act on attacker-controlled data, unsafe file/permission handling, or a
+capability/resource adapter that returns account content outside its allowlist.
 
 ## Supported versions
 

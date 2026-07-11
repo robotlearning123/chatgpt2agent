@@ -4,24 +4,24 @@
 
 > **MCP server for your ChatGPT account: `codex login` → ChatGPT Plus/Pro inside any MCP client.**
 
-An **MCP server** that puts your **ChatGPT Plus or Pro** subscription — every model
-and the account-tier features below — inside Claude Code, Codex, Cursor, Windsurf,
-Zed, and any MCP client.
+An **MCP server** that puts your **ChatGPT Plus or Pro** subscription — account-visible
+model catalogs and the supported account features below — inside Claude Code,
+Codex, Cursor, Windsurf, Zed, and any MCP client.
 
 [![PyPI version](https://img.shields.io/pypi/v/gpt2agent)](https://pypi.org/project/gpt2agent/)
 [![CI](https://github.com/robotlearning123/gpt2agent/actions/workflows/ci.yml/badge.svg)](https://github.com/robotlearning123/gpt2agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/gpt2agent/)
 
-📖 **[Quickstart](./docs/quickstart.md)** · **[Client setup](./docs/clients.md)** · **[Troubleshooting](./docs/troubleshooting.md)** · **[FAQ](./docs/faq.md)** · **[Docs index](./docs/README.md)**
+📖 **[Quickstart](./docs/quickstart.md)** · **[Client setup](./docs/clients.md)** · **[0.0.12 migration](./docs/migration-0.0.12.md)** · **[Troubleshooting](./docs/troubleshooting.md)** · **[FAQ](./docs/faq.md)** · **[Docs index](./docs/README.md)**
 
 ---
 
 ## What it does
 
-gpt2agent exposes **25 MCP tools** that forward requests directly to ChatGPT's backend API.
-No proxy process. No separate account. No platform API key. Your `codex login`,
-your token, your quota.
+gpt2agent exposes **32 MCP tools and 2 static MCP resources** backed by ChatGPT's
+private account surface. No proxy process. No separate account. No platform API
+key. Your `codex login`, your token, your quota.
 
 If you already have the [`codex`](https://github.com/openai/codex) CLI logged in,
 setup is **zero extra steps** — gpt2agent reuses `$CODEX_HOME/auth.json` (or
@@ -56,9 +56,6 @@ gpt2agent install                          # auto-detect everything
 # Want only one client?
 gpt2agent install --client claude-code   # or: codex, cursor, windsurf, claude-desktop, zed
 # (VS Code & Cline: see docs/clients.md for the manual snippet)
-
-# HTTP transport instead of stdio?
-gpt2agent install --transport http --http-port 9000
 ```
 
 ### Or as a Claude Code plugin
@@ -83,8 +80,10 @@ The `install` subcommand writes the right thing for each:
 
 Both are idempotent and back up the prior file as `<name>.bak-gpt2agent`.
 
-After running `install`, restart Claude Code so it re-spawns the subprocess.
-Codex picks up the new server on its next invocation automatically.
+After a default stdio `install`, restart Claude Code so it re-spawns the
+subprocess. Codex picks up the new server on its next invocation automatically.
+Version 0.0.12 supports stdio only; URL registration fails before changing a
+client configuration.
 
 ### Manual config (if you'd rather not run install)
 
@@ -126,14 +125,14 @@ the selected Codex auth file on mtime change so long calls don't 401 mid-flight.
 
 ---
 
-## Tools (25)
+## Tools (32)
 
 ### Chat & reasoning
 
 | Tool | What it does |
 |---|---|
-| `chat` | Talk to any model on your account (`gpt-5-3` default, override via `model=`). Pass `gpt-5-5-pro`, `o3-pro`, `gpt-5-4-thinking`, … |
-| `agent` | **Agent Mode** — 262K context with autonomous browsing, code execution, tool use |
+| `chat` | Talk to a general ChatGPT model (`gpt-5-3` default). Optional `thinking_effort` is validated against that model's live catalog. |
+| `agent` | **Agent Mode** — 262K context with autonomous browsing, code execution, and tool use; its configured model is validated against the general catalog |
 | `deep_research` | Web-augmented research with citations (~30–120 s). Auto-confirms by default |
 | `deep_research_heavy` | Long-form DR via `gpt-5-5-pro` + connector (5–30 min, monthly quota). Configurable via `[models].heavy_dr` |
 | `gpt_chat` | Talk through one of your private Custom GPTs (`g-p-*`) — *experimental* |
@@ -142,9 +141,9 @@ the selected Codex auth file on mtime change so long calls don't 401 mid-flight.
 
 | Tool | What it does |
 |---|---|
-| `generate_image` | Generate images via ChatGPT's built-in DALL-E. Returns download URLs + metadata |
+| `generate_image` | Generate images through the observed private prepare/conduit + `/f` v1 flow. Returns relationally validated base asset fields; per-asset download/info enrichment is optional and reports typed `download_error` / `info_error` statuses when unavailable |
 | `get_file_info` | Metadata for any ChatGPT file (images, uploads) |
-| `get_file_download_url` | Temporary download URL for a ChatGPT file (~1h expiry) |
+| `get_file_download_url` | Validated public HTTPS download URL for a ChatGPT file (~1h expiry; signed query preserved) |
 
 ### Code execution
 
@@ -159,10 +158,17 @@ the selected Codex auth file on mtime change so long calls don't 401 mid-flight.
 |---|---|
 | `account_status` | Plan, country, groups, feature count, subscription expiry |
 | `list_models` | All models on your account (slug, max_tokens, reasoning_type, capabilities, enabled_tools) |
+| `list_work_models` | Separate account-visible Work model catalog; Work-only slugs are not merged into general chat models |
+| `account_capabilities` | Live, shape-only capability truth with explicit entitlement/reachability/contract states |
 | `list_conversations` | Recent ChatGPT conversations (titles: emails/phones redacted) |
 | `get_conversation` | Full message history for a specific conversation (multimodal, code, images) |
-| `list_tasks` | Scheduled / completed ChatGPT tasks |
-| `list_apps` | Connected apps + connectors |
+| `list_tasks` | Generic background/asynchronous ChatGPT jobs; not scheduled automations |
+| `list_scheduled_tasks` | One page of scheduled ChatGPT automations from the dedicated automation surface |
+| `list_apps` | Connected Apps and connectors (a separate concept from Plugins) |
+| `list_plugins` | Bounded page of the account Plugin catalog |
+| `list_installed_plugins` | Installed Plugins without Plugin bodies; configured secret/PII shapes are redacted |
+| `sites_access` | Sites access booleans without workspace identity or content |
+| `list_sites` | Bounded Sites metadata without page content or private URLs |
 | `list_custom_gpts` | Your private `g-p-*` GPTs |
 
 ### Memory & instructions
@@ -202,9 +208,10 @@ $CODEX_HOME/auth.json (default ~/.codex/auth.json) ← auto-refreshed by Codex
    curl_cffi  →  chatgpt.com /backend-api/{conversation,f/conversation,me,
                                           models, memories, codex, gizmos, ...}
         |
-   25 MCP tools  (chat, agent, DR ×2, GPT chat, image gen,
-                  code interpreter, canvas, memory r/w,
-                  instructions r/w, codex r/w, account introspect)
+   32 MCP tools + 2 static resources
+        (chat, agent, DR ×2, GPT chat, image gen, code interpreter,
+         canvas, memory/instructions/codex, Apps, Plugins, Work,
+         automations, Sites, capability truth, release evidence)
 ```
 
 ---
@@ -216,14 +223,44 @@ Optional, searched in order: `~/.gpt2agent/config.toml`, `./config.toml`,
 
 ```toml
 [server]
-host = "127.0.0.1"   # loopback only; the HTTP transport is UNAUTHENTICATED
-port = 9000
+host = "127.0.0.1"   # retained for compatibility; stdio does not bind it
+port = 9000          # retained for compatibility; stdio does not bind it
 
 [models]
 chat     = "gpt-5-3"        # default for chat tool
 agent    = "agent-mode"     # default for agent tool
 heavy_dr = "gpt-5-5-pro"    # override slug for deep_research_heavy
 ```
+
+Ordinary REST/JSON account requests share a process-wide limit of four in-flight
+calls. `GPT2AGENT_MAX_IN_FLIGHT` may be set to an integer from 1 through 8.
+Saturated callers fail within one second; backend 429 responses activate a
+route-local cooldown capped at 60 seconds. Direct SSE/Sentinel streams are not
+held by this semaphore; endpoint timeouts bound them, and heavy Deep Research
+should run serially.
+
+### MCP contract
+
+All 32 tools declare the four standard MCP tool annotations (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`, and `openWorldHint`). These are client hints,
+not an authorization boundary. The package stays on the stable MCP Python v1
+line with `mcp>=1.26,<2` and tests the minimum and latest resolvable v1 versions.
+
+The two resources are read-only, deterministic packaged JSON and never contact
+the account or network when read:
+
+- `chatgpt://feature-coverage` describes the 0.0.12 feature/tool contract;
+- `chatgpt://update-evidence` records the public-surface evidence snapshot.
+
+Use `account_capabilities` for current account truth. Its `entitled` and
+`reachable_now` fields are tri-state (`true`, `false`, or unknown), and its
+status distinguishes unavailability, contract drift, temporary failure,
+indeterminate access, and unverified features. To avoid incidental private-data
+reads, the inventory leaves conversations, memory, and custom instructions
+unverified; call their explicit tools only when that content is wanted.
+Apps/connectors, Plugins, and Skills remain separate concepts: tools act,
+resources provide stable context, Skills guide clients, and a Claude Code
+Plugin bundles distribution.
 
 ---
 
@@ -232,11 +269,28 @@ heavy_dr = "gpt-5-5-pro"    # override slug for deep_research_heavy
 - **Deep Research quota:** limits and reset timing are account-reported and can
   change. Run the bundled `deep-research/bin/quota.sh` before heavy work and run
   heavy Deep Research serially.
-- **Account-tier features not yet supported:** Sora video, Operator/CUA, voice
-  sessions. These use HTTP endpoints that return 404 or haven't yet been
-  reverse-engineered out of the chatgpt.com web bundle.
+- **Account-tier features not yet supported:** Sora video, Operator/CUA,
+  Projects, and Voice sessions. The Projects candidate route is not an
+  established adapter. Version 0.0.12 exposes no Voice tool, audio, microphone,
+  WebRTC session, or OpenAI API fallback. A bounded read-only voice catalog is
+  planned for 0.0.13; later AgentRTC work is a separate transport project.
+- **GPT-Live is not a supported MCP audio capability.** Current official
+  [Voice guidance](https://help.openai.com/en/articles/20001274) describes Live
+  as a separate human feature and says it does not initially support connected
+  apps or Plugins, Work, Codex, Custom GPTs, Temporary Chats, or desktop.
 - **`gpt_chat`** is experimental — `gizmo_id` payload field verified against
   web traffic but not load-tested across all g-p-* types.
+- **Private routes are unstable.** The no-secret public radar can detect public
+  documentation/bundle drift but cannot prove a private account adapter. Release
+  candidates therefore need a sanitized exact-commit account receipt from a
+  trusted local machine; `contract_changed` remains a real runtime outcome.
+- **Current image execution is not verified.** On 2026-07-10 the authenticated
+  website generated an image and the account catalog advertised image-capable
+  models, but the direct client failed closed on a changed required Turnstile
+  challenge before the prepare request. Catalog entitlement is not execution
+  reachability; do not treat `generate_image` as currently verified. Per-asset
+  download and metadata reads are optional enrichment: successful fields may be
+  absent, with a typed `download_error` or `info_error` status returned instead.
 - Requires an active ChatGPT Plus or Pro subscription.
 
 ---
@@ -253,15 +307,12 @@ has real consequences; please understand them before pointing it at your account
   account **rate-limited, challenged, suspended, or banned**. Use an account you
   can afford to lose, keep volume human-scale, and don't rely on it for anything
   critical. This is a reverse-engineering / research tool, not an official API.
-- **The HTTP transport is UNAUTHENTICATED.** It proxies your *entire* account —
-  read all conversations, spend Deep Research quota, overwrite custom
-  instructions, launch Codex cloud tasks. Anyone who can reach the port controls
-  your account. Therefore:
-  - **Use stdio** (the default for `gpt2agent install`) for local clients like
-    Claude Code and Codex. It is not network-exposed.
-  - The server **binds `127.0.0.1` by default** and **refuses** to start the HTTP
-    transport on a non-loopback host unless you explicitly set
-    `GPT2AGENT_ALLOW_REMOTE=1`. Only do that behind your own auth proxy / firewall.
+- **Version 0.0.12 disables HTTP.** Loopback TCP is reachable by other users and
+  processes on the same host, so Host/Origin checks are not account
+  authentication. `--http` and URL installation fail closed before the account
+  server starts or client configuration changes. **Use stdio**, which lets the
+  MCP host own a private child process. A future network transport must add
+  strong per-launch authentication before it can be supported.
 - **Your token stays local.** It is read from `$CODEX_HOME/auth.json` (or
   `~/.codex/auth.json` by default), with `~/.gpt2agent/token.json` as the manual
   fallback. Codex manages its own auth file; gpt2agent creates or tightens the
@@ -269,16 +320,31 @@ has real consequences; please understand them before pointing it at your account
   to `chatgpt.com`.
   gpt2agent never transmits it anywhere else. Token/secret values are redacted
   from error messages and logs (best-effort).
+- **Keep the account transport in its dedicated MCP child process.** It ignores
+  ambient proxy and CA-bundle variables, uses the directly declared `certifi`
+  trust bundle, and refuses account I/O while `SSLKEYLOGFILE` is set. Libcurl
+  can retain a TLS key-log file opened earlier by trusted embedded code even
+  after that variable is removed, which cannot be detected in-process. Do not
+  embed gpt2agent after unrelated curl traffic or load untrusted code beside it.
 - **PII redaction is limited.** Tools that return conversation/memory data mask
-  **emails, phone numbers, and common secret shapes** (JWTs, bearer tokens,
-  `sk-`-style API keys, GitHub tokens) from text — including `get_conversation`
-  message bodies — but names, addresses, IDs, and everything else are returned
-  verbatim. Don't treat the output as anonymized.
-- **`GPT2AGENT_RAW_DUMP`** (debug) writes raw, unredacted SSE/poll traffic —
-  including prompts, responses, and resume tokens — to the path you give it.
-  The file is created/tightened to mode `600` on POSIX systems, but its content
-  remains sensitive. Use an ignored name such as `gpt2agent-raw-dump.jsonl`,
-  then delete it after debugging.
+  **emails, phone numbers, and common secret shapes** (including structured API
+  tokens, label-aware credential assignments, credential-bearing database URLs,
+  and PEM private keys) from text — including `get_conversation` message bodies —
+  but names, addresses, IDs, and everything else are returned verbatim. Don't
+  treat the output as anonymized.
+- **Hidden tool payloads stay hidden, but execution is disclosed.** Every
+  `chat`, `agent`, and `gpt_chat` completion ends with one server-appended
+  `Tool activity receipt`: fixed categories such as `web`, `code_execution`,
+  or `connector`, or `none` when no activity was observed. Only the final
+  footer is authoritative; an earlier lookalike in model text is not a receipt.
+  Private dispatch and response bodies are never echoed.
+- **Raw backend dumps are disabled.** The bundled Deep Research runner writes
+  only the explicitly requested `report.md` plus shape-only `status.txt`; it
+  does not persist raw events, server metadata, prompts, responses, or resume
+  tokens.
+- **Write serialization is process-local.** `custom_instructions_set` protects
+  its read-modify-write inside one server, but two independently running MCP
+  server processes can still race. Avoid concurrent custom-instruction writers.
 
 Found a security issue? See [SECURITY.md](./SECURITY.md).
 
@@ -312,59 +378,266 @@ Stable versions use `X.Y.Z`. Supported prereleases use `X.Y.Z-alphaN`,
 manifests. Python package metadata and PyPI use the corresponding canonical
 PEP 440 spelling (`X.Y.ZaN`, `X.Y.ZbN`, or `X.Y.ZrcN`).
 
-After the release PR is merged, read its exact merge SHA, prove that commit is
-on `origin/main`, check out that reviewed tree, then create and push only the
-intended annotated tag. This avoids silently including a later unrelated PR:
+After the release PR is merged, run the private account gate on a trusted local
+machine against its exact merge SHA. Main CI independently builds two
+wheel/sdist sets, deterministically normalizes each sdist, requires both formats
+to be byte-identical across builds, and retains only the first set under an
+attempt-specific, immutable artifact ID. In its credential-free package job,
+main CI installs both retained formats, runs the same closed synthetic adapter
+corpus against each, and requires byte-identical corpus results. The local
+account gate downloads that exact candidate but treats both files as inert
+bytes: it never installs, imports, builds, or executes them.
+
+Bootstrap the verifier from `requirements-account-gate.txt` into a new
+owner-private CPython 3.12.13 for Linux x86_64 environment outside the checkout.
+Every ancestor from that runtime to `/` must be root- or operator-owned and must
+not be group/world-writable or a symlink. The operator accepts only the pinned
+archive; its reviewed executable and full-tree digests are constants rather than
+caller-provided trust assertions.
+
+Hosted CI and the local operator share one explicit external provenance
+boundary: Astral's immutable
+[`python-build-standalone` `20260623` release](https://github.com/astral-sh/python-build-standalone/releases/tag/20260623).
+The reviewed CPython 3.12.13 for Linux x86_64 source is
+`cpython-3.12.13+20260623-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz`.
+It is exactly 34,159,178 bytes and its archive SHA-256 is
+`10a452caac7041357805f0c19a60576df53f1ab06d1abfc9200f1f0157cb3bd1`.
+After extracting with the archive's single `python/` prefix stripped, the
+canonical `bin/python3.12` SHA-256 is
+`9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f`.
+The installed normalized `hash_runtime_tree.sh` v1 full-tree SHA-256 is
+`7df598dcc28ad5583fd65f49da6a2ff6460030441070d5c7a105df7dd5294f79`.
+GitHub marks the release immutable, and its artifact attestation binds the
+publisher workflow to the archive digest. That attestation is an upstream
+publisher boundary, not an independent reproducible-build proof.
+
+Download that exact asset over HTTPS, fetch its SLSA bundle from GitHub's
+artifact-attestation API, and verify it with a Sigstore-compatible verifier.
+The verification must enforce certificate identity
+`https://github.com/astral-sh/python-build-standalone/.github/workflows/release.yml@refs/heads/main`,
+OIDC issuer `https://token.actions.githubusercontent.com`, SLSA provenance v1,
+and the archive's subject digest. For example, use `cosign
+verify-blob-attestation --bundle "$SLSA_BUNDLE" --certificate-identity
+"$EXPECTED_IDENTITY" --certificate-oidc-issuer
+https://token.actions.githubusercontent.com --type slsaprovenance1 "$ARCHIVE"`.
+Then use `scripts/install_account_gate_runtime.sh --archive "$ARCHIVE"
+--destination "$PRIVATE_PARENT/cpython-3.12.13"`. The installer fails closed on
+the byte size, archive digest, executable digest, runtime identity, unsafe path
+ancestry, and reviewed publication races; it owns the archive's prefix
+stripping. The boundary assumes a trusted operator machine with no malicious
+concurrent same-UID writer. Set
+`GPT2AGENT_TRUSTED_PYTHON_BASE` to its sole stdout line and set
+`GPT2AGENT_TRUSTED_PYTHON_SHA256` to the executable digest above. Hosted CI uses
+the same installer and exact URL instead of trusting a nominal setup-python
+patch label. These values authorize only this artifact, not an arbitrary
+CPython 3.12.13 installation.
+The bootstrap then accepts only the reviewed nine-distribution closure, exact
+hashes, binary wheels, and the official PyPI index, and verifies every installed
+file and import origin. It emits only the trusted `site-packages` path on stdout.
+The live gate loads `curl_cffi` from that explicit path under
+`python -I -S -B`, keeps the reviewed local bearer in process, disables
+environment proxy discovery and automatic redirects, and accepts only the exact
+reviewed `chatgpt.com` GET routes with bounded metadata, 4 MiB response bodies,
+fixed timeouts, and TLS verification.
+
+The gate writes one mode-0600, closed-schema sanitized receipt bound to the
+source commit/tree, full CI workflow identity, and exact artifact bytes. It
+measures the authenticated account's active Pro entitlement;
+`--expected-plan pro` is a fail-closed expectation, not a caller assertion. The
+receipt keeps only empty/nonempty shape classes, never exact account collection
+counts. Its fixed `11/11/11/0` adapter counts are independent evidence from the
+required main-CI corpus, not self-attestation by the live probe. Receipt creation
+and pre-tag verification reject a probe older than 30 minutes, a probe lasting
+more than 10 minutes, or a completion time more than one minute in the future.
+
+Never upload cookies, bearer tokens, raw responses, unsanitized account payloads,
+or the receipt to hosted CI. Candidate package smoke belongs only in
+credential-free CI or an OS-isolated container/VM with no account auth or private
+mounts. A scrubbed environment and private `HOME` improve hygiene but are not an
+OS sandbox. Keep the release branch and the exact full-SHA publication-action
+commit pushed and resolvable until the first release is fully verified; hosted
+Actions must be able to fetch that immutable action revision.
+
+The trusted release machine must provide the separately reviewed governance
+policy, an authenticated `/usr/bin/gh`, the reviewed Pro account login, and a
+protected local copy of the exact pinned Astral 20260623 CPython 3.12.13 Linux
+x86_64 stripped install-only archive. The reviewed installer pins its size,
+SHA-256, member boundary, executable SHA-256, runtime identity, and atomic
+publication. The operator additionally requires the normalized
+`hash_runtime_tree.sh` v1 digest above before account access; callers cannot
+substitute trust hashes.
+
+Create a private evidence directory, then delegate the complete account gate and
+tag handoff to the reviewed operator. It re-executes under `env -i` and Bash
+privileged mode before parsing arguments, fetches the merged commit into a
+disposable detached worktree, rejects hidden Git index state, and executes only
+root-owned system tools plus the exact owner-private CPython runtime installed
+from the pinned archive. The release App token is requested only after every
+read-only gate passes and is never passed to Python or placed in process
+arguments.
+
+Run the operator and retained-receipt procedures only in a dedicated
+owner-private clone whose `.git/config`, remote URL, and filesystem ancestors
+have been reviewed, with no concurrent writer. Pinning an exact Git executable
+path does not disable repository-local Git configuration. The coordinator
+therefore repeats its mutation-critical checks with scrubbed Git configuration;
+the surrounding documentation checks remain an operator trust boundary, not a
+sandbox for an untrusted checkout.
 
 ```bash
-set -euo pipefail
-git fetch --no-tags origin main:refs/remotes/origin/main
-read -r -p "Merged release PR number: " PR_NUMBER
-RELEASE_SHA=$(gh pr view "$PR_NUMBER" --json mergeCommit,state \
-  --jq 'select(.state == "MERGED") | .mergeCommit.oid')
-test -n "$RELEASE_SHA"
-git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-test -z "$(git status --porcelain)"
-git switch --detach "$RELEASE_SHA"
-trap 'git switch - >/dev/null || true' EXIT
-test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-VERSION=$(python - <<'PY'
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-with open("pyproject.toml", "rb") as stream:
-    print(tomllib.load(stream)["project"]["version"])
-PY
-)
-TAG="v$VERSION"
-python scripts/verify_release.py --tag "$TAG"
-REMOTE_TAG_SHA="$(
-  git ls-remote --tags origin |
-    awk -v ref="refs/tags/$TAG" '$2 == ref { print $1 }'
-)"
-if [ -n "$REMOTE_TAG_SHA" ]; then
-  echo "Release tag already exists on origin: $TAG" >&2
-  exit 1
-fi
-git tag -a "$TAG" "$RELEASE_SHA" -m "gpt2agent $VERSION"
-git push origin "refs/tags/$TAG"
-trap - EXIT
-git switch -
+install -d -m 700 "$HOME/gpt2agent-release-evidence"
+
+scripts/run_account_release.sh \
+  --repository robotlearning123/gpt2agent \
+  --pr "$PR_NUMBER" \
+  --operator-home "$(realpath -e "$HOME")" \
+  --codex-home "$(realpath -e "${CODEX_HOME:-$HOME/.codex}")" \
+  --evidence-directory "$(realpath -e "$HOME/gpt2agent-release-evidence")" \
+  --trusted-python-archive "$(realpath -e "$GPT2AGENT_TRUSTED_PYTHON_ARCHIVE")" \
+  --governance-policy "$(realpath -e "$GPT2AGENT_RELEASE_GOVERNANCE_POLICY")" \
+  --gh /usr/bin/gh \
+  --git /usr/bin/git
 ```
+
+Immediately before the remote tag-ref POST, the coordinator atomically creates
+a mode-0600 `*.irreversible-ref-state` record in that evidence directory. It
+contains the exact tag, attempted annotated-tag object SHA, and commit. Preserve
+it with the receipt and candidate bytes after success or any ambiguous
+interruption; the temporary runtime is disposable, but this recovery identity
+is not.
 
 The release workflow (`.github/workflows/release.yml`) verifies every version
 surface and the CHANGELOG, reads the remote annotated tag target independently
 of checkout's runner-local tag ref, binds it to the event SHA, and proves that
-commit is on `origin/main`. It then runs the test matrix, installs and tests the
-built wheel and sdist in clean environments, publishes to PyPI via OIDC trusted
-publishing, and posts a GitHub Release with that version's CHANGELOG body.
+commit is on `origin/main`. Both the local pre-tag command and the tagged
+workflow require a successful `ci.yml` `push` run for that exact commit on
+`main`; a green PR run or a newer branch head cannot substitute. The workflow
+accepts only the exact canonical tag-message envelope generated by
+`release_tag_metadata.py`: one title and one ASCII, duplicate-key-free,
+closed-schema JSON object binding repository, tag, version, source commit/tree,
+receipt and artifact-set digests, and every candidate identity field. Extra
+text, alternate spellings, and noncanonical JSON fail closed. It fetches the
+pinned run and immutable artifact ID live, then creates canonical evidence
+binding that handoff to the tag object, source commit/tree, release workflow,
+and exact wheel/sdist hashes.
+
+The workflow never rebuilds after the account gate. It downloads the exact
+account-bound main-CI artifact by numeric ID, reconstructs its artifact-set
+digest, and creates and validates the complete numeric-ID-bound GitHub Release
+draft before any irreversible package publication. It then publishes those same
+bytes to PyPI via OIDC trusted publishing. No pre-publication release job
+installs or imports the candidate or reruns `package_smoke.sh`; the required
+credential-free main-CI package job is the sole pre-publication packaged-artifact
+execution gate. After PyPI publication, a credential-free canary installs the
+public version and checks its CLIs, resources, and import surface. Only then does
+the workflow revalidate and publish the same GitHub draft, whose initial assets
+include the distributions and `release-workflow-artifacts.json`.
+
+GitHub and PyPI provide no cross-registry atomic transaction. The documented
+GitHub REST release update exposes no conditional precondition/CAS contract, so
+a privileged writer can race the last exact-ID validation and publication
+PATCH. The mandatory public readback detects asset/tag mismatches observable
+during its bounded checks, but cannot roll back the now-frozen asset/tag state
+or bytes already published to PyPI safely or automatically. Title and release
+notes remain editable after publication; their exactness is point-in-time at
+readback and therefore also depends on privileged-writer governance. This
+residual administrator and service-availability boundary requires the reviewed
+live controls and operator recovery policy rather than a claim of transactional
+publication.
+
+The commit-pinned `softprops/action-gh-release` step resolves or creates the
+exact-tag draft, uploads the three reviewed assets by tag, and exposes its
+numeric release ID. The separately reviewed repository-owned publication action is pinned
+by its full 40-byte commit SHA. It neither creates the draft nor uploads or
+deletes assets: it uses only that numeric ID for a read-only draft preflight and
+the final publication PATCH/readback. It validates exact tag, target commit,
+draft/prerelease flags, name, notes, and asset names/hashes both before and after
+the public transition, then requires GitHub's immutable-release setting on the
+readback. A rerun against an already-public release succeeds only when that
+release is already an exact immutable match; it cannot silently rewrite it.
+
+The annotated-tag SHA-256 is a commitment to the local receipt bytes. Hosted
+automation validates the tag-bound artifact identity and set digest, but it
+does not receive the account receipt or its shape-only probe records. Treat
+publication as blocked unless independent live
+controls are also configured and verified: a policy-bound release App is the
+only actor that can create `v*` tags; separate no-bypass rules make existing
+tags immutable; the `pypi` environment requires the policy-bound independent
+reviewer or protection App; self-review and administrator bypass are disabled;
+and `main` has no bypass actor. A distinct policy-bound GitHub App must read
+immutable-release settings with exactly Administration read plus GitHub's
+implicit Metadata read and no subscribed events. Install it only on this
+repository. The `release-settings-read` environment must accept only `v*` tags,
+have no reviewer, wait timer, or custom deployment gate, disable administrator
+bypass, and contain exactly the policy-bound
+`GPT2AGENT_RELEASE_SETTINGS_APP_CLIENT_ID` variable and
+`GPT2AGENT_RELEASE_SETTINGS_APP_PRIVATE_KEY` secret. Do not reuse this reader as
+the tag creator, required-check App, or PyPI protection actor. The workflow's
+built-in token remains the only release read/write credential; the App token is
+accepted only by the immutable-settings GET allowlist. The approver must verify
+the exact tag, commit, tree, version, and receipt digest before allowing
+publication. Run `scripts/audit_release_governance.py` with
+`--live OWNER/REPO`, `--policy POLICY.json`, and `--gh /usr/bin/gh` to perform
+these reviewed, read-only GitHub checks. It exits nonzero when the closed
+identity policy or any required live control is absent.
+
+For a standalone read-only governance preflight, use the same reviewed verifier
+runtime and canonical policy path as the operator:
+
+```bash
+: "${VERIFIER_PYTHON:?set this to the reviewed isolated CPython 3.12.13 verifier}"
+: "${GPT2AGENT_RELEASE_GOVERNANCE_POLICY:?set this to the reviewed policy JSON}"
+GH_BIN=/usr/bin/gh
+GPT2AGENT_RELEASE_GOVERNANCE_POLICY="$(realpath -e -- \
+  "$GPT2AGENT_RELEASE_GOVERNANCE_POLICY")"
+GH_TOKEN="$("$GH_BIN" auth token --hostname github.com)" \
+  "$VERIFIER_PYTHON" -I -S -B scripts/audit_release_governance.py \
+  --live robotlearning123/gpt2agent \
+  --policy "$GPT2AGENT_RELEASE_GOVERNANCE_POLICY" \
+  --gh "$GH_BIN"
+```
+
+The live audit verifies the current settings-reader installation's repository
+selection, permissions, events, and environment binding through available GitHub
+GET endpoints. Those endpoints cannot prove that the App has no other installation
+under another owner, or that its private key is not reused outside the protected
+environment. The App owner must retain separately reviewed manual evidence for
+those two organization-level exclusivity claims; the machine audit must not be
+treated as proof of them.
+
+Immediately before the release App creates the immutable tag, the operator
+command re-fetches the complete pinned run artifact list, requires at least one
+hour of remaining retention, and revalidates every recorded artifact identity
+field. A newer candidate-producing attempt invalidates the account gate; a
+newer failed-only run attempt without a newer candidate artifact does not.
+
+After the tagged workflow is green, verify the retained local receipt bytes
+against the annotated-tag commitment. Keep that mode-0600 account evidence in
+the approved local evidence store; do not upload it to Actions or the public
+GitHub Release:
+
+```bash
+scripts/audit_retained_receipt.sh \
+  --repository robotlearning123/gpt2agent \
+  --tag v0.0.12 \
+  --operator-home "$(realpath -e "$HOME")" \
+  --evidence-directory "$(realpath -e "$HOME/gpt2agent-release-evidence")" \
+  --trusted-python-archive "$(realpath -e "$GPT2AGENT_TRUSTED_PYTHON_ARCHIVE")" \
+  --git /usr/bin/git
+```
+
+Retain or dispose of the owned local receipt and candidate directory only under
+the reviewed local release-evidence policy. The public tag and
+`release-workflow-artifacts.json` retain the non-account provenance commitments.
 
 If a publish or downstream release job fails, use GitHub Actions' **Re-run
-failed jobs** on that same workflow run so it reuses the original build
-artifact. Do not re-run the whole workflow after any file reaches PyPI: Python
-sdists are not guaranteed byte-reproducible, and the hash guard intentionally
-rejects different rebuilt bytes for an existing version.
+failed jobs** on that same workflow run so it reuses the pinned main-CI artifact.
+Do not re-run the whole workflow after any file reaches PyPI. Before tagging, a
+deleted, expired, replaced, or near-expiry candidate requires a full main-CI
+rerun and a new account gate. A failed-only CI rerun may reuse an earlier package
+attempt only when its exact producing attempt and artifact ID remain pinned.
+After tagging, loss or mismatch of the pinned artifact blocks that release:
+never rebuild, move, delete, or recreate the immutable version tag.
 
 If the source gate itself exposes a workflow defect before anything is
 published, fix the workflow on `main` and prepare the next version. Never

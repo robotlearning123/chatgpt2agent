@@ -52,6 +52,7 @@ def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
             #!{sys.executable}
             import json
             import os
+            import shutil
             import sys
 
             args = sys.argv[1:]
@@ -66,14 +67,35 @@ def _recording_installer_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
                 fh.write(json.dumps(args) + "\\n")
 
             if args[:1] == ["uninstall"]:
-                raise SystemExit(int(os.environ.get("FAKE_PIPX_UNINSTALL_STATUS", "0")))
+                status = int(os.environ.get("FAKE_PIPX_UNINSTALL_STATUS", "0"))
+                if status == 0:
+                    shutil.rmtree(
+                        os.path.join(os.environ["FAKE_PIPX_HOME"], "venvs", "gpt2agent"),
+                        ignore_errors=True,
+                    )
+                raise SystemExit(status)
 
             is_git = any(arg.startswith("git+https://") for arg in args)
             status_var = "FAKE_PIPX_GIT_STATUS" if is_git else "FAKE_PIPX_PYPI_STATUS"
             status = int(os.environ.get(status_var, "0"))
             if status:
                 print("simulated PyPI failure", file=sys.stderr)
-            raise SystemExit(status)
+                raise SystemExit(status)
+            venv = os.path.join(os.environ["FAKE_PIPX_HOME"], "venvs", "gpt2agent")
+            os.makedirs(venv, exist_ok=True)
+            with open(os.path.join(venv, "installed-version"), "w", encoding="utf-8") as fh:
+                fh.write("new\\n")
+            if not os.environ.get("FAKE_PIPX_SKIP_VENV_APP"):
+                app_dir = os.path.join(venv, "bin")
+                os.makedirs(app_dir, exist_ok=True)
+                app = os.path.join(app_dir, "gpt2agent")
+                with open(app, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        "#!/bin/sh\\n"
+                        "if [ \\\"${{1:-}}\\\" = '--version' ]; then exit 0; fi\\n"
+                        "exit \\\"${{FAKE_GPT2AGENT_STATUS:-0}}\\\"\\n"
+                    )
+                os.chmod(app, 0o755)
             """
         ),
     )
@@ -153,11 +175,14 @@ def test_checkout_installer_defaults_to_named_pypi_package(tmp_path: Path) -> No
     ]
 
 
-def test_installer_replaces_existing_pipx_environment_before_install(
+def test_installer_replaces_existing_pipx_environment_without_uninstall(
     tmp_path: Path,
 ) -> None:
     env, log = _recording_installer_env(tmp_path)
-    (Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent").mkdir(parents=True)
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
     selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
 
     result = subprocess.run(
@@ -171,17 +196,27 @@ def test_installer_replaces_existing_pipx_environment_before_install(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert _pipx_calls(log) == [
-        ["uninstall", "gpt2agent"],
         ["install", "--force", "--python", selected_python, "gpt2agent"],
     ]
+    assert marker.read_text(encoding="utf-8") == "new\n"
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
 
 
-def test_installer_aborts_when_existing_pipx_environment_cannot_be_removed(
-    tmp_path: Path,
+@pytest.mark.parametrize("entry_kind", ["symlink", "file"])
+def test_installer_rejects_non_directory_pipx_environment_before_mutation(
+    tmp_path: Path, entry_kind: str
 ) -> None:
     env, log = _recording_installer_env(tmp_path)
-    (Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent").mkdir(parents=True)
-    env["FAKE_PIPX_UNINSTALL_STATUS"] = "73"
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.parent.mkdir(parents=True)
+    sentinel = tmp_path / "sentinel"
+    if entry_kind == "symlink":
+        sentinel.mkdir()
+        (sentinel / "installed-version").write_text("do not touch\n", encoding="utf-8")
+        venv.symlink_to(sentinel, target_is_directory=True)
+    else:
+        sentinel.write_text("do not touch\n", encoding="utf-8")
+        venv.write_text("not a virtual environment\n", encoding="utf-8")
 
     result = subprocess.run(
         [str(INSTALLER), "--no-register"],
@@ -192,8 +227,204 @@ def test_installer_aborts_when_existing_pipx_environment_cannot_be_removed(
         check=False,
     )
 
-    assert result.returncode == 73
-    assert _pipx_calls(log) == [["uninstall", "gpt2agent"]]
+    assert result.returncode == 1
+    assert "pipx environment path must be a real directory" in result.stderr
+    assert not log.exists(), "pipx install must not run for an unsafe environment path"
+    if entry_kind == "symlink":
+        assert (sentinel / "installed-version").read_text(encoding="utf-8") == "do not touch\n"
+        assert venv.is_symlink()
+        assert not (sentinel / "bin").exists()
+    else:
+        assert sentinel.read_text(encoding="utf-8") == "do not touch\n"
+        assert venv.read_text(encoding="utf-8") == "not a virtual environment\n"
+
+
+def test_signal_after_environment_move_restores_previous_install(tmp_path: Path) -> None:
+    env, _ = _recording_installer_env(tmp_path)
+    fake_bin = Path(env["PATH"].split(os.pathsep, 1)[0])
+    real_mv = shutil.which("mv", path=os.defpath)
+    assert real_mv is not None
+    signal_marker = tmp_path / "mv-signalled"
+    env["FAKE_MV_SIGNAL_MARKER"] = str(signal_marker)
+    _write_executable(
+        fake_bin / "mv",
+        textwrap.dedent(
+            f"""\
+            #!/bin/sh
+            {real_mv!r} "$@"
+            status=$?
+            if [ "$status" -eq 0 ] && [ ! -e "$FAKE_MV_SIGNAL_MARKER" ]; then
+                : > "$FAKE_MV_SIGNAL_MARKER"
+                kill -TERM "$PPID"
+            fi
+            exit "$status"
+            """
+        ),
+    )
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 130, result.stdout + result.stderr
+    assert marker.read_text(encoding="utf-8") == "old\n"
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
+
+
+def test_failed_upgrade_restores_existing_pipx_environment(
+    tmp_path: Path,
+) -> None:
+    env, log = _recording_installer_env(tmp_path)
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
+    env["FAKE_PIPX_PYPI_STATUS"] = "42"
+    selected_python = str(Path(env["PATH"].split(os.pathsep, 1)[0]) / "python3.13")
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 42
+    assert marker.read_text(encoding="utf-8") == "old\n"
+    assert _pipx_calls(log) == [
+        ["install", "--force", "--python", selected_python, "gpt2agent"]
+    ]
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
+
+
+def test_successful_upgrade_is_not_rolled_back_when_app_bin_is_not_on_path(
+    tmp_path: Path,
+) -> None:
+    env, _ = _recording_installer_env(tmp_path)
+    fake_bin = Path(env["PATH"].split(os.pathsep, 1)[0])
+    env["PATH"] = f"{fake_bin}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    (fake_bin / "gpt2agent").unlink()
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert marker.read_text(encoding="utf-8") == "new\n"
+    assert "pipx ensurepath" in result.stdout
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
+
+
+def test_failed_registration_restores_existing_pipx_environment(
+    tmp_path: Path,
+) -> None:
+    env, _ = _recording_installer_env(tmp_path)
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
+    env["FAKE_GPT2AGENT_STATUS"] = "47"
+
+    result = subprocess.run(
+        [str(INSTALLER)],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 47
+    assert marker.read_text(encoding="utf-8") == "old\n"
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
+
+
+def test_stale_path_app_cannot_commit_incomplete_pipx_upgrade(
+    tmp_path: Path,
+) -> None:
+    env, _ = _recording_installer_env(tmp_path)
+    venv = Path(env["FAKE_PIPX_HOME"]) / "venvs" / "gpt2agent"
+    venv.mkdir(parents=True)
+    marker = venv / "installed-version"
+    marker.write_text("old\n", encoding="utf-8")
+    env["FAKE_PIPX_SKIP_VENV_APP"] = "1"
+
+    result = subprocess.run(
+        [str(INSTALLER), "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "does not contain an executable gpt2agent app" in result.stderr
+    assert marker.read_text(encoding="utf-8") == "old\n"
+    assert not list(Path(env["FAKE_PIPX_HOME"]).glob(".gpt2agent-upgrade.*"))
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--transport", "http"], "HTTP transport is disabled"),
+        (["--port", "9000"], "--port is unavailable"),
+    ],
+)
+def test_installer_rejects_http_options_before_pipx_mutation(
+    tmp_path: Path, arguments: list[str], message: str
+) -> None:
+    env, log = _recording_installer_env(tmp_path)
+
+    result = subprocess.run(
+        [str(INSTALLER), *arguments, "--no-register"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert not log.exists()
+
+
+def test_installer_does_not_advertise_or_forward_stale_http_port() -> None:
+    text = INSTALLER.read_text(encoding="utf-8")
+    result = subprocess.run(
+        [str(INSTALLER), "--help"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--transport http" not in result.stdout
+    assert "--port" not in result.stdout
+    assert "\nPORT=" not in text
+    assert "--http-port" not in text
 
 
 def test_pypi_failure_fails_closed_without_git_fallback(tmp_path: Path) -> None:
@@ -577,7 +808,7 @@ def _python_with_build_backend() -> tuple[list[str], str]:
     ``build`` when it and the declared backend requirements are available,
     otherwise invoke a compatible setuptools backend directly.  A system Python
     is a final fallback for minimal test venvs; incompatible ambient backends
-    must not be mistaken for the project's declared ``setuptools>=77`` backend.
+    must not be mistaken for the project's exact locked build backend.
     """
     candidates = [sys.executable]
     system_python = shutil.which("python3")
@@ -589,9 +820,9 @@ def _python_with_build_backend() -> tuple[list[str], str]:
 
     backend_probe = (
         "from importlib.metadata import version; "
-        "from packaging.version import Version; "
         "import setuptools.build_meta, wheel; "
-        "assert Version(version('setuptools')) >= Version('77')"
+        "assert version('setuptools') == '83.0.0'; "
+        "assert version('wheel') == '0.47.0'"
     )
     for python in candidates:
         has_build = subprocess.run(
