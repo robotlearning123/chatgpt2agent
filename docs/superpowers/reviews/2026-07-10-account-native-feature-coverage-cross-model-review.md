@@ -232,7 +232,7 @@ A future experiment may use an optional local TypeScript/browser WebRTC sidecar 
 
 ## 7. Language and performance decision
 
-- **Python remains the MCP control plane.** This repository is network-, backend-, and streaming-latency dominated, and Python preserves the mature authenticated transport and smallest safe diff.
+- **Python remains the MCP control plane.** This repository is network-, backend-, and streaming-latency-dominated, and Python preserves the mature authenticated transport and smallest safe diff.
 - **TypeScript is reserved for a future browser-native WebRTC sidecar.** Browser media APIs and WebRTC are the one area where it has a structural advantage.
 - **Rust is deferred.** It should be introduced only after a reproducible benchmark identifies a CPU, memory, or transport bottleneck that Python and the current dependency architecture cannot resolve.
 
@@ -242,7 +242,7 @@ The design uses four separate gates:
 
 1. **PR offline gate:** Ruff, supported Python/OS matrix, release metadata, ShellCheck, wheel/sdist build, `twine check`, clean installs, packaged Skill/resource checks, and sdist tests.
 2. **Public no-secret radar:** scheduled/manual official-page and public-bundle fingerprinting; it never accesses a ChatGPT account or mutates source.
-3. **Local exact-commit account gate:** maintainer-controlled, GET-only, shape-only, redacted, and outside hosted CI. Any source or package change invalidates its receipt.
+3. **Local exact-commit account gate:** maintainer-controlled, GET-only, shape-only, redacted, and run outside hosted CI. Any source or package change invalidates its receipt.
 4. **Post-merge release gate:** rebuild/test the exact merged commit before tagging, publish through the existing OIDC workflow, compare PyPI only with `release_workflow_artifacts`, attach and verify the pre-tag receipt, then clean-install from PyPI.
 
 This is how the project can track fast ChatGPT changes without pretending that a scheduled public check validates private consumer-account routes.

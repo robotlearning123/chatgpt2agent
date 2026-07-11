@@ -329,10 +329,10 @@ Normative probe table:
 | `scheduled_automations` | `/backend-api/automations?filter=scheduled` | `account` / `route` | use only an explicit account feature/access boolean; otherwise `null`, including a valid empty result |
 | `sites` | `/backend-api/websites/access`, then `/backend-api/websites?limit=1` when access is true/unknown | `account` / `route` | use only the explicit boolean access result; never infer `false` from an empty Site list |
 | `voice_catalog`, `voice_transcript`, `gpt_live` | no probe in 0.0.12 | `voice` / `none` | `null`; these are inventory-only until their separately versioned adapters ship |
-| `conversations` | `/backend-api/conversations?offset=0&limit=1&order=updated` | `account` / `route` | `true` for a valid envelope, even when empty |
+| `conversations` | no automatic probe; use only the explicitly invoked `list_conversations` tool | `account` / `none` | `null`; the route returns private conversation titles |
 | `custom_gpts` | `/backend-api/gizmos/snorlax/sidebar` | `account` / `route` | `true` for a valid non-empty result; `null` when empty |
-| `memory` | `/backend-api/memories` | `account` / `route` | `true` only from an explicit feature flag or non-empty valid result; otherwise `null` |
-| `custom_instructions` | `/backend-api/user_system_messages` | `account` / `route` | `true` for a valid contract response; otherwise follow the truth table below |
+| `memory` | no automatic probe; use only the explicitly invoked `memory_list` or `memory_search` tool | `account` / `none` | `null`; the route returns private memory content |
+| `custom_instructions` | no automatic probe; use only the explicitly invoked `custom_instructions_get` tool | `account` / `none` | `null`; the route returns private instruction text |
 | `codex` | `/backend-api/codex/environments` | `codex` / `route` | `true` for a valid non-empty result; `null` when empty |
 | `projects` | `/backend-api/projects` | `account` / `route` | no entitlement inference; a 404/405 proves only that this unestablished candidate route is `unsupported`, not that Projects are unavailable |
 
@@ -351,6 +351,13 @@ shape-only account sample grounded the `canvas`, `image_gen_tool_enabled`,
 markers deliberately remain unmatched unless a future catalog returns those
 exact values. Changing this allowlist requires a reviewed contract update and
 fixtures; mere absence never proves lack of account entitlement.
+
+The capability inventory and local release-receipt gate never request the
+conversation-summary, memory, or custom-instruction routes. Those MCP tools
+remain available, but a caller must invoke them explicitly when reading that
+private content is intended. Their inventory records therefore remain
+`status: "unverified"`, with null entitlement and reachability and only packaged
+contract evidence.
 
 The two-step `sites` probe has a fixed partial-failure rule. A valid explicit
 `enabled: false` access response returns `reachable_now: true`,
@@ -521,24 +528,25 @@ Every adapter must distinguish an honestly empty collection from a malformed con
 
 An explicit live test group is opt-in from normal `pytest` and is never run in hosted CI. It is nevertheless a required manual pre-release gate, run by the release owner with a maintainer-controlled local ChatGPT Pro session. A checked-in generator emits a schema-validated, canonically serialized receipt containing schema version, package version, full Git commit SHA, Git tree SHA, a `local_candidate_artifacts` object with wheel/sdist filenames, SHA-256 values, source commit/tree, and `build_origin: "local_live_gate"`, plan class, UTC timestamp, adapter status, counts, and redacted shape results. It never records account identity or content. The receipt file's SHA-256 is computed externally and recorded in release evidence.
 
-The gate uses a checked-in exact GET allowlist derived from the normative probe
-table. It also has an explicit denylist covering `/backend-api/settings/voices`,
-every Voice/realtime/call/session path, WebRTC, transcript/conversation bodies,
-and any endpoint not named by the allowlist. A test fails if a 0.0.12 live-gate
-request attempts a denied or unknown route. Voice audit evidence may appear only
-as dated static provenance in the packaged inventory; the gate never refreshes
-it.
+The gate uses a checked-in exact GET allowlist derived from the permitted rows
+of the normative probe table. It also has an explicit denylist covering
+conversation summaries and bodies, memories, custom instructions,
+`/backend-api/settings/voices`, every Voice/realtime/call/session path, WebRTC,
+transcripts, and any endpoint not named by the allowlist. A test fails if a
+0.0.12 live-gate request attempts a denied or unknown route. Voice audit
+evidence may appear only as dated static provenance in the packaged inventory;
+the gate never refreshes it.
 
 The live group must:
 
 - issue GET requests only;
 - validate envelope and minimum field shapes, not personal values;
-- avoid reading conversation bodies unless a user explicitly selects that test;
+- never read conversation summaries or bodies, memories, or custom instructions;
 - redact all diagnostic output;
 - leave no snapshots, cookies, screenshots, or temporary account artifacts;
 - report entitlement, reachability, and official support separately.
 
-An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `conversations`, `custom_gpts`, `memory`, and `codex`; every other capability, including the unsupported candidate `projects` route, uses `item_contract_status: "not_applicable"`.
+An honestly empty collection or explicitly proven unavailable entitlement passes the live route/envelope check. Populated item contracts are proven by synthesized fixtures derived from public-bundle field access and any separately approved redacted evidence; the release does not create a Site or automation merely to populate a test. The collection capabilities are `chat_models`, `work_models`, `apps`, `plugins`, `installed_plugins`, `background_jobs`, `scheduled_automations`, `sites`, `conversations`, `custom_gpts`, `memory`, and `codex`; every other capability, including the unsupported candidate `projects` route, uses `item_contract_status: "not_applicable"`. Conversation and memory collections cannot become `live_verified` through the automatic gate because their content-bearing routes are excluded.
 
 Collection assignment is deterministic. Set `live_verified` only when at least one live item passes the minimum normalized item schema. Otherwise set `public_bundle_only` when checked public-bundle field access or separately approved redacted evidence grounds that item schema and the synthesized fixture passes. Set `unverified_live` when neither condition is met, including a valid empty live collection with no approved populated-item evidence. These values do not change the bounded `evidence_source` list or route-level `status`. No Voice route or conversation-body probe is part of the 0.0.12 gate.
 
