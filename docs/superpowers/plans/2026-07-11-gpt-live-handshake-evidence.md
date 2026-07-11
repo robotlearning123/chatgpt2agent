@@ -64,13 +64,33 @@ This confirms the two events Mode B needs exist in this family: an input
 
 `voice_session_id`, `voice`, `voice_mode`, `default_voice_mode`, `modes`.
 
-## Still needs a live round-trip to confirm
+## Live round-trip — CONFIRMED (2026-07-11, account token, no browser)
 
-- Exact `Authorization` token source: appears to be the account Bearer
-  (`~/.codex/auth.json`), i.e. the sidecar may bootstrap with the token
-  gpt2agent already holds — no browser. Confirm by one authenticated POST.
-- ICE servers: not literal in the bundle (server-provided or default STUN).
-- The precise `live`-mode selector and full datachannel event enum.
+Two authenticated `POST`s to `https://chatgpt.com/realtime/vp?dcid=0` using the
+account bearer from `~/.codex/auth.json` (curl_cffi Chrome impersonation, the
+same path gpt2agent uses). No mic, no browser, no ephemeral token, no sentinel.
 
-These are confirmations, not unknowns: the routes and mechanism above are read
-directly from shipped code.
+1. A datachannel-only offer returned **`HTTP 400`**:
+   `{"error":{"message":"Offer did not have an audio media section.","type":"invalid_request_error","code":"invalid_offer"}}`
+   — auth passed, route correct, OpenAI Realtime error schema.
+2. An offer with an Opus audio m-line + datachannel returned **`HTTP 201`** with a
+   full **SDP answer** (39 lines): `m=audio … opus/48000/2`, `a=setup:active`,
+   **6 `a=candidate:` ICE candidates**, and `m=application … webrtc-datachannel`
+   `a=sctp-port:5000`.
+
+**Resolved:**
+- **Token source = the account bearer.** The sidecar bootstraps GPT-Live with the
+  token gpt2agent already loads — **no browser at all**.
+- **ICE servers** come embedded in the SDP answer (candidates), not from a
+  separate config.
+- Endpoint, `application/sdp` format, and negotiated datachannel are confirmed
+  against the live server.
+
+**Still open (media, not control plane):** completing ICE/DTLS/SRTP needs a real
+WebRTC peer (Node `werift`/`wrtc`, or a browser) — the probe used bogus ICE creds
+so media never connects and the half-open session expires server-side. The
+`live`-mode selector and the full datachannel event enum are the last minor
+items, observable once a real peer connects.
+
+The SDP-exchange control plane — the thing that was blocked — is now verified
+end-to-end. `src/adapter.mjs::exchangeSdp` is exactly this call.
