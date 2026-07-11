@@ -539,17 +539,18 @@ records account identity or content. Its SHA-256 and artifact-set SHA-256 are
 committed into the annotated tag and public release evidence; the receipt stays
 in the approved local evidence store.
 
-Build/install subprocesses receive only an allowlisted
-runtime/locale/certificate environment; proxy variables are not forwarded
-because proxy URLs can carry credentials. The live-probe subprocess receives an
-isolated mode-0700 credential-discovery home with only a mode-0600 minimal Codex
-auth file, and child `TEMP`/`TMP`/`TMPDIR` paths resolve to private per-step
-directories. This prevents normal environment and home-directory discovery of
-operator GitHub, release, publish, SSH, cloud, and arbitrary injected
-credentials, but it is not an OS filesystem sandbox. The current installed
-candidate still receives the selected ChatGPT access token to execute its live
-adapter, so this is not an account-auth isolation boundary;
-trusted-transport/offline-candidate hardening remains a separate requirement.
+The credential-free main-CI package job installs wheel and sdist and runs the
+same closed synthetic adapter corpus against both, requiring byte-identical
+canonical results and unchanged artifact hashes. The trusted local live gate
+treats both candidates as inert bytes: no install, import, build hook, or
+candidate subprocess is allowed. A verifier-owned `curl_cffi` session reads one
+owner-only bearer directly, disables proxy discovery and automatic redirects,
+uses fixed TLS/time/size bounds, and calls only the reviewed GET table. Live
+shape results and the fixed offline adapter-corpus counts are separate evidence.
+Candidate smoke belongs only in credential-free CI or an OS-isolated no-auth
+container/VM; environment scrubbing alone is not an OS sandbox. Pre-tag creation
+and verification reject evidence older than 30 minutes, live duration over
+10 minutes, and completion times more than one minute in the future.
 
 The gate uses a checked-in exact GET allowlist derived from the permitted rows
 of the normative probe table. It also has an explicit denylist covering
