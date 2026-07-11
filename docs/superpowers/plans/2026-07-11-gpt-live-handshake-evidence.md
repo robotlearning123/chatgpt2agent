@@ -257,6 +257,30 @@ guessed/minimal `session` object + missing ProofToken yields an unconnectable
 answer. The complete handshake (correct `session` fields + Sentinel `ProofToken` +
 auth/routing headers) is the remaining work.
 
+## FINAL WALL (2026-07-11) — Cloudflare Turnstile (browser-required by design)
+
+Built the full authenticated handshake (`sidecar/experiments/sdp_exchange_full.py`):
+reuses gpt2agent's `BackendClient` + `SentinelGate` to POST
+`FormData(sdp + session)` to `/realtime/vp` with `Authorization: Bearer`,
+`OAI-Device-Id`, matching UA, `OpenAI-Sentinel-Chat-Requirements-Token`, and
+`OpenAI-Sentinel-Proof-Token` (POW). Results:
+
+- The POW proof solves fine, but **Turnstile does not solve** headlessly
+  (gpt2agent's own solver fails: "required Turnstile challenge could not be
+  solved"). Proof-only → `HTTP 201` but the answer's session is invalid and the
+  browser peer goes `connecting → failed` (ICE never completes — the server
+  tears the un-Turnstiled session down).
+- The bare raw-SDP path connects but is ephemeral (closes ~1s); the FormData path
+  without Turnstile is rejected at ICE.
+
+**So the autonomous (no-login) path is blocked by Cloudflare Turnstile**, an
+anti-bot challenge specifically designed to require a real interactive browser.
+This is not a code gap — it's the intended security boundary. A logged-in real
+browser solves Turnstile natively via the Cloudflare widget, which is exactly why
+`sidecar/browser/sidecar.mjs` on a logged-in Chrome is the reliable path and the
+token-only Linux path cannot persist a session. (The exact `session` object
+fields are a secondary unknown, moot until Turnstile is passed.)
+
 **This redirects the whole effort:** neither werift nor a browser media stack was
 ever the problem — the handshake was incomplete. Next step (autonomous-capable):
 build the FormData handshake with a `session` object + a realtime Sentinel
