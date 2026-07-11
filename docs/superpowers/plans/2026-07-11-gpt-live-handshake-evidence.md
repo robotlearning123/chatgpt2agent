@@ -120,9 +120,21 @@ Inbound messages are wrapped in an envelope:
 
 i.e. outer `data_message` → inner event (`state_update` with
 `previous_state`/`new_state`). The session state machine begins `idle →
-listening`. It then closes within ~1s because the peer sends **no audio** (audio
-was `recvonly`); GPT-Live drops an idle listening session. Keeping it alive and
-getting a transcript/response requires sending an Opus audio track (ffmpeg +
-werift `OpusRtpPayload`/`RtpBuilder` — available) and matching the outbound
-envelope. That is the remaining media step (task #3), not a control-plane
-unknown.
+listening`, then closes within ~1s.
+
+### Audio round-trip — attempted, not yet decoded server-side
+
+`sidecar/experiments/connect_live_audio.mjs` sends a TTS utterance (`mb voice` →
+mp3 → `ffmpeg -c:a libopus -f rtp` → werift `MediaStreamTrackFactory.rtpSource`
+UDP → the WebRTC audio track). Verified aligned: audio starts on datachannel
+open, Opus PT matches offer/answer (96/96), and ffmpeg SSRC matches werift's
+declared `a=ssrc`. Result: the session still reaches `listening` and drops ~1s
+later — **GPT-Live is not decoding the sent audio** (no transcription event
+appears). The egress path (werift SRTP sender actually forwarding the
+rtpSource-injected RTP with correct timestamps) is the open item; the fix likely
+needs werift's canonical media-send path rather than raw RTP forwarding.
+
+**So, verified end-to-end: auth, routes, SDP exchange, ICE/DTLS, datachannel,
+and the session state machine. Open (task #3): server-side audio decode (getting
+the human's Opus to actually reach GPT-Live's recognizer) and the outbound
+command envelope, then the Mode B loop.**
