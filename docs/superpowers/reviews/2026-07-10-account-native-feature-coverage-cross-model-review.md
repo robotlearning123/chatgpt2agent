@@ -1,5 +1,9 @@
 # gpt2agent 0.0.12 account-native coverage: cross-model review
 
+> Historical review note: the final 0.0.12 security gate disables HTTP. Any
+> loopback-only recommendation below is preserved as review history, not current
+> product guidance.
+
 - **Date:** 2026-07-10 EDT
 - **Baseline design commit:** `36ab2b9d87652403a9f89b573aee0a7a0241b17e`
 - **Original reviewed design SHA-256:** `fc8a3fff4f32d70671d944bf6851b5fa31f6ae7cd1004659030c2ba1e8d24b31`

@@ -1,5 +1,9 @@
 # Account-native feature coverage and compatibility design
 
+> Historical design note: the final 0.0.12 security gate supersedes this
+> document's loopback proposal and disables HTTP entirely. Stdio is the only
+> supported release transport.
+
 - **Status:** Amended exact-design review complete; approved for TDD implementation
 - **Date:** 2026-07-10
 - **Target release:** gpt2agent 0.0.12
