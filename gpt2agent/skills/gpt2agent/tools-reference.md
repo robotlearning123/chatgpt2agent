@@ -1,6 +1,6 @@
 # gpt2agent MCP Tools Reference
 
-Complete parameter reference for all 25 MCP tools exposed by the gpt2agent server.
+Complete parameter reference for all 30 MCP tools exposed by the gpt2agent server.
 Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 
 ---
@@ -10,9 +10,10 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - [Chat & Reasoning (5)](#chat--reasoning)
 - [Image & File (3)](#image--file)
 - [Code Execution (2)](#code-execution)
-- [Account Introspection (7)](#account-introspection)
+- [Account Introspection (8)](#account-introspection)
 - [Memory & Instructions (5)](#memory--instructions)
 - [Codex (3)](#codex)
+- [GPT-Live bridge (4)](#gpt-live-bridge)
 
 ---
 
@@ -299,6 +300,34 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   ```
 - **Notes**:
   - Returns models for `history_and_training_disabled=false` variant. Some models may differ in capabilities between temporary/non-temporary modes.
+  - Async handler; offloads the REST call to the synchronous backend client.
+
+---
+
+### list_voices
+
+- **Purpose**: Return the Voice choices currently available to the signed-in ChatGPT account.
+- **Parameters**:
+  - `voice_mode` (str, optional) -- select a mode-specific catalog. Values accepted by the live account contract on 2026-07-11 are `standard`, `advanced`, and `wingman`. Omit for the account default. The value is not restricted to that list (modes change), but must be a short lowercase token or it is rejected before any request. GPT-Live audio is a separate session contract, not a currently accepted catalog mode.
+- **Returns**: `list[dict]` -- each dict contains exactly:
+  - `id` (str) -- the opaque backend Voice ID; preserved verbatim and not derived from the display name
+  - `name` (str) -- display name, with common PII/secret patterns redacted
+  - `description` (str) -- display description, with common PII/secret patterns redacted
+  - `selected` (bool or None) -- `True`/`False` only when the response identifies a selected ID present in the returned catalog; otherwise `None`
+  - `has_preview` (bool) -- whether the private response advertised preview media
+- **When to use**: Discover account/rollout-specific Voice IDs and display metadata.
+- **Example**:
+  ```python
+  voices = list_voices()                          # account default
+  advanced_voices = list_voices(voice_mode="advanced")
+  selected = next((voice for voice in voices if voice["selected"] is True), None)
+  ```
+- **Notes**:
+  - Uses the private `GET /backend-api/settings/voices` website route (with `?voice_mode=` when a mode is given). Voice is an official ChatGPT product, but this adapter is not an official API and may drift.
+  - The catalog is live and rollout-specific; names, IDs, ordering, selection, and count are not hard-coded.
+  - Raw preview URLs, colors, gain values, unknown response fields, and account identifiers are not returned.
+  - This tool does not fetch preview audio, start a Voice session, capture a microphone, synthesize speech, stream GPT-Live audio, or guarantee transcript extraction.
+  - A malformed private response fails closed with `voice catalog contract changed` rather than pretending the catalog is empty.
   - Async handler; offloads the REST call to the synchronous backend client.
 
 ---
@@ -615,6 +644,51 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
   - Raises `ValueError` if no environment matches the label, or if the label is ambiguous (matches multiple environments).
   - The payload shape is: `new_task={environment_id, branch}` + `input_items=[{type: "message", role: "user", content: [{content_type: "text", text: prompt}]}]`.
   - Async handler; offloads the REST calls to the synchronous backend client.
+
+---
+
+## GPT-Live bridge
+
+Human → agent, observe-only.
+
+Experimental, optional. Direction is **human → agent**: a human talks to GPT-Live,
+the observed human transcript routes to a coding agent, and the reply reaches the
+human out-of-band (a text overlay). There is **no "make Live speak" tool** — the
+consumer datachannel silently drops client-injected speech. Audio stays in a headed
+browser; MCP is text/control only. Cloudflare Turnstile bypass is **out of scope**.
+
+Reliable path = your real signed-in Chrome + `sidecar/extension` + `sidecar/agent-gateway.mjs`.
+(`browser/sidecar.mjs` with a fake WAV mic is a **test harness** — Live does not
+transcribe synthetic audio.) The Node sidecar/extension ship with the **source repo**,
+**not the PyPI wheel** — clone <https://github.com/robotlearning123/gpt2agent> to run them.
+
+Control base: `http://127.0.0.1:8741` (override with `GPT2AGENT_LIVE_CONTROL`).
+
+### voice_live_export_help
+
+- **Purpose**: Document the human → agent bridge, the reliable path, and the Turnstile boundary.
+- **Parameters**: none.
+- **Returns**: `str` — start steps, tool list, boundary notes.
+- **When to use**: First call before using the other `voice_live_*` tools.
+
+### voice_live_status
+
+- **Purpose**: Status of the local bridge control plane (no audio/secrets).
+- **Parameters**: none.
+- **Returns**: `dict` — state, transcript count, boundary flags (redacted).
+
+### voice_live_get_transcript
+
+- **Purpose**: Drain the observed human/agent transcript text from the bridge.
+- **Parameters**:
+  - `clear` (bool, default: `False`) — when `True`, clears the buffer after read.
+- **Returns**: `dict` with `transcripts: [{role, text, at}, ...]`.
+
+### voice_live_end
+
+- **Purpose**: End the GPT-Live bridge session via the local control plane.
+- **Parameters**: none.
+- **Returns**: `dict` — `{ok, state}` or an unreachable-control error with a start hint.
 
 ---
 

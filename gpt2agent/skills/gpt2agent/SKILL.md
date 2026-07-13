@@ -1,9 +1,10 @@
 ---
 name: gpt2agent
 description: |
-  Full ChatGPT Plus/Pro account access via MCP. 25 tools covering chat,
+  Full ChatGPT Plus/Pro account access via MCP. 30 tools covering chat,
   agent mode, deep research, image generation, code execution, canvas,
-  memory, custom instructions, conversations, Custom GPTs, and Codex.
+  memory, custom instructions, conversations, Custom GPTs, Voice catalog,
+  optional GPT-Live → coding-agent bridge (observe-only), and Codex.
   Reuses $CODEX_HOME/auth.json (or ~/.codex/auth.json) or the manual
   ~/.gpt2agent/token.json fallback.
   Use when you need ChatGPT models, web research with citations, DALL-E
@@ -24,6 +25,7 @@ allowed-tools:
   - mcp__gpt2agent__canvas_execute
   - mcp__gpt2agent__account_status
   - mcp__gpt2agent__list_models
+  - mcp__gpt2agent__list_voices
   - mcp__gpt2agent__list_conversations
   - mcp__gpt2agent__get_conversation
   - mcp__gpt2agent__list_tasks
@@ -37,6 +39,10 @@ allowed-tools:
   - mcp__gpt2agent__list_codex_envs
   - mcp__gpt2agent__list_codex_tasks
   - mcp__gpt2agent__codex_task_create
+  - mcp__gpt2agent__voice_live_export_help
+  - mcp__gpt2agent__voice_live_status
+  - mcp__gpt2agent__voice_live_get_transcript
+  - mcp__gpt2agent__voice_live_end
 ---
 
 # gpt2agent — ChatGPT Account Access via MCP
@@ -70,6 +76,8 @@ If any precondition fails, stop and tell the user the exact fix command.
 | Image & file | `generate_image`, `get_file_info`, `get_file_download_url` |
 | Code execution | `code_interpreter`, `canvas_execute` |
 | Account & models | `account_status`, `list_models`, `list_apps` |
+| Voice catalog | `list_voices` |
+| GPT-Live bridge (human→agent, observe-only) | `voice_live_export_help`, `voice_live_status`, `voice_live_get_transcript`, `voice_live_end` |
 | Conversations | `list_conversations`, `get_conversation`, `list_tasks` |
 | Custom GPTs | `list_custom_gpts`, `gpt_chat` |
 | Memory | `memory_list`, `memory_search`, `memory_create_via_chat` |
@@ -89,6 +97,8 @@ If any precondition fails, stop and tell the user the exact fix command.
 | Run Python in sandbox | `code_interpreter` | Requires temporary=False |
 | Live document editing | `canvas_execute` | Requires temporary=False |
 | Use a Custom GPT | `gpt_chat(gizmo_id, prompt)` | List IDs with `list_custom_gpts` |
+| Discover available Voice choices | `list_voices` | Catalog only; does not start or stream a Voice session |
+| Bridge GPT-Live voice to this agent (human→agent) | `voice_live_*` | Needs signed-in Chrome + extension + gateway; observe-only, text; no agent→Live speak; Turnstile bypass out of scope |
 | Save something to ChatGPT memory | `memory_create_via_chat` | Model-initiated write (REST 405 workaround) |
 | Create a Codex coding task | `codex_task_create` | Auto-resolves environment_id from repo_label |
 
@@ -122,7 +132,8 @@ Both require a non-temporary conversation context.
 ```
 1. account_status()   -- plan, features, expiry
 2. list_models()      -- all available model slugs
-3. list_conversations() -- recent chat history
+3. list_voices()      -- current Voice IDs/display metadata; no audio session
+4. list_conversations() -- recent chat history
 ```
 
 ### Codex integration
@@ -170,6 +181,7 @@ chat = "gpt-5-3"
 | 401 / auth error | Re-run `codex login` or `gpt2agent setup`, then restart the MCP server |
 | Image/code/canvas fails | Ensure `temporary=False` — these features are blocked in temporary chats |
 | DR connector unavailable | Enable Deep Research at chatgpt.com > Settings > Connectors |
+| "voice catalog contract changed" | ChatGPT's private Voice route changed; update gpt2agent before retrying |
 | "memory_add not available" | Use `memory_create_via_chat` instead (REST POST returns 405) |
 
 ## Detailed Reference

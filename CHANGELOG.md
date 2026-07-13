@@ -6,6 +6,104 @@ versioning: [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-07-11
+
+### Added — GPT-Live → coding-agent bridge, human → agent (lane: `sidecar/`)
+
+- **Full GPT-Live reverse-engineering** (live capture + the 4.5 MB shipped voice
+  client bundle, all cited): the authoritative protocol spec at
+  `docs/superpowers/plans/2026-07-11-gpt-live-protocol-spec.md`, plus the bridge
+  design at `docs/superpowers/plans/2026-07-11-gpt-live-bridge-layer-spec.md`.
+- **Human → agent voice bridge (observe-only)**: taps the real consumer GPT-Live
+  datachannel, reconstructs each human utterance from the real `chat_message_delta`
+  (`direction:"in"`) protocol, and routes it to a pluggable coding agent. The
+  agent's reply reaches the human **out-of-band** (a text overlay) — GPT-Live
+  silently drops client-injected speech, so there is no agent→Live "speak" path.
+  - Reliable path = real signed-in Chrome + `sidecar/extension` (TAP) +
+    `sidecar/agent-gateway.mjs` (runs `AGENT_CMD`, e.g. `claude -p`/`codex exec`).
+  - `sidecar/browser/sidecar.mjs` (puppeteer + fake WAV mic) is a **test harness**
+    only — synthetic audio is not transcribed by Live.
+  - Audio stays in the browser; only transcript text crosses to the agent.
+- **MCP surface** (`voice_live_status` / `voice_live_get_transcript` /
+  `voice_live_end` / `voice_live_export_help`) is observe + lifecycle only. The
+  `voice_live_send_text` "speak" tool was **removed** — it reported false delivery
+  for a server-dropped operation.
+- **`VoiceProvider` abstraction** (`sidecar/src/voice-provider.mjs`):
+  `ConsumerGptLiveVoiceProvider` (production: real mic, the irreplaceable GPT-Live
+  voice) and `RealtimeVoiceProvider` (test double: OpenAI Realtime API). The
+  agent-wiring is provider-agnostic, so the loop is regression-tested human-free.
+- **Human-free voice testing stack**:
+  - `sidecar/src/transcript.mjs` + `test/transcript.test.mjs` — the consumer
+    transcript parser as pure logic (8 unit tests; no voice/human/LLM).
+  - `sidecar/src/realtime-provider.mjs` + `test/realtime-stt.test.mjs` — a
+    human-free STT test double via the Realtime API (synthetic TTS → transcript,
+    no mic/human/browser).
+  - `test/voice-loop.test.mjs` — opt-in full human-free loop (TTS → STT → agent).
+  - `sidecar/test/voice-test-cases.md` — the layered voice test-case suite.
+
+### Changed
+
+- **Bridge layer rewritten to the real protocol + honest direction.**
+  `sidecar/src/export.mjs` now ingests via `TranscriptAssembler` (the real
+  `chat_message_delta` parser) instead of the deprecated Realtime-API extractor,
+  filters filler (`isActionable`), and buffers the agent reply as text — the
+  speak-queue is gone. The agent→Live write channel (`/send_text` route,
+  `buildSpeakWire`/`response.create` injection, `session.mjs.speak`) is removed:
+  verified 2026-07-11, the consumer channel silently drops `response.create` /
+  `conversation.item.create` / `session.update` (5 candidates, all `dc.send→true`,
+  0 replies).
+- **Reliability & correctness fixes:** control-plane `/end` no longer deadlocks
+  (respond before teardown); `agent-gateway.mjs` drops wildcard CORS and adds a
+  bounded body, per-call timeout, and an optional `GPTLIVE_TOKEN` gate; secret
+  redaction (Python + JS) now recurses arrays/strings and strips embedded
+  Bearer/JWT.
+- **Release metadata aligned to `0.0.14`** across `pyproject.toml`,
+  `gpt2agent/__init__.py`, `server.json`, and `.claude-plugin/plugin.json`
+  (tool count 31 → 30 after removing `voice_live_send_text`).
+- `sidecar` test scope narrowed to `test/*.test.mjs` so one-off experiment scripts
+  (`experiments/`) are no longer picked up by `npm test`.
+
+### Findings (documented, evidence-backed)
+
+- Consumer GPT-Live transcribes ONLY real-microphone audio. Synthetic audio —
+  Chrome fake-device AND `RTCRtpSender.replaceTrack` of real TTS (confirmed
+  `ctx.state=running`, real-speech amplitude, `sender.track===injected`, audio
+  egressing) — is NOT transcribed, while the real mic is. ⇒ GPT-Live's STT is not
+  drivable human-free; that's why the Realtime API is the test double.
+- Cloudflare Turnstile gates session create; only a headed, non-automated Chrome on
+  a signed-in profile clears it. Headless/token-only/copied-profile + automation
+  flags are SCTP-aborted ~1 s after `listening`.
+- Voice conversations ARE normal ChatGPT backend conversations — readable by the
+  existing `list_conversations`/`get_conversation` MCP tools; memory is shared.
+
+## [0.0.13] - 2026-07-11
+
+### Added
+
+- `list_voices` — read-only MCP tool exposing the signed-in account's Voice
+  catalog from the private `GET /backend-api/settings/voices` route. Returns a
+  bounded, stable shape per voice (`id`, `name`, `description`, `selected`,
+  `has_preview`); backend voice IDs are preserved verbatim and display text is
+  redacted. Brings the server to 26 MCP tools.
+- `list_voices(voice_mode=...)` — optional mode-specific catalog. The live
+  account contract accepted `standard`, `advanced`, and `wingman` on
+  2026-07-11; the value is charset-validated (rejected before any request) but
+  not hard-restricted to that set. Omitting it returns the account default.
+  GPT-Live audio is a separate session contract, and the catalog endpoint
+  currently rejects `voice_mode=live` with HTTP 422.
+- `docs/roadmap.md` — version lanes, the GPT-Live boundary, the language policy
+  (Python core with an optional TypeScript sidecar for a future live-voice
+  lane), and the release gates.
+
+### Notes
+
+- This release adds Voice **catalog discovery only**. It does not start a Voice
+  session, fetch preview media, capture a microphone, synthesize speech, stream
+  GPT-Live realtime audio, or guarantee transcript extraction.
+- The catalog route is a private, reverse-engineered website contract. A
+  malformed response fails closed with `voice catalog contract changed` rather
+  than pretending the catalog is empty.
+
 ## [0.0.11] - 2026-07-10
 
 Recovery release carrying forward every change in the

@@ -1,6 +1,6 @@
 """Unit tests for the MCP tool layer — no network.
 
-Round-2 coverage: the 25-tool handler surface (the product's actual value) had
+Round-2 coverage: the tool handler surface (the product's actual value) had
 zero direct unit tests. These exercise every `tools/*.py` handler through its
 real `register(mcp, client, conv=None)` signature using a recording FakeMCP +
 FakeClient, and the server.py SSE closures via FastMCP's tool manager with a
@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from gpt2agent.tools import account, apps, codex, conversations, gpts, images
-from gpt2agent.tools import instructions, memory, tools_features, writes
+from gpt2agent.tools import instructions, memory, tools_features, voice, writes
 from gpt2agent.tools._redact import redact
 
 
@@ -25,10 +25,12 @@ class FakeMCP:
 
     def __init__(self) -> None:
         self.tools: dict[str, Any] = {}
+        self.tool_options: dict[str, dict[str, Any]] = {}
 
     def tool(self, *a: Any, **k: Any):
         def deco(fn):
             self.tools[fn.__name__] = fn
+            self.tool_options[fn.__name__] = dict(k)
             return fn
         return deco
 
@@ -41,9 +43,11 @@ class FakeClient:
         self.posts = posts or {}
         self.posted: list[tuple[str, Any]] = []
         self.gets: list[str] = []
+        self.get_calls: list[tuple[str, str | None]] = []
 
     def get(self, path: str, target_path: str | None = None, **k: Any) -> Any:
         self.gets.append(path)
+        self.get_calls.append((path, target_path))
         for pat, val in self.routes.items():
             if path == pat or path.startswith(pat):
                 return val
@@ -136,6 +140,242 @@ def test_list_models_exposes_slug() -> None:
         {"slug": "gpt-5-5-pro", "title": "Pro", "max_tokens": 410000}]}})
     out = _run(_reg(account, client).tools["list_models"])
     assert out[0]["slug"] == "gpt-5-5-pro"
+
+
+# --------------------------------------------------------------------------- #
+#  tools/voice
+# --------------------------------------------------------------------------- #
+
+
+def _voice_item(
+    voice_id: str = "fathom",
+    *,
+    name: str = "Arbor",
+    description: str = "Easygoing and versatile",
+    preview_url: str | None = "https://persistent.example.invalid/arbor.m4a",
+) -> dict[str, Any]:
+    return {
+        "voice": voice_id,
+        "name": name,
+        "description": description,
+        "preview_url": preview_url,
+        "bloop_color": "#abcdef",
+        "gain_db": None,
+        "future_private_field": "must-not-escape",
+    }
+
+
+def test_list_voices_normalizes_live_shape_and_preserves_backend_ids() -> None:
+    route = "/backend-api/settings/voices"
+    client = FakeClient(routes={route: {
+        "selected": "fathom",
+        "voices": [
+            _voice_item(),
+            _voice_item(
+                "glimmer",
+                name="Sol",
+                description="Savvy and relaxed",
+                preview_url=None,
+            ),
+        ],
+    }})
+
+    mcp = _reg(voice, client)
+    out = _run(mcp.tools["list_voices"])
+
+    assert out == [
+        {
+            "id": "fathom",
+            "name": "Arbor",
+            "description": "Easygoing and versatile",
+            "selected": True,
+            "has_preview": True,
+        },
+        {
+            "id": "glimmer",
+            "name": "Sol",
+            "description": "Savvy and relaxed",
+            "selected": False,
+            "has_preview": False,
+        },
+    ]
+    assert client.get_calls == [(route, route)]
+    rendered = repr(out)
+    assert "persistent.example.invalid" not in rendered
+    assert "#abcdef" not in rendered
+    assert "gain_db" not in rendered
+    assert "future_private_field" not in rendered
+    # These IDs deliberately differ from their display names. The adapter must
+    # never derive an identifier by lower-casing the name.
+    assert [item["id"] for item in out] == ["fathom", "glimmer"]
+
+
+def test_list_voices_redacts_display_text() -> None:
+    secret = "sk-ABCDEFGHIJKLMNOPQRST"
+    client = FakeClient(routes={"/backend-api/settings/voices": {
+        "selected": "safe-id",
+        "voices": [_voice_item(
+            "safe-id",
+            name="Contact voice@example.com",
+            description=f"Call +1 (415) 555-1212 with {secret}",
+        )],
+    }})
+
+    out = _run(_reg(voice, client).tools["list_voices"])
+
+    rendered = repr(out)
+    assert "voice@example.com" not in rendered
+    assert "415" not in rendered
+    assert secret not in rendered
+    assert "<EMAIL>" in out[0]["name"]
+    assert "<PHONE>" in out[0]["description"]
+    assert "<APIKEY>" in out[0]["description"]
+
+
+def test_list_voices_empty_catalog_is_not_contract_drift() -> None:
+    client = FakeClient(routes={"/backend-api/settings/voices": {
+        "selected": None,
+        "voices": [],
+    }})
+    assert _run(_reg(voice, client).tools["list_voices"]) == []
+
+
+def test_list_voices_accepts_catalog_at_documented_bound() -> None:
+    items = [_voice_item(f"voice-{index}") for index in range(128)]
+    client = FakeClient(routes={"/backend-api/settings/voices": {
+        "selected": "voice-0",
+        "voices": items,
+    }})
+
+    out = _run(_reg(voice, client).tools["list_voices"])
+
+    assert len(out) == 128
+    assert out[0]["selected"] is True
+
+
+def test_list_voices_rejects_catalog_above_documented_bound() -> None:
+    items = [_voice_item(f"voice-{index}") for index in range(129)]
+    client = FakeClient(routes={"/backend-api/settings/voices": {
+        "selected": "voice-0",
+        "voices": items,
+    }})
+
+    with pytest.raises(RuntimeError, match="^voice catalog contract changed$"):
+        _run(_reg(voice, client).tools["list_voices"])
+
+
+def test_list_voices_default_sends_no_voice_mode() -> None:
+    route = "/backend-api/settings/voices"
+    client = FakeClient(routes={route: {"selected": None, "voices": [_voice_item()]}})
+
+    _run(_reg(voice, client).tools["list_voices"])
+
+    # Default preserves the bare route — no query string appended.
+    assert client.get_calls == [(route, route)]
+
+
+@pytest.mark.parametrize("mode", ["standard", "advanced", "wingman"])
+def test_list_voices_passes_observed_voice_mode(mode: str) -> None:
+    # Values accepted by the live /backend-api/settings/voices route on
+    # 2026-07-11. The bare route (target_path) is unchanged; the mode rides the
+    # query string. GPT-Live audio uses a separate session contract.
+    route = "/backend-api/settings/voices"
+    client = FakeClient(routes={route: {
+        "selected": "cove",
+        "voices": [_voice_item("cove", name="Breeze", description="Animated and earnest")],
+    }})
+
+    out = _run(_reg(voice, client).tools["list_voices"], voice_mode=mode)
+
+    assert client.get_calls == [(f"{route}?voice_mode={mode}", route)]
+    assert out == [{
+        "id": "cove",
+        "name": "Breeze",
+        "description": "Animated and earnest",
+        "selected": True,
+        "has_preview": True,
+    }]
+
+
+def test_list_voices_forwards_a_bounded_future_mode_without_hard_coding() -> None:
+    route = "/backend-api/settings/voices"
+    client = FakeClient(routes={route: {"selected": None, "voices": []}})
+
+    out = _run(_reg(voice, client).tools["list_voices"], voice_mode="future_mode")
+
+    assert out == []
+    assert client.get_calls == [(f"{route}?voice_mode=future_mode", route)]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["", " ", "Advanced", "a b", "../secret", "x?y=z", "voice_mode=1", "m" * 33],
+)
+def test_list_voices_rejects_malformed_voice_mode(bad: str) -> None:
+    route = "/backend-api/settings/voices"
+    client = FakeClient(routes={route: {"selected": None, "voices": [_voice_item()]}})
+
+    with pytest.raises(ValueError) as exc:
+        _run(_reg(voice, client).tools["list_voices"], voice_mode=bad)
+
+    message = str(exc.value)
+    assert "voice_mode" in message
+    # Payload-free: a meaningful rejected value is never echoed back into the
+    # error (whitespace-only inputs trivially appear in ordinary spacing).
+    assert not bad.strip() or bad not in message
+    # A malformed mode must be rejected before any backend call.
+    assert client.get_calls == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        [],
+        {},
+        {"voices": {}},
+        {"voices": [None]},
+        {"voices": [{"voice": "", "name": "Name", "description": "Desc"}]},
+        {"voices": [{"voice": "   ", "name": "Name", "description": "Desc"}]},
+        {"voices": [{"voice": "bad\n", "name": "Name", "description": "Desc"}]},
+        {"voices": [{"voice": "v" * 129, "name": "Name", "description": "Desc"}]},
+        {"voices": [{"voice": "v", "name": 3, "description": "Desc"}]},
+        {"voices": [{"voice": "v", "name": "n" * 257, "description": "Desc"}]},
+        {"voices": [{"voice": "v", "name": "Name", "description": "d" * 2_001}]},
+        {"voices": [{"voice": "v", "name": "Name", "description": "Desc",
+                      "preview_url": 3}]},
+        {"voices": [_voice_item("same"), _voice_item("same")]},
+    ],
+)
+def test_list_voices_fails_closed_on_contract_drift(payload: Any) -> None:
+    client = FakeClient(routes={"/backend-api/settings/voices": payload})
+
+    with pytest.raises(RuntimeError, match="^voice catalog contract changed$") as exc:
+        _run(_reg(voice, client).tools["list_voices"])
+
+    assert repr(payload) not in str(exc.value)
+
+
+@pytest.mark.parametrize("selected", [None, 3, "missing-id"])
+def test_list_voices_reports_unknown_selection_as_none(selected: Any) -> None:
+    client = FakeClient(routes={"/backend-api/settings/voices": {
+        "selected": selected,
+        "voices": [_voice_item("voice-id")],
+    }})
+
+    out = _run(_reg(voice, client).tools["list_voices"])
+
+    assert out[0]["selected"] is None
+
+
+def test_list_voices_has_read_only_mcp_annotations() -> None:
+    mcp = _reg(voice, FakeClient())
+    annotations = mcp.tool_options["list_voices"]["annotations"]
+
+    assert annotations.readOnlyHint is True
+    assert annotations.destructiveHint is False
+    assert annotations.idempotentHint is True
+    assert annotations.openWorldHint is True
 
 
 # --------------------------------------------------------------------------- #
@@ -462,6 +702,66 @@ def _build_with_conv(monkeypatch, conv):
     mcp = build_server({"server": {"host": "127.0.0.1", "port": 9000},
                         "models": {"chat": "gpt-5-3", "agent": "agent-mode"}})
     return mcp._tool_manager._tools
+
+
+def test_server_registers_exact_30_tool_surface_and_voice_once(monkeypatch) -> None:
+    calls = 0
+    original_register = voice.register
+
+    def counted_register(mcp, client):
+        nonlocal calls
+        calls += 1
+        return original_register(mcp, client)
+
+    monkeypatch.setattr(voice, "register", counted_register)
+    tools = _build_with_conv(monkeypatch, _RecordConv())
+
+    assert set(tools) == {
+        "account_status",
+        "agent",
+        "canvas_execute",
+        "chat",
+        "code_interpreter",
+        "codex_task_create",
+        "custom_instructions_get",
+        "custom_instructions_set",
+        "deep_research",
+        "deep_research_heavy",
+        "generate_image",
+        "get_conversation",
+        "get_file_download_url",
+        "get_file_info",
+        "gpt_chat",
+        "list_apps",
+        "list_codex_envs",
+        "list_codex_tasks",
+        "list_conversations",
+        "list_custom_gpts",
+        "list_models",
+        "list_tasks",
+        "list_voices",
+        "memory_create_via_chat",
+        "memory_list",
+        "memory_search",
+        # GPT-Live → coding-agent bridge, observe-only (human → agent; no audio on MCP):
+        "voice_live_end",
+        "voice_live_export_help",
+        "voice_live_get_transcript",
+        "voice_live_status",
+    }
+    assert len(tools) == 30
+    assert calls == 1
+
+    annotations = tools["list_voices"].annotations
+    assert annotations is not None
+    assert annotations.readOnlyHint is True
+    assert annotations.destructiveHint is False
+    assert annotations.idempotentHint is True
+    assert annotations.openWorldHint is True
+
+    live_help = tools["voice_live_export_help"].annotations
+    assert live_help is not None
+    assert live_help.readOnlyHint is True
 
 
 def test_agent_always_temporary_false(monkeypatch) -> None:
