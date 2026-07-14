@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-14
 
-**Status:** Approved architecture; revised written specification pending review
+**Status:** Approved 2026-07-14; implementation not started
 
 **Target release:** `v0.0.16`, after predecessor releases `v0.0.12` through
 `v0.0.15` are merged, tagged, and verified
@@ -38,8 +38,11 @@ release.
 
 The design is based on current, non-secret evidence gathered on 2026-07-14.
 
-- The official Grok Build CLI resolves to version `0.2.99` on this host and is
-  authenticated through grok.com.
+- The official Grok Build CLI resolved to version `0.2.99` during initial
+  discovery and to `0.2.101` during implementation planning on the same date.
+  The version is live evidence, not a pinned dependency; parsers and gates
+  validate the current CLI contract. The selected CLI profile is authenticated
+  through grok.com.
 - The CLI auth file is mode `0600` and contains one JWT access credential plus a
   refresh token. Only schema and non-secret JWT claims were inspected; no token
   or identity value was printed or stored in the repository.
@@ -162,7 +165,9 @@ logic.
 ### 5.2 Website auth import
 
 `gpt2agent grok-setup` performs two independent probes: Build login and website
-login.
+login. It attempts both even when either one fails and reports separate bounded
+results, so a valid website import is not blocked by missing Build auth and a
+valid Build probe is not erased by website setup failure.
 
 For website login it prefers the installed `browser-use` CLI and an explicitly
 selected Chrome profile. It imports only:
@@ -170,7 +175,8 @@ selected Chrome profile. It imports only:
 - `sso`
 - `sso-rw`
 - `grok_device_id`
-- `cf_clearance`, when present and currently needed
+- `cf_clearance`, only when its source Chrome major can be mapped to a supported
+  compatible curl-cffi impersonation profile
 
 It does not export the rest of the browser cookie jar, local storage, history,
 passwords, bookmarks, or identity fields. Browser automation is closed after the
@@ -182,12 +188,13 @@ set. Secret input is never echoed.
 The destination defaults to `~/.gpt2agent/grok-web-auth.json`. The file is
 created or atomically replaced at mode `0600`. Parent directories are not made
 group/world writable. The stored schema contains version, cookie name/domain/
-path/expiry metadata, and secret cookie values. Documentation and fixtures use
-placeholders only.
+path/expiry metadata, one allowlisted browser impersonation profile, and secret
+cookie values. Raw User-Agent strings are not persisted. Documentation and
+fixtures use placeholders only.
 
-`gpt2agent grok-setup --refresh` repeats the import. Runtime watches the selected
-file's mtime and reloads it between requests. Runtime does not silently launch or
-control Chrome.
+`gpt2agent grok-setup --refresh` repeats the import. Runtime fingerprints the
+selected file's device, inode, size, and nanosecond mtime and reloads it between
+requests. Runtime does not silently launch or control Chrome.
 
 ### 5.3 No cross-lane fallback
 
@@ -297,6 +304,11 @@ name/type/size, and no signed storage credential.
 and sandbox controls. The tool returns session ID, result text, stop reason,
 usage, and changed-file summary when available.
 
+The generated session remains in the official CLI's own history so its returned
+session ID is usable in the CLI dashboard. This release does not expose MCP
+resume or session-deletion tools; gpt2agent does not copy the transcript into
+its own storage.
+
 `grok_build_models` and `grok_build_status` report only the official CLI lane.
 
 ## 7. Website Data Flow
@@ -304,9 +316,10 @@ usage, and changed-file summary when available.
 1. Validate prompt size, mode, persistence, search, attachment IDs, and memory
    combinations.
 2. Reload website auth if the selected file's mtime changed.
-3. Construct the current browser-compatible session with Chrome TLS
-   impersonation, `Origin`, `Referer`, locale, and cookie jar. Never log request
-   headers.
+3. Construct a request-local browser-compatible session with the auth
+   snapshot's validated Chrome TLS impersonation, `Origin`, `Referer`, locale,
+   and copied cookies. Discard response cookies and never log request headers or
+   cookie values.
 4. For new chat, POST the current `/rest/app-chat/conversations/new` shape with
    the explicit mode, model, temporary flag, search/tool controls, attachments,
    and memory controls.
@@ -350,6 +363,11 @@ Messages may include endpoint names, status codes, retry timing, configured path
 labels, and stable error codes. They must not include JWTs, refresh tokens,
 cookies, `Authorization`/`Cookie` headers, signed URLs, raw bodies, email/account
 identity, complete environment dumps, or arbitrary CLI stderr.
+
+Validated conversation, response, and attachment IDs remain usable in their
+dedicated structured result fields. The same values are removed when they occur
+in normalized routes, identity fields, headers, exception text, or logs; UUID
+syntax is not blanket-redacted from all successful payloads.
 
 ## 9. Security Boundaries
 
@@ -435,7 +453,7 @@ Heavy parity, even if the final answer is correct.
    draft stacked PR against the PR #30 branch so the review diff contains only
    Grok work. Keep it explicitly in draft/do-not-merge state until the
    predecessor release train is complete, and preserve the PR #30 base branch
-   until the Grok PR is retargeted.
+   until a replacement release PR is open.
 4. Keep the existing release lanes separate: Voice PR #31 owns `v0.0.13`, Live
    Voice PR #32 owns `v0.0.14`, and the local
    `release/v0.0.15-codex-realtime` placeholder reserves `v0.0.15` pending its
@@ -444,8 +462,11 @@ Heavy parity, even if the final answer is correct.
 5. After `v0.0.12` through `v0.0.15` are merged, tagged, published, and
    clean-install verified, rebuild the Grok branch from the exact verified
    `v0.0.15` release state and replay only commits introduced after the recorded
-   PR #30 base SHA. Audit the resulting diff for Grok-only changes, retarget the
-   PR to `main`, and reconcile only actual upstream conflicts.
+   PR #30 base SHA. Audit the resulting diff for Grok-only changes, then open a
+   replacement PR from the replayed branch to `main` because GitHub cannot
+   replace the stacked PR's head branch. Link the two PRs, preserve review
+   provenance with `range-diff`, request fresh approval, and only then close the
+   stacked draft as superseded. Reconcile only actual upstream conflicts.
 6. Bump `0.0.15` to `0.0.16` and update release notes, docs, bundled skills,
    tool counts, and package metadata only after that rebase establishes the
    final release baseline.
