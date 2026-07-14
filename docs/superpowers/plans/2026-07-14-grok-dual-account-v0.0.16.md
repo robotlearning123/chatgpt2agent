@@ -98,9 +98,11 @@
 
 - [ ] **Step 1: Recheck parallel lanes and base truth**
 
-Run from `/home/robot/workspace/47-chatgpt2agent/gpt2agent`:
+Set the workspace root to the local checkout and run from its nested repository:
 
 ```bash
+WORKSPACE_ROOT=/absolute/path/to/47-chatgpt2agent
+cd "$WORKSPACE_ROOT/gpt2agent"
 git worktree list --porcelain
 gh pr list --state open --json number,title,headRefName,baseRefName,url
 gh pr view 30 --json headRefName,headRefOid,baseRefName,state,url
@@ -115,7 +117,7 @@ Expected: PR #30 is still the account-abstraction dependency; the remote ref and
 Invoke `superpowers:using-git-worktrees`, then run its approved creation flow for:
 
 ```text
-path:   /home/robot/workspace/47-chatgpt2agent/.worktrees/gpt2agent-grok-dual-account
+path:   "$WORKSPACE_ROOT/.worktrees/gpt2agent-grok-dual-account"
 branch: feat/grok-dual-account-v0.0.16
 base:   origin/release/v0.0.12-account-design at the verified PR #30 SHA
 ```
@@ -1696,13 +1698,14 @@ Derive and record the original PR #30 base from the reviewed feature branch, cre
 Run from the canonical nested repository, replacing the worktree path only if live collision checks require another repository-owned path:
 
 ```bash
+WORKSPACE_ROOT=/absolute/path/to/47-chatgpt2agent
 REVIEWED_GROK_HEAD="$(git rev-parse refs/heads/feat/grok-dual-account-v0.0.16^{commit})"
 PR30_BASE_SHA="$(git merge-base refs/remotes/origin/release/v0.0.12-account-design "$REVIEWED_GROK_HEAD")"
 VERIFIED_V015="$(git rev-parse refs/tags/v0.0.15^{commit})"
 git update-ref refs/grok-v016/pr30-base "$PR30_BASE_SHA"
 git update-ref refs/grok-v016/reviewed-head "$REVIEWED_GROK_HEAD"
-git worktree add -b release/v0.0.16-grok-dual-account /home/robot/workspace/47-chatgpt2agent/.worktrees/gpt2agent-v0.0.16-grok-dual-account "$VERIFIED_V015"
-cd /home/robot/workspace/47-chatgpt2agent/.worktrees/gpt2agent-v0.0.16-grok-dual-account
+git worktree add -b release/v0.0.16-grok-dual-account "$WORKSPACE_ROOT/.worktrees/gpt2agent-v0.0.16-grok-dual-account" "$VERIFIED_V015"
+cd "$WORKSPACE_ROOT/.worktrees/gpt2agent-v0.0.16-grok-dual-account"
 mapfile -t GROK_COMMITS < <(git rev-list --reverse --ancestry-path "$PR30_BASE_SHA..$REVIEWED_GROK_HEAD")
 test "${#GROK_COMMITS[@]}" -gt 0
 git cherry-pick "${GROK_COMMITS[@]}"
