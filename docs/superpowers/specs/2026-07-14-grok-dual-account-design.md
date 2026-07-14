@@ -1,10 +1,11 @@
-# Grok Dual-Account Backend and v0.0.13 Release Design
+# Grok Dual-Account Backend and v0.0.16 Release Design
 
 **Date:** 2026-07-14
 
-**Status:** Approved design; implementation not started
+**Status:** Approved architecture; revised written specification pending review
 
-**Target release:** `v0.0.13`, after `v0.0.12` is merged, tagged, and verified
+**Target release:** `v0.0.16`, after predecessor releases `v0.0.12` through
+`v0.0.15` are merged, tagged, and verified
 
 **Supersedes:** `2026-07-11-grok-subscription-account-design.md` and its
 constrained one-turn CLI-only product boundary
@@ -26,7 +27,12 @@ failure modes. They must remain separately visible rather than being collapsed
 into a single ambiguous token or readiness flag.
 
 The delivered result includes a worktree, feature branch, reviewed pull request,
-and a new `v0.0.13` release tag and package publication after `v0.0.12`.
+and a new `v0.0.16` release tag and package publication after the existing
+release train. The Grok lane must not displace the queued Voice `v0.0.13` and
+Live Voice `v0.0.14` lanes or the locally reserved Codex Realtime `v0.0.15`
+lane. At design time the `v0.0.15` lane is a local placeholder without a remote
+branch or PR; it is a reserved predecessor, not a completed or reviewable
+release.
 
 ## 2. Evidence Behind the Design
 
@@ -63,7 +69,7 @@ official public API.
 
 ## 3. Scope
 
-### 3.1 Included in v0.0.13
+### 3.1 Included in v0.0.16
 
 - Independent Build and website auth/readiness reporting.
 - Official-CLI Build agent calls with bounded process execution.
@@ -79,7 +85,7 @@ official public API.
 - Documentation, bundled skill guidance, release notes, version bump, tag,
   publication, and clean-install verification.
 
-### 3.2 Deferred from v0.0.13
+### 3.2 Deferred from v0.0.16
 
 - Imagine image or video products.
 - Voice and Grokcasts.
@@ -420,26 +426,41 @@ Heavy parity, even if the final answer is correct.
    lane is safely created. Treat its CLI-only implementation as a prototype, not
    the release basis.
 2. Create `.worktrees/gpt2agent-grok-dual-account` on
-   `feat/grok-dual-account-v0.0.13`, based on PR #30's
-   `release/v0.0.12-account-design` head.
-3. Implement and verify on the stacked branch. Open its PR against the PR #30
-   branch while #30 is pending so the review diff contains only v0.0.13 work.
-4. After PR #30 merges, verify the published `v0.0.12`, update/retarget the
-   feature PR to `main`, and reconcile only actual upstream conflicts.
-5. Bump `0.0.12` to `0.0.13` and update release notes, docs, bundled skills, tool
-   counts, and package metadata in the feature PR.
-6. Require green checks, required review approval, and merge-ready state. Do not
+   `feat/grok-dual-account-v0.0.16`, initially based on the exact fetched remote
+   head of PR #30, `origin/release/v0.0.12-account-design`. At design time that
+   head is `0f621d28b834c6165df924fa564c43dcca0bc3d3`; re-read the PR head before
+   branch creation and record the actual base SHA. Do not use the similarly
+   named stale local branch or local `main`, which contains unpublished commits.
+3. Implement and verify the dual backend without a release-version bump. Open a
+   draft stacked PR against the PR #30 branch so the review diff contains only
+   Grok work. Keep it explicitly in draft/do-not-merge state until the
+   predecessor release train is complete, and preserve the PR #30 base branch
+   until the Grok PR is retargeted.
+4. Keep the existing release lanes separate: Voice PR #31 owns `v0.0.13`, Live
+   Voice PR #32 owns `v0.0.14`, and the local
+   `release/v0.0.15-codex-realtime` placeholder reserves `v0.0.15` pending its
+   own implementation, remote branch, and PR. Do not edit, retag, or absorb
+   those lanes into the Grok PR.
+5. After `v0.0.12` through `v0.0.15` are merged, tagged, published, and
+   clean-install verified, rebuild the Grok branch from the exact verified
+   `v0.0.15` release state and replay only commits introduced after the recorded
+   PR #30 base SHA. Audit the resulting diff for Grok-only changes, retarget the
+   PR to `main`, and reconcile only actual upstream conflicts.
+6. Bump `0.0.15` to `0.0.16` and update release notes, docs, bundled skills,
+   tool counts, and package metadata only after that rebase establishes the
+   final release baseline.
+7. Require green checks, required review approval, and merge-ready state. Do not
    bypass repository governance.
-7. Merge the verified PR, create annotated tag `v0.0.13` from the exact merge
+8. Merge the verified PR, create annotated tag `v0.0.16` from the exact merge
    commit, and monitor the release workflow and PyPI publication.
-8. Install `gpt2agent==0.0.13` into a fresh isolated environment and run
+9. Install `gpt2agent==0.0.16` into a fresh isolated environment and run
    non-destructive Build/web status probes.
 
 ## 12. Completion Criteria
 
 The objective is complete only when current evidence proves all of the following.
 
-- A dedicated worktree and `feat/grok-dual-account-v0.0.13` branch contain the
+- A dedicated worktree and `feat/grok-dual-account-v0.0.16` branch contain the
   intended dual-backend implementation.
 - Build and website credentials are independently selected, refreshed/reloaded,
   redacted, and reported.
@@ -450,10 +471,12 @@ The objective is complete only when current evidence proves all of the following
 - Build plan/apply boundaries, upload roots, private defaults, auth storage, and
   redaction tests pass.
 - Existing ChatGPT behavior and the full offline suite remain green.
-- The PR is reviewed, green, merged, and based on verified `v0.0.12` state.
-- Annotated `v0.0.13` points to the verified merge commit.
+- The PR is reviewed, green, merged, and based on the exact verified `v0.0.15`
+  release state without displacing the queued `v0.0.13` and `v0.0.14` lanes or
+  the reserved `v0.0.15` lane.
+- Annotated `v0.0.16` points to the verified merge commit.
 - The release workflow and PyPI publication succeed.
-- A fresh install reports version `0.0.13`, exposes both Grok lanes, and passes
+- A fresh install reports version `0.0.16`, exposes both Grok lanes, and passes
   non-destructive account-status checks.
 - Final handoff lists exact commits, PR, tag, package URL, changed files,
   verification commands/results, live receipts, and any remaining website
