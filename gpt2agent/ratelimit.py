@@ -4,8 +4,9 @@ Why: many agents share one ChatGPT account. Model quotas (e.g. ~200
 ``gpt-6-pro`` calls per window) and Cloudflare's abuse scoring are
 account-level — a fleet that each self-throttles still overloads the
 account. This limiter therefore lives *inside* gpt2agent, not in caller
-policy, and keeps its state in ``~/.gpt2agent/ratelimit-state.json`` so
-*separate gpt2agent processes* on this host share the same budget.
+policy, and keeps its state in ``~/.gpt2agent/ratelimit-state.json`` (a
+per-``CODEX_HOME`` ``ratelimit-state-<acct>.json`` on multi-account hosts)
+so *separate gpt2agent processes* on this host share the same budget.
 
 Two lanes:
 
@@ -26,6 +27,7 @@ Kill switch: ``GPT2AGENT_RATELIMIT_OFF=1`` (tests set this), or
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -50,6 +52,20 @@ class LocalRateLimitError(RuntimeError):
     """The shared client-side budget is exhausted and the wait would exceed
     ``max_wait_s``. Distinct from ``UsageLimitError`` (which reports an
     upstream account cap) — this one is ours."""
+
+
+def _default_state_path() -> Path:
+    """State filename for the ambient account: ``CODEX_HOME`` selects the
+    ChatGPT login (same convention as backend.py), so each account gets a
+    deterministic ``ratelimit-state-<digest>.json`` beside the default.
+    Unset/empty ``CODEX_HOME`` keeps the historical single-tenant path."""
+    codex_home = os.environ.get("CODEX_HOME")
+    if not codex_home:
+        return _STATE_PATH
+    digest = hashlib.sha256(
+        os.path.abspath(os.path.expanduser(codex_home)).encode()
+    ).hexdigest()[:10]
+    return _STATE_PATH.parent / f"ratelimit-state-{digest}.json"
 
 
 def _parse_ts(value) -> float | None:
@@ -80,7 +96,7 @@ class RateLimiter:
         self.max_wait_s = float(rc.get("max_wait_s", 300.0))
         self.state_path = Path(
             os.environ.get("GPT2AGENT_RATELIMIT_STATE")
-            or (state_path or _STATE_PATH)
+            or (state_path or _default_state_path())
         )
         self._lock_path = self.state_path.with_suffix(".lock")
         self._mem_lock = threading.Lock()
@@ -310,6 +326,47 @@ class RateLimiter:
         )
         if wait > 0:
             time.sleep(wait)
+
+    # ── status (CLI snapshot; read-only, no network) ─────────────────
+
+    def status(self) -> dict:
+        """Current conversation-lane budget for ``gpt2agent ratelimit``.
+
+        Reads the shared state file under the lock but never mutates it —
+        safe to run with no token and no network."""
+        now = time.time()
+        st = self._locked_state()
+        reqs = [t for t in st["conv_requests"] if now - t < self.window_s]
+        window_used = len(reqs)
+        window_remaining = (
+            max(0.0, self.window_s - (now - min(reqs)))
+            if window_used >= self.max_per_window
+            else 0.0
+        )
+        wait = 0.0
+        last = st.get("last_conv")
+        if last:
+            wait = max(wait, self.min_interval_s - (now - last))
+        wait = max(wait, window_remaining)
+        cooldowns: dict[str, str] = {}
+        for key, raw in (st.get("cooldowns") or {}).items():
+            until = _parse_ts(raw)
+            if until is None or until <= now:
+                continue
+            cooldowns[key] = datetime.fromtimestamp(until).isoformat()
+            if key == "http429:conversation":
+                wait = max(wait, until - now)
+        return {
+            "enabled": self.enabled,
+            "lane": "conversation",
+            "state_path": str(self.state_path),
+            "window_used": window_used,
+            "max_per_window": self.max_per_window,
+            "window_s": round(self.window_s, 1),
+            "window_remaining_s": round(window_remaining, 1),
+            "wait_s": round(wait, 1),
+            "cooldowns": cooldowns,
+        }
 
 
 _limiter: RateLimiter | None = None

@@ -840,6 +840,17 @@ def main() -> None:
         "--json", action="store_true", help="Emit the raw report as JSON"
     )
 
+    # ratelimit subcommand — this account's shared client-side budget,
+    # read from the local state file only (no network, no token needed)
+    ratelimit_p = sub.add_parser(
+        "ratelimit",
+        help="Show this account's shared client-side rate-limit state "
+        "(local file only — no network)",
+    )
+    ratelimit_p.add_argument(
+        "--json", action="store_true", help="Emit the state as JSON"
+    )
+
     # install subcommand — register gpt2agent with one or more MCP clients
     from gpt2agent.install import SUPPORTED_CLIENTS
 
@@ -916,6 +927,25 @@ def main() -> None:
             print(json.dumps(report, indent=2))
         else:
             print(format_usage_report(report))
+        return
+
+    if args.command == "ratelimit":
+        from gpt2agent.ratelimit import get_limiter
+
+        st = get_limiter(load_config(getattr(args, "config", None))).status()
+        if args.json:
+            print(json.dumps(st, indent=2))
+        else:
+            print(
+                f"rate limit [{st['lane']}]: wait_s={st['wait_s']} "
+                f"window {st['window_used']}/{st['max_per_window']} "
+                f"in {st['window_s']:g}s "
+                f"(window_remaining_s={st['window_remaining_s']})"
+            )
+            for key, until in (st.get("cooldowns") or {}).items():
+                print(f"  cooldown {key} until {until}")
+            if not st.get("enabled"):
+                print("  (limiter disabled)")
         return
 
     if args.command == "install":
