@@ -536,6 +536,28 @@ def _is_dr_async_ack(text: str) -> bool:
     return text.lstrip().lower().startswith(_DR_ASYNC_ACK_PREFIXES)
 
 
+#: Echo slugs the heavy-DR stream legitimately reports that are NOT the
+#: reasoning model — "i-mini-m" is the orchestration layer; the real
+#: heavy reasoning runs inside connector_openai_deep_research.
+_HEAVY_DR_ECHO_SLUGS = frozenset({"i-mini-m"})
+
+
+def _is_heavy_dr_downgrade(requested: str, resolved: str) -> bool:
+    """True only for a concrete lower-tier chat model, not the echo layer.
+
+    A blanket ``resolved != requested`` would false-positive EVERY heavy run:
+    the stream legitimately reports ``i-mini-m`` (the orchestration layer —
+    the real heavy reasoning runs inside connector_openai_deep_research).
+    The observed silent downgrade (issue #70) was requested ``gpt-6-pro``
+    served ``gpt-5-mini``; ``*-pro`` slugs are conservatively not flagged.
+    """
+    if not resolved or resolved == requested:
+        return False
+    if resolved in _HEAVY_DR_ECHO_SLUGS:
+        return False
+    return resolved.startswith("gpt-") and "pro" not in resolved
+
+
 def _connector_hint(connector_id: str) -> str:
     """Normalize a connector id to the ``connector:<id>`` system-hint form
     the frontend uses (e.g. ``connector:connector_openai_pubmed``)."""
@@ -2149,6 +2171,10 @@ class ConversationClient:
                 + (f" — resets at {resets_after}." if resets_after else "."),
                 resets_after=resets_after,
             )
+        # The heavy model's model_limits lane — issue #70 burned ~30 min of
+        # DR quota then returned an empty report when gpt-6-pro was
+        # upstream-capped. Check before reserving a conversation slot.
+        await self._check_model_cap(model or HEAVY_DR_MODEL)
 
         # Re-read codex token before snapshotting headers — heavy DR runs
         # for 5–30 min and codex may refresh ~/.codex/auth.json mid-stream.
@@ -2203,6 +2229,7 @@ class ConversationClient:
             # stream — Phase 2 polls the widget state instead.
             "dr_async_pending": False,
             "done_emitted": False,
+            "resolved_model": None,
             "citation_metadata": {},
             # True while the current assistant envelope is the connector-dispatch
             # JSON ({"path": ".../connector_openai_deep_research/start", ...}).
@@ -2228,6 +2255,10 @@ class ConversationClient:
             md = state["asst_metadata"] or {}
             citation_md = state["citation_metadata"] or {}
             refs, groups = _citation_payload(md, citation_md)
+            if not state["asst_text"] and not refs and not groups:
+                # Never ship an empty done — an empty report is a failed run
+                # (issue #70), not a result; the terminal below raises.
+                return
             payload: dict = {
                 "type": "done",
                 "text": state["asst_text"],
@@ -2238,6 +2269,22 @@ class ConversationClient:
                 payload["connector_failed"] = True
             events.append(payload)
             state["done_emitted"] = True
+
+        def _empty_report_error() -> RuntimeError:
+            """Fail-loud terminal for a heavy run that produced no report
+            content at all (issue #70 — a capped/downgraded mid-run model
+            used to surface as an empty report)."""
+            return RuntimeError(
+                "heavy DR produced no report content — the model was likely "
+                "capped or downgraded mid-run "
+                f"(requested={model or HEAVY_DR_MODEL!r}, "
+                f"resolved={state['resolved_model']!r}, "
+                f"conversation_id={state['conversation_id']!r}, "
+                f"tool_invoked={state['tool_invoked']}, "
+                f"tool_failed={state['tool_failed']}). Upstream DR quota "
+                "already burned cannot be reclaimed — check `gpt2agent "
+                "usage` for the account's model_limits lane."
+            )
 
         def _on_envelope(env: dict, events: list) -> None:
             msg = env.get("message") or {}
@@ -2364,6 +2411,30 @@ class ConversationClient:
                 md = obj.get("metadata") or {}
                 if md.get("tool_invoked"):
                     state["tool_invoked"] = True
+                slug = md.get("model_slug")
+                if slug:
+                    state["resolved_model"] = slug
+                    requested = model or HEAVY_DR_MODEL
+                    if _is_heavy_dr_downgrade(requested, slug):
+                        init = (
+                            getattr(self, "_limits_cache", (0, None))[1] or {}
+                        )
+                        resets = limits_from_init(
+                            init, model=requested
+                        )["model_resets_after"]
+                        if resets:
+                            # Share the cap — sibling processes fail fast.
+                            get_limiter().note_cooldown(
+                                f"model:{requested}", resets
+                            )
+                        raise UsageLimitError(
+                            f"deep_research_heavy downgraded: requested "
+                            f"{requested!r} but the server resolved {slug!r} "
+                            "— the requested model is likely capped on this "
+                            "account. Refusing to pass a lower-tier model's "
+                            "output off as the heavy report.",
+                            resets_after=resets,
+                        )
                 events.append({"type": "meta", "data": md})
                 return
             if t == "input_message":
@@ -2508,6 +2579,13 @@ class ConversationClient:
                 connector_failed=state["tool_failed"],
                 async_started=state["dr_async_pending"],
             ):
+                if (
+                    evt.get("type") == "done"
+                    and not evt.get("text")
+                    and not evt.get("content_references")
+                    and not evt.get("search_result_groups")
+                ):
+                    raise _empty_report_error()
                 yield evt
             return
 
@@ -2520,6 +2598,10 @@ class ConversationClient:
                 "search_result_groups": [],
                 "terminated_abnormally": True,
             }
+            return
+
+        if not state["done_emitted"]:
+            raise _empty_report_error()
 
     async def _poll_dr_completion(
         self,
