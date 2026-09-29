@@ -2,7 +2,9 @@
 
 Date: 2026-09-29. Base: `e911a3a` (published v0.0.23).
 Candidate branch: `release/v0.0.24`.
-State: preparation only; no release tag, publication, or fleet cutover.
+State: release prepared, not tagged or published. Owner-authorized candidate
+installation updates are recorded in `ROLLOUT.md`; runtime acceptance remains
+partial because a device is offline, another needs login, and old clients need reconnect.
 
 ## Scope
 
@@ -80,4 +82,25 @@ committed before tagging; it is included in the preparation commit.
 
 The release runbook requires explicit owner approval before pushing
 `v0.0.24`, since the tag triggers publication. Preparation does not authorize
-that action. Fleet sync follows a separately approved merge/release workflow.
+that action. The owner separately authorized updating existing device installations to the
+verified candidate. This does not authorize tagging or publication.
+
+## Workflow and deployment follow-up
+
+Final workflow code: `f46af68`. Primary full suite: **653 passed / 13 skipped**.
+Independent GLM review: PASS; 651/13 on the initial workflow and 11/11 targeted
+tests on the final fixes. The reviewer independently executed real git/pip
+rollback cases and installed-file rejection. See `REVIEW.md`.
+
+Fleet sync now previews by default, pins a commit, rejects dirty or foreign
+installations, records an exclusive receipt, refreshes editable metadata, and
+verifies rollback code plus metadata. Installed verification uses isolated
+Python outside the checkout, compares every package file to the wheel, rejects
+extra files, and checks MCP tools/manual schemas with networking disabled.
+Shared editable registrations must be consolidated before moving their clone.
+
+The rebuilt candidate at `ce33f03` passed outsider emulation (11/0); application
+package bytes are unchanged through `f46af68`. `SHA256SUMS` identifies this build.
+Final code CI: all 13 required jobs passed, plus CodeRabbit success.
+Three existing installations passed version, metadata, 43-file wheel comparison
+and isolated MCP checks. See `ROLLOUT.md` for live-access and reconnect limits.

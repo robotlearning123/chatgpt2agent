@@ -37,3 +37,23 @@ publication and fleet cutover still require the owner's separate decision.
 Full reviewer logs, pinned exports, reproductions, failed attempts, and raw
 run receipts remain in the private local release archive. They are excluded
 from the public branch and distributions.
+
+## Fleet workflow review, September 29
+
+Independent reviewer: ccz / GLM 5.3; initial pin `ce33f03`, final pin `f46af68`.
+Verdict: **PASS**. Initial full suite independently reproduced 651 passed /
+13 skipped. Final focused suite: 11 passed. The primary final suite is 653/13.
+
+Two low findings were fixed: wheel comparison now rejects unexpected installed
+files (ignoring bytecode caches), and rollback requires code and distribution
+metadata to agree. The reviewer reproduced both fixes with real execution,
+including real git + offline pip + verifier subprocess rollback cases and a
+consistent-version control that correctly records restoration. No new delta
+findings. Application package bytes are unchanged across these workflow commits.
+
+The deployment ordering review also identified shared editable registrations:
+consolidate them before moving the shared clone. The local conda registration
+was backed up and consolidated; no shared dependencies changed. A short
+intermediate metadata mismatch occurred before consolidation and was resolved.
+The corrected order is explicit in the runbook. Device/live-access evidence
+is primary verification, separate from this independent code review.

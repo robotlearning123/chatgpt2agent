@@ -6,7 +6,7 @@
   "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
   "state": "prepared_not_published",
   "offline": {
-    "passed": 642,
+    "passed": 653,
     "skipped": 13,
     "failed": 0
   },
@@ -14,7 +14,9 @@
     "wheel_files": 50,
     "sdist_files": 59,
     "twine": "pass",
-    "raw_capture_and_jwt_scan": "pass"
+    "raw_capture_and_jwt_scan": "pass",
+    "build_commit": "ce33f036f893d6f3c4e86f84b9887e4e53f3c2ed",
+    "runtime_identical_through": "f46af68"
   },
   "outsider": {
     "passed": 11,
@@ -26,7 +28,7 @@
     "shellcheck": "pass",
     "release_metadata": "pass",
     "diff_check": "pass",
-    "github_actions": "13 jobs passed on runtime_commit; draft CodeRabbit review skipped"
+    "github_actions": "13 required jobs passed on f46af68; CodeRabbit success"
   },
   "live": {
     "light_A": {
@@ -63,7 +65,7 @@
     "tag_created": false,
     "merged": false,
     "published": false,
-    "fleet_cutover": false
+    "candidate_installation_authorized": true
   },
   "review": {
     "writer": "Codex (GPT family)",
@@ -76,6 +78,34 @@
     "reproduction_cases": 7,
     "negative_control_failures": 3,
     "condition": "sanitized preparation receipts committed",
-    "primary_verdict": "PASS"
+    "primary_verdict": "PASS",
+    "workflow": {
+      "reviewer": "ccz / glm-5.3",
+      "verdict": "PASS",
+      "initial_pin": "ce33f03",
+      "final_pin": "f46af68",
+      "independent_full_suite": {
+        "passed": 651,
+        "skipped": 13
+      },
+      "final_targeted_tests": 11,
+      "real_reproductions": [
+        "unexpected installed file rejection",
+        "stale rollback metadata rejection",
+        "consistent rollback restored"
+      ]
+    }
+  },
+  "workflow_commit": "f46af684f9e995dd383b94b837e88040c19569d3",
+  "rollout": {
+    "existing_installations_updated": 3,
+    "installation_and_isolated_mcp_verified": 3,
+    "primary_final_workflow_pin": "f46af68",
+    "secondary_conda_registration": "backed up and consolidated to primary CLI; dependencies unchanged",
+    "mac": "0.0.24 verified at ce33f03; offline during final workflow follow-up, transaction state unconfirmed",
+    "secondary_linux_live_doctor": "401 expired token; owner login required",
+    "pre_update_primary_mcp_processes_pending_reconnect": 15,
+    "inventory_environments": 15,
+    "not_installed_environments": 12
   }
 }
