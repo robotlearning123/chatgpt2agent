@@ -21,3 +21,5 @@ For the full per-tool reference (every argument, return shape, and gotcha for al
 
 Security model and ToS/account-ban risk are covered in the main
 [README](../README.md#security--risk--read-before-you-run-this).
+
+- [September 29 ChatGPT compatibility update](chatgpt-update-2026-09-29.md) — model surfaces, new announcements, and release coverage.

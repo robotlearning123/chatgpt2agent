@@ -225,6 +225,51 @@ def _complete(frames: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[str, 
     return text, backend
 
 
+@pytest.mark.parametrize("temporary, expected_gets", [(True, 1), (False, 5)])
+@pytest.mark.parametrize("poll_async", [True, False])
+def test_handoff_404_preserves_temporary_choice(
+    monkeypatch: pytest.MonkeyPatch, temporary: bool, expected_gets: int, poll_async: bool
+) -> None:
+    _patch_sse_frames(monkeypatch, _handoff_frames())
+    _no_sleep(monkeypatch)
+    backend = _Backend()
+
+    def missing(path: str, **_: Any) -> dict:
+        backend.gets.append(path)
+        raise RuntimeError(f"404 Not Found: {path}")
+
+    monkeypatch.setattr(backend, "get", missing)
+    client = sse_mod.ConversationClient(backend)
+    expected = "Temporary chat recovery is unavailable" if temporary else "5 consecutive errors"
+    with pytest.raises(RuntimeError, match=expected):
+        asyncio.run(client.complete(
+            "gpt-6-pro", [{"role": "user", "content": _PROMPT}],
+            temporary=temporary, poll_async=poll_async,
+        ))
+    assert len(backend.gets) == expected_gets
+
+
+def test_temporary_handoff_retries_transient_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_sse_frames(monkeypatch, _handoff_frames())
+    _no_sleep(monkeypatch)
+    backend = _Backend()
+    original_get = backend.get
+    attempts = []
+
+    def transient(path: str, **kwargs: Any) -> dict:
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise RuntimeError("HTTP 503 upstream unavailable")
+        return original_get(path, **kwargs)
+
+    monkeypatch.setattr(backend, "get", transient)
+    client = sse_mod.ConversationClient(backend)
+    assert asyncio.run(client.complete(
+        "gpt-6-pro", [{"role": "user", "content": _PROMPT}], temporary=True
+    )) == "PONG-gpt-6-pro"
+    assert len(attempts) == 2
+
+
 def test_complete_polls_persisted_text_after_stream_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

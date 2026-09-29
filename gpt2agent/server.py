@@ -220,13 +220,16 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         github_repos: list[str] | None = None,
         manual: bool = False,
     ) -> str:
-        """Chat with any ChatGPT model on your account.
+        """Chat with a ChatGPT Chat model exposed by your account.
 
         Pass `model` to switch slugs — e.g. `gpt-6-pro` (410K, pro reasoning),
         `gpt-5-6` (GPT-5.6 Sol, default), `gpt-5-6-thinking` (262K), `o3-pro` (196K).
         GPT-6 Sol / GPT-6 Luna are Work & Codex-only: on the Chat surface their
         slugs resolve to `gpt-5-6` and the reply says so via a Model note. Call
-        `list_models` first to enumerate what your account has access to.
+        `list_models` first to inspect the catalog. Work/Codex slugs such as
+        `gpt-6.1-sol-wm` do not establish Chat endpoint support. A temporary
+        chat handed off by the server may fail recovery with 404; choosing
+        `temporary=False` explicitly saves the conversation for recovery.
 
         Set `temporary=False` to allow tool-based features (image gen, code
         interpreter, canvas). Temporary chats (default) cannot use these tools.
@@ -343,7 +346,9 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         """Search the web and synthesize a detailed report with citations.
 
         Best for: current events, literature review, market research.
-        Takes 30–120 seconds. Uses model='research' + system_hints=['research'].
+        Takes 30–120 seconds. Rides the configured chat model (default
+        gpt-5-6) with automatic web search — the legacy model='research'
+        lane was retired upstream in the 2026-09-22 GPT-6 rollout.
 
         `connectors` adds connected-app sources (e.g. `connector_openai_pubmed`
         for literature). OAuth connectors (GitHub, Gmail) must be connected in
@@ -379,16 +384,23 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         refs: list = []
         truncated = False
         timed_out = False
+        # Prefer the last CLEAN done over any later abnormal terminal: a
+        # completed answer must not be discarded because a later lifecycle
+        # started and never finished (Devin S3 S6b — user saw the partial
+        # + truncation note instead of the completed 'first answer').
+        clean_done: dict | None = None
+        last_done: dict | None = None
 
         try:
-            async for event in conv.deep_research(q, connectors=connectors):
+            async for event in conv.deep_research(
+                q, connectors=connectors, model=chat_model
+            ):
                 if event["type"] == "tool":
                     tool_calls.append(event["call"])
                 elif event["type"] == "done":
-                    final_text = event["text"]
-                    refs = event.get("content_references", [])
-                    truncated = bool(event.get("terminated_abnormally"))
-                    timed_out = bool(event.get("timeout"))
+                    last_done = event
+                    if not event.get("terminated_abnormally"):
+                        clean_done = event
         except UpstreamChallengeError:
             if cfg.get("browser", {}).get("enabled"):
                 transport = browser_transport(
@@ -400,6 +412,13 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                     + (out or "(no response)")
                 )
             raise
+
+        chosen = clean_done or last_done
+        if chosen is not None:
+            final_text = chosen["text"]
+            refs = chosen.get("content_references", [])
+            truncated = bool(chosen.get("terminated_abnormally"))
+            timed_out = bool(chosen.get("timeout"))
 
         # Append a brief sources section if citations were returned
         if refs:
@@ -840,6 +859,17 @@ def main() -> None:
         "--json", action="store_true", help="Emit the raw report as JSON"
     )
 
+    # ratelimit subcommand — this account's shared client-side budget,
+    # read from the local state file only (no network, no token needed)
+    ratelimit_p = sub.add_parser(
+        "ratelimit",
+        help="Show this account's shared client-side rate-limit state "
+        "(local file only — no network)",
+    )
+    ratelimit_p.add_argument(
+        "--json", action="store_true", help="Emit the state as JSON"
+    )
+
     # install subcommand — register gpt2agent with one or more MCP clients
     from gpt2agent.install import SUPPORTED_CLIENTS
 
@@ -916,6 +946,25 @@ def main() -> None:
             print(json.dumps(report, indent=2))
         else:
             print(format_usage_report(report))
+        return
+
+    if args.command == "ratelimit":
+        from gpt2agent.ratelimit import get_limiter
+
+        st = get_limiter(load_config(getattr(args, "config", None))).status()
+        if args.json:
+            print(json.dumps(st, indent=2))
+        else:
+            print(
+                f"rate limit [{st['lane']}]: wait_s={st['wait_s']} "
+                f"window {st['window_used']}/{st['max_per_window']} "
+                f"in {st['window_s']:g}s "
+                f"(window_remaining_s={st['window_remaining_s']})"
+            )
+            for key, until in (st.get("cooldowns") or {}).items():
+                print(f"  cooldown {key} until {until}")
+            if not st.get("enabled"):
+                print("  (limiter disabled)")
         return
 
     if args.command == "install":

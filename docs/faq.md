@@ -28,6 +28,21 @@ larger monthly Deep Research quota (GPT-5.5 models retire from all ChatGPT
 surfaces on 2026-10-14). Run `list_models` to see exactly what your
 account has, and `account_status` for your plan.
 
+### Can I use GPT-6.1 Sol?
+
+OpenAI documents `gpt-6.1-sol` for Codex and ChatGPT Work, subject to rollout.
+Both checked ChatGPT catalogs include `gpt-6.1-sol-wm` as of September 29.
+That catalog entry does not prove the Chat conversation endpoint can run it.
+Keep a Chat model such as `gpt-5-6` or `gpt-6-pro` here; see the
+[compatibility report](chatgpt-update-2026-09-29.md).
+
+### Why does a temporary GPT-6 Pro chat fail after a handoff?
+
+The stream may hand off the answer to a conversation that temporary mode
+will not let us retrieve. A 404 now stops recovery immediately with a clear
+error. To allow saved-history recovery, explicitly pass `temporary=False`.
+The client never silently sends the prompt again with different privacy settings.
+
 ### Can I use GPT-6 Sol / GPT-6 Luna?
 
 Not through the Chat surface. OpenAI docs (2026-09-22) put GPT-6 Sol
@@ -43,6 +58,21 @@ where Sol and Luna are selectable.
 Limits and reset timing are account-reported and can change. Run the bundled
 `deep-research/bin/quota.sh` to inspect the current account before heavy work,
 and run heavy Deep Research serially.
+
+Measured billing model (2026-09-24, two Pro accounts; receipts in
+`artifacts/verify/dr-2acct-recovery-2026-09-23.md`):
+
+- **Light DR** (`deep_research`): 1 per **completed** search turn from the
+  account's monthly `deep_research` bucket — turns that abort in-band cost 0.
+- **Heavy DR** (`deep_research_heavy`): an **independent** monthly cap (the
+  backend reports it under a `deep_research_*` variant when it exposes it);
+  two full heavy reports left the light bucket unmoved. The authoritative
+  exhaustion signal is the in-stream `usage_limit` frame.
+- **Conversation posts**: upstream reports no fixed message window for Pro —
+  gpt2agent self-paces client-side (default ≤100 posts per 3 h, 15 s min
+  interval, shared across processes; see `gpt2agent/ratelimit.py`).
+
+Live remaining/reset numbers: `gpt2agent usage`.
 
 ### Is `gpt_chat` (Custom GPTs) stable?
 

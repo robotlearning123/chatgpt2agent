@@ -143,3 +143,15 @@ chat(prompt="...", browser=True)
 | `gpt_chat` 422 | `g-p-` prefix GPT | Only `g-` prefix supported currently |
 | Heavy DR empty | Connector not enabled | Enable Deep Research in chatgpt.com Settings |
 | `-wm` slugs resolve to `gpt-5-6` | Work-only working-memory models | Measured 2026-09-23 for `gpt-6-sol-wm`, `gpt-6-luna-wm`, `gpt-6-astra-wm`; other work-mode slugs not probed |
+
+### September 29 model and recovery update
+
+`list_models` includes Work entries such as `gpt-6.1-sol-wm`. Live Chat
+requests for both that slug and `gpt-6.1-sol` resolved to `gpt-5-6`; inspect
+the returned Model note. Use Codex or ChatGPT Work for GPT-6.1 access where
+available. This MCP server does not switch product surfaces based on a slug.
+
+When temporary chat recovery returns 404, stop and explain the failure.
+A retry with `temporary=False` saves the prompt and answer in history and
+must be explicitly chosen by the caller. `gpt2agent ratelimit --json` shows
+local account pacing without spending quota.

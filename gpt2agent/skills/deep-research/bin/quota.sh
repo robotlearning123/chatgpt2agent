@@ -2,7 +2,7 @@
 # Print remaining ChatGPT Deep Research quota for the selected account.
 #
 # NOTE: `limits_progress[].feature_name == "deep_research"` is the GENERIC
-# counter — it gates the light `deep_research` (model=research) path only.
+# counter — it gates the light `deep_research` path only.
 # `deep_research_heavy` (connector_openai_deep_research) has an independent
 # monthly cap reported under a different feature name; it is NOT reflected
 # here (verified live 2026-09-19: heavy dispatch succeeded with
