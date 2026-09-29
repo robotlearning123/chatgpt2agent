@@ -343,12 +343,13 @@ def test_empty_polled_terminal_raises_no_report_content(
 # ── (C) downgrade-as-error ───────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("metadata_last", [True, False])
 def test_ste_metadata_downgrade_raises_usage_limit(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, metadata_last: bool,
 ) -> None:
     """server_ste_metadata model_slug cheaper than requested -> UsageLimitError.
 
-    Raised when the metadata frame arrives, so no ``done`` is ever yielded.
+    Validated before final completion, so no ``done`` is ever yielded.
     """
     frames = [
         _ste_metadata_frame("gpt-5-mini"),
@@ -357,6 +358,8 @@ def test_ste_metadata_downgrade_raises_usage_limit(
         _STATUS_FINISHED,
         "data: [DONE]",
     ]
+    if metadata_last:
+        frames.insert(-1, frames.pop(0))
     events, err, _ = _collect_heavy_dr(monkeypatch, frames)
 
     assert isinstance(err, UsageLimitError), (
@@ -390,9 +393,10 @@ def test_ste_metadata_non_downgrade_slug_passes(
     assert dones[0]["text"] == _REAL_REPORT
 
 
+@pytest.mark.parametrize("metadata_first", [True, False])
 @pytest.mark.parametrize("valid_connector", [True, False])
 def test_outer_chat_slug_does_not_reject_verified_async_research(
-    monkeypatch: pytest.MonkeyPatch, valid_connector: bool
+    monkeypatch: pytest.MonkeyPatch, valid_connector: bool, metadata_first: bool
 ) -> None:
     """Recorded successful DR uses gpt-5-6-instant as its outer Chat model."""
     from copy import deepcopy
@@ -418,6 +422,9 @@ def test_outer_chat_slug_does_not_reject_verified_async_research(
         }),
         'data: [DONE]',
     ]
+
+    if metadata_first:
+        frames[0], frames[1] = frames[1], frames[0]
 
     class Backend(_InitBackend):
         def get(self, path: str, **kwargs: Any) -> dict:

@@ -2455,6 +2455,7 @@ class ConversationClient:
             "dr_async_pending": False,
             "dr_connector_started": False,
             "done_emitted": False,
+            "pending_done": None,
             "resolved_model": None,
             "citation_metadata": {},
             # True while the current assistant envelope is the connector-dispatch
@@ -2465,7 +2466,7 @@ class ConversationClient:
             "is_connector_dispatch": False,
         }
 
-        def _emit_done(events: list) -> None:
+        def _emit_done() -> None:
             if state["done_emitted"]:
                 return
             # The DR connector acks its async `start` in assistant text, and
@@ -2493,7 +2494,7 @@ class ConversationClient:
             }
             if state["tool_failed"]:
                 payload["connector_failed"] = True
-            events.append(payload)
+            state["pending_done"] = payload
             state["done_emitted"] = True
 
         def _empty_report_error() -> RuntimeError:
@@ -2547,7 +2548,7 @@ class ConversationClient:
                     and not state["is_connector_dispatch"]
                     and state["asst_text"]
                 ):
-                    _emit_done(events)
+                    _emit_done()
             elif (
                 role == "assistant"
                 and isinstance(recipient, str)
@@ -2577,8 +2578,10 @@ class ConversationClient:
                     # Async DR accepted — the report arrives in the widget
                     # state, not in the assistant text that follows.
                     state["dr_async_pending"] = True
+                    state["done_emitted"] = False
+                    state["pending_done"] = None
                     resource = meta.get("invoked_resource") or {}
-                    state["dr_connector_started"] = (
+                    state["dr_connector_started"] = state["dr_connector_started"] or (
                         (msg.get("author") or {}).get("name") == "api_tool.call_tool"
                         and sdk.get("resource_name") == _DR_APP_RESOURCE
                         and sdk.get("attribution_id") == _DR_CONNECTOR_ID
@@ -2625,7 +2628,7 @@ class ConversationClient:
                         and not state["is_connector_dispatch"]
                         and state["asst_text"]
                     ):
-                        _emit_done(events)
+                        _emit_done()
             elif path == "/message/metadata" or path.startswith("/message/metadata/"):
                 state["asst_metadata"] = _merge_metadata_path(
                     state["asst_metadata"], path, op, value
@@ -2651,34 +2654,6 @@ class ConversationClient:
                 slug = md.get("model_slug")
                 if slug:
                     state["resolved_model"] = slug
-                    requested = model or HEAVY_DR_MODEL
-                    # The outer Chat model may be gpt-5-6-instant even when
-                    # the DR connector accepted the background research job.
-                    # Only a verified connector startup permits this echo;
-                    # async polling still requires a completed report widget.
-                    if (
-                        _is_heavy_dr_downgrade(requested, slug)
-                        and not state["dr_connector_started"]
-                    ):
-                        init = (
-                            getattr(self, "_limits_cache", (0, None))[1] or {}
-                        )
-                        resets = limits_from_init(
-                            init, model=requested
-                        )["model_resets_after"]
-                        if resets:
-                            # Share the cap — sibling processes fail fast.
-                            get_limiter().note_cooldown(
-                                f"model:{requested}", resets
-                            )
-                        raise UsageLimitError(
-                            f"deep_research_heavy downgraded: requested "
-                            f"{requested!r} but the server resolved {slug!r} "
-                            "— the requested model is likely capped on this "
-                            "account. Refusing to pass a lower-tier model's "
-                            "output off as the heavy report.",
-                            resets_after=resets,
-                        )
                 events.append({"type": "meta", "data": md})
                 return
             if t == "input_message":
@@ -2807,6 +2782,42 @@ class ConversationClient:
                 _apply_patch(obj, events)
                 for e in events:
                     yield e
+
+        # Metadata may arrive before or after connector startup. Validate only
+        # after reading the stream, before releasing any final answer.
+        requested = model or HEAVY_DR_MODEL
+        slug = state["resolved_model"] or ""
+        # The outer Chat model may be gpt-5-6-instant even when
+        # the DR connector accepted the background research job.
+        # Only a verified connector startup permits this echo;
+        # async polling still requires a completed report widget.
+        if (
+            _is_heavy_dr_downgrade(requested, slug)
+            and not state["dr_connector_started"]
+        ):
+            init = (
+                getattr(self, "_limits_cache", (0, None))[1] or {}
+            )
+            resets = limits_from_init(
+                init, model=requested
+            )["model_resets_after"]
+            if resets:
+                # Share the cap — sibling processes fail fast.
+                get_limiter().note_cooldown(
+                    f"model:{requested}", resets
+                )
+            raise UsageLimitError(
+                f"deep_research_heavy downgraded: requested "
+                f"{requested!r} but the server resolved {slug!r} "
+                "— the requested model is likely capped on this "
+                "account. Refusing to pass a lower-tier model's "
+                "output off as the heavy report.",
+                resets_after=resets,
+            )
+
+        if state["done_emitted"]:
+            yield state["pending_done"]
+            return
 
         # --- Phase 2: Async polling fallback ---
         # If the stream closed without finished_successfully AND the DR

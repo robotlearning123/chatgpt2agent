@@ -12,6 +12,8 @@ versioning: [SemVer](https://semver.org/).
   an ordinary Chat downgrade, and reports empty completion as an error (#70).
   Verified Deep Research startup is distinguished from its outer Chat model:
   successful connector runs can report `gpt-5-6-instant` as the orchestrator.
+  Validation accepts either startup/metadata ordering and checks late model
+  metadata before emitting the final completion.
 - Local pacing and cooldown state are isolated by `CODEX_HOME` (#70).
 - Temporary-chat handoff recovery stops after the first conversation 404
   with an actionable error (#84). It never retries as a persistent chat;
