@@ -8,7 +8,7 @@ WSL distributions temporarily started for inspection were returned to stopped.
 
 | Environment | Installed candidate evidence | Remaining verification |
 |---|---|---|
-| Primary Linux | 0.0.24 code/metadata; final workflow f46af68; 43 wheel files; MCP 30 tools / 9 manual schemas / handoff pass | 15 pre-update MCP processes still require client reconnect; owner jobs preserved |
+| Primary Linux | 0.0.24 code/metadata; final workflow f46af68; 43 wheel files; MCP 30 tools / 9 manual schemas / handoff pass | 11 pre-update MCP processes remained at the final snapshot; require client reconnect; owner jobs preserved |
 | Secondary Linux | Upgraded 0.0.14 to 0.0.24; dependency check and identical isolated verification pass | Live doctor reports 401 expired token; owner must renew login before live acceptance |
 | macOS | 0.0.24 at ce33f03; dependency check and identical isolated verification pass | Went offline during final workflow follow-up; inspect existing receipt and checkout before any retry |
 

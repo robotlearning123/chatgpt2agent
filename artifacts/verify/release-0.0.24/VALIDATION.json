@@ -104,8 +104,9 @@
     "secondary_conda_registration": "backed up and consolidated to primary CLI; dependencies unchanged",
     "mac": "0.0.24 verified at ce33f03; offline during final workflow follow-up, transaction state unconfirmed",
     "secondary_linux_live_doctor": "401 expired token; owner login required",
-    "pre_update_primary_mcp_processes_pending_reconnect": 15,
+    "pre_update_primary_mcp_processes_pending_reconnect": 11,
     "inventory_environments": 15,
-    "not_installed_environments": 12
+    "not_installed_environments": 12,
+    "reconnect_count_note": "Snapshot count; can decline naturally as owner clients exit. No processes were terminated."
   }
 }
