@@ -73,11 +73,17 @@ def test_preflight_refuses_unsafe_deployment(deployment, monkeypatch, unsafe):
         assert (args.clone / 'owner-work').read_text() == 'preserve'
 
 
-def test_verifier_failure_rolls_back_all_attempted_installs(deployment, monkeypatch):
+@pytest.mark.parametrize("stale_metadata", [False, True])
+def test_verifier_failure_rolls_back_all_attempted_installs(deployment, monkeypatch, stale_metadata):
     args, previous, _ = deployment
     args.apply = True
     real_run = fleet_sync.run
     installs = []
+    if stale_metadata:
+        original_inspect = fleet_sync.inspect
+        monkeypatch.setattr(fleet_sync, 'inspect', lambda python: {
+            **original_inspect(python), 'metadata': '0.0.20',
+        })
 
     def run(*command, **kwargs):
         if command[0] == 'git':
@@ -93,7 +99,9 @@ def test_verifier_failure_rolls_back_all_attempted_installs(deployment, monkeypa
         fleet_sync.sync(args, receipt)
     assert git(args.clone, 'rev-parse', 'HEAD') == previous
     assert installs[-2:] == [('python-a', previous), ('python-b', previous)]
-    assert receipt['rollback']['status'] == 'restored'
+    assert receipt['rollback']['status'] == ('failed' if stale_metadata else 'restored')
+    if stale_metadata:
+        assert 'metadata' in receipt['rollback']['error']
     assert not (args.clone / '.git/fleet-sync.lock').exists()
 
 

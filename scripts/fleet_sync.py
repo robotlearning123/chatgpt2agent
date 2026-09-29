@@ -101,8 +101,9 @@ def sync(args: argparse.Namespace, receipt: dict) -> None:
                         "--editable", str(clone), cwd=clone.parent)
                 restored = [inspect(python) for python in args.python]
                 old_version = source_version(git(clone, "show", f"{previous}:gpt2agent/__init__.py"))
-                if any(item["version"] != old_version for item in restored):
-                    raise ValueError("rollback code version mismatch")
+                if any(item["version"] != old_version or item["metadata"] != old_version
+                       for item in restored):
+                    raise ValueError("rollback code or metadata version mismatch")
                 receipt["rollback"] = {"status": "restored", "installs": restored}
             except Exception as exc:
                 receipt["rollback"] = {"status": "failed", "error": str(exc)}

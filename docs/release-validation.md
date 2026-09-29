@@ -102,6 +102,11 @@ scripts/fleet-sync.sh <reviewed-sha> --version 0.0.24 \
   --receipt "$HOME/.local/state/gpt2agent/preview-unique.json"
 ```
 
+Before moving a shared clone, inventory every attached editable installation.
+Include each interpreter in the update, or back up and consolidate an obsolete
+registration first, so an omitted environment cannot silently change code
+while retaining old metadata.
+
 Repeat `--python` for each editable installation attached to that clone; set
 `--clone` for a different device/path. Inspect the preview, then repeat with
 `--apply` and a **new** receipt path. The updater refuses dirty or concurrently
