@@ -1,0 +1,81 @@
+{
+  "version": "0.0.24",
+  "date": "2026-09-29",
+  "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
+  "runtime_commit": "8460522711b93b9f2f361ad574eb23086da36dd7",
+  "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
+  "state": "prepared_not_published",
+  "offline": {
+    "passed": 642,
+    "skipped": 13,
+    "failed": 0
+  },
+  "package": {
+    "wheel_files": 50,
+    "sdist_files": 59,
+    "twine": "pass",
+    "raw_capture_and_jwt_scan": "pass"
+  },
+  "outsider": {
+    "passed": 11,
+    "failed": 0,
+    "mcp_tools": 30
+  },
+  "checks": {
+    "ruff": "pass",
+    "shellcheck": "pass",
+    "release_metadata": "pass",
+    "diff_check": "pass",
+    "github_actions": "13 jobs passed on runtime_commit; draft CodeRabbit review skipped"
+  },
+  "live": {
+    "light_A": {
+      "seconds": 16.7,
+      "chars": 1197
+    },
+    "light_B": {
+      "seconds": 14.6,
+      "chars": 1335
+    },
+    "heavy_A_895e5d1": {
+      "seconds": 142.4,
+      "chars": 1932
+    },
+    "heavy_B_895e5d1": {
+      "seconds": 260.5,
+      "chars": 1374
+    },
+    "heavy_A_8460522": {
+      "seconds": 500.0,
+      "chars": 1599,
+      "tool_error": false,
+      "transient_poll_http500": 3
+    }
+  },
+  "models": {
+    "catalog_entries_per_account": 24,
+    "gpt61_chat_requests": 2,
+    "gpt61_chat_executions_confirmed": 0,
+    "resolved_model": "gpt-5-6",
+    "default_unchanged": "gpt-5-6"
+  },
+  "publication": {
+    "tag_created": false,
+    "merged": false,
+    "published": false,
+    "fleet_cutover": false
+  },
+  "review": {
+    "writer": "Codex (GPT family)",
+    "reviewer": "ccz / glm-5.3",
+    "verdict": "PASS",
+    "source_pin": "4e632bd",
+    "delta_pin": "8460522",
+    "independent_passed": 642,
+    "independent_skipped": 13,
+    "reproduction_cases": 7,
+    "negative_control_failures": 3,
+    "condition": "sanitized preparation receipts committed",
+    "primary_verdict": "PASS"
+  }
+}
