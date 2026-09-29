@@ -19,7 +19,7 @@ import zipfile
 
 
 def verify_files(package: Path, wheel: Path) -> int:
-    count = 0
+    expected = set()
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
             if not name.startswith("gpt2agent/") or name.endswith("/"):
@@ -29,10 +29,18 @@ def verify_files(package: Path, wheel: Path) -> int:
                 raise ValueError("wheel contains an unsafe package path")
             if (package / relative).read_bytes() != archive.read(name):
                 raise ValueError(f"installed file differs from wheel: {relative}")
-            count += 1
-    if not count:
+            expected.add(relative.as_posix())
+    if not expected:
         raise ValueError("wheel contains no gpt2agent files")
-    return count
+    installed = {
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*")
+        if path.is_file() and "__pycache__" not in path.relative_to(package).parts
+    }
+    extra = installed - expected
+    if extra:
+        raise ValueError(f"unexpected installed package files: {', '.join(sorted(extra))}")
+    return len(expected)
 
 
 async def mcp_smoke(home: Path) -> dict:

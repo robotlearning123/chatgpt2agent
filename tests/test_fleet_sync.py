@@ -148,3 +148,19 @@ def test_wheel_empty_package_is_not_verification(tmp_path):
         archive.writestr('other.txt', b'not the package')
     with pytest.raises(ValueError, match='no gpt2agent'):
         verify_files(tmp_path, wheel)
+
+
+def test_wheel_verification_rejects_leftover_code_but_allows_python_cache(tmp_path):
+    package = tmp_path / 'gpt2agent'
+    package.mkdir()
+    (package / '__init__.py').write_bytes(b'original')
+    cache = package / '__pycache__'
+    cache.mkdir()
+    (cache / '__init__.cpython-313.pyc').write_bytes(b'generated cache')
+    wheel = tmp_path / 'package.whl'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        archive.writestr('gpt2agent/__init__.py', b'original')
+    assert verify_files(package, wheel) == 1
+    (package / 'obsolete_backend.py').write_text('unexpected importable code')
+    with pytest.raises(ValueError, match='unexpected.*obsolete_backend'):
+        verify_files(package, wheel)
