@@ -1,11 +1,11 @@
-"""Offline safety checks for the fresh stdio-MCP heavy-DR runner."""
+"""Offline safety checks for the fresh stdio-MCP research runner."""
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
 
 
-RUNNER = Path(__file__).parents[1] / "tools" / "run_heavy_mcp_once.py"
+RUNNER = Path(__file__).parents[1] / "tools" / "run_dr_mcp_once.py"
 SPEC = importlib.util.spec_from_file_location("heavy_mcp_runner", RUNNER)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)

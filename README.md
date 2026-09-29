@@ -50,10 +50,12 @@ conversations may then return 404 on recovery. Choose `temporary=False`
 explicitly if you want a saved conversation; the client never changes that
 privacy choice automatically.
 
-Last full verification: **2026-09-24** (light + heavy Deep Research on two Pro
-accounts; receipts in the repo under `artifacts/verify/`). Re-check your own
-account any time with **`gpt2agent doctor`** — the table below is the last
-verified date, not live state.
+Latest research and read-only health verification: **2026-09-29**, on two
+Pro accounts. Light and heavy research both completed; release evidence is
+in [the preparation report](artifacts/verify/release-0.0.24/PREPARATION.md).
+Other conversation-tool results below retain their September 23–24 dates.
+Re-check read-only health with **`gpt2agent doctor`**; its gate checks do not
+execute conversation tools.
 
 | State | Tools |
 |---|---|
