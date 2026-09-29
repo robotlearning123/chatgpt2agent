@@ -57,3 +57,15 @@ was backed up and consolidated; no shared dependencies changed. A short
 intermediate metadata mismatch occurred before consolidation and was resolved.
 The corrected order is explicit in the runbook. Device/live-access evidence
 is primary verification, separate from this independent code review.
+
+## Final light dispatch correction
+
+Pin `ba9201f`, range `5ae329f..ba9201f`. Independent ccz / GLM 5.3 verdict:
+**PASS**. Targeted suite: 18 passed / 6 live skips. The reviewer reproduced
+the two new regression failures on the old pin and their passes on the fix.
+Adversarial replay checked malformed recipients, empty all-recipient code,
+visible argument precedence, both observed dispatches, and no answer pollution.
+The five-line runtime correction needs no further simplification. The heavy
+smoke now exercises the actual connector, and the live environment flags match
+the runtime's nonempty-string semantics. Primary full suite: 655/13; real
+account/light selection 5/5 on each account; PONG/heavy completion 2/2.

@@ -6,6 +6,25 @@ State: release prepared, not tagged or published. Owner-authorized candidate
 installation updates are recorded in `ROLLOUT.md`; runtime acceptance remains
 partial because a device is offline, another needs login, and old clients need reconnect.
 
+## Current candidate
+
+Application pin **ba9201f** supersedes the earlier f46af68 candidate.
+Supplemental live testing found a missing light-research tool event: the
+upstream exposed web/web.run dispatch recipients but withheld argument text.
+The parser now emits the observed recipient when arguments are empty.
+Independent GLM review passed with a failing-before/passing-after control
+and adversarial replay. Full regression: **655 passed / 13 skipped**.
+
+Both accounts separately passed all five account/light tests, including tool
+events and citations. PONG plus real heavy completion passed (2/2, 152.69 s).
+The rebuilt artifact passed outsider emulation 11/0 and all 13 code CI jobs
+passed. SHA256SUMS refers to the ba9201f build. Primary and secondary Linux
+installations match its 43 package files and pass isolated MCP checks.
+The Mac still has the earlier candidate and needs connectivity before this
+fix can be deployed; secondary Linux still needs renewed login, and old
+clients need reconnect. **Full fleet acceptance is not complete.**
+See ACCEPTANCE.md and ROLLOUT.md for the requirement-by-requirement audit.
+
 ## Scope
 
 Source changes from PR #83 (`42d8142`) and PR #86 (`92baad8`), plus temporary-chat
@@ -29,7 +48,7 @@ and `gpt-6.1-sol`; both resolved to `gpt-5-6` and returned a Model note.
 This does not establish GPT-6.1 execution through this project's Chat backend.
 The default stays `gpt-5-6`; Codex/Work model selection is separate.
 
-## Verification
+## Earlier verification history
 
 - Integrated baseline: 632 passed / 13 skipped.
 - Temporary recovery fix: 637 passed / 13 skipped.
@@ -85,7 +104,7 @@ The release runbook requires explicit owner approval before pushing
 that action. The owner separately authorized updating existing device installations to the
 verified candidate. This does not authorize tagging or publication.
 
-## Workflow and deployment follow-up
+## Earlier workflow and deployment verification
 
 Final workflow code: `f46af68`. Primary full suite: **653 passed / 13 skipped**.
 Independent GLM review: PASS; 651/13 on the initial workflow and 11/11 targeted

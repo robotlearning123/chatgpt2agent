@@ -2,11 +2,11 @@
   "version": "0.0.24",
   "date": "2026-09-29",
   "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
-  "runtime_commit": "8460522711b93b9f2f361ad574eb23086da36dd7",
+  "runtime_commit": "ba9201f",
   "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
-  "state": "prepared_not_published",
+  "state": "prepared_pending_fleet_acceptance",
   "offline": {
-    "passed": 653,
+    "passed": 655,
     "skipped": 13,
     "failed": 0
   },
@@ -15,8 +15,7 @@
     "sdist_files": 59,
     "twine": "pass",
     "raw_capture_and_jwt_scan": "pass",
-    "build_commit": "ce33f036f893d6f3c4e86f84b9887e4e53f3c2ed",
-    "runtime_identical_through": "f46af68"
+    "build_commit": "ba9201f"
   },
   "outsider": {
     "passed": 11,
@@ -28,7 +27,7 @@
     "shellcheck": "pass",
     "release_metadata": "pass",
     "diff_check": "pass",
-    "github_actions": "13 required jobs passed on f46af68; CodeRabbit success"
+    "github_actions": "13 required jobs passed on ba9201f; CodeRabbit success"
   },
   "live": {
     "light_A": {
@@ -52,6 +51,24 @@
       "chars": 1599,
       "tool_error": false,
       "transient_poll_http500": 3
+    },
+    "supplemental_A": {
+      "passed": 5,
+      "failed": 0,
+      "seconds": 67.74,
+      "scope": "account and light completion/tool-events/references"
+    },
+    "supplemental_B": {
+      "passed": 5,
+      "failed": 0,
+      "seconds": 65.23,
+      "scope": "account and light completion/tool-events/references"
+    },
+    "current_sse": {
+      "passed": 2,
+      "failed": 0,
+      "seconds": 152.69,
+      "scope": "PONG and real heavy connector report completion"
     }
   },
   "models": {
@@ -94,6 +111,15 @@
         "stale rollback metadata rejection",
         "consistent rollback restored"
       ]
+    },
+    "tool_events_delta": {
+      "pin": "ba9201f",
+      "reviewer": "ccz / glm-5.3",
+      "verdict": "PASS",
+      "targeted_passed": 18,
+      "live_skipped": 6,
+      "negative_control": "new regression tests: 2 fail before fix; 2 pass after",
+      "adversarial_replay": "PASS; no false positives or answer contamination"
     }
   },
   "workflow_commit": "f46af684f9e995dd383b94b837e88040c19569d3",
@@ -102,11 +128,14 @@
     "installation_and_isolated_mcp_verified": 3,
     "primary_final_workflow_pin": "f46af68",
     "secondary_conda_registration": "backed up and consolidated to primary CLI; dependencies unchanged",
-    "mac": "0.0.24 verified at ce33f03; offline during final workflow follow-up, transaction state unconfirmed",
+    "mac": "Earlier 0.0.24 at ce33f03 verified; final workflow transaction unresolved; newest ba9201f application fix not deployed while SSH unreachable",
     "secondary_linux_live_doctor": "401 expired token; owner login required",
     "pre_update_primary_mcp_processes_pending_reconnect": 11,
     "inventory_environments": 15,
     "not_installed_environments": 12,
-    "reconnect_count_note": "Snapshot count; can decline naturally as owner clients exit. No processes were terminated."
+    "reconnect_count_note": "Snapshot count; can decline naturally as owner clients exit. No processes were terminated.",
+    "current_candidate_verified_installations": 2,
+    "primary_application_pin": "ba9201f",
+    "secondary_linux_application_pin": "ba9201f"
   }
 }
