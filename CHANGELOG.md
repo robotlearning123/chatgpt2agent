@@ -54,6 +54,9 @@ versioning: [SemVer](https://semver.org/).
 
 ### Changed
 
+- Fleet update workflow now previews a pinned target, refreshes editable-install
+  metadata, verifies installed CLI/MCP behavior, and records rollback outcomes.
+  A standalone verifier checks installed package bytes against the release wheel.
 - `deep_research` tool: light DR takes the configured chat model
   (`[models] chat`) instead of the retired `research` slug; connector hints
   are preserved. `docs/clients.md` now documents running two ChatGPT

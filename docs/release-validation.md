@@ -50,7 +50,7 @@ update the README table in the same release — do not ship a stale status.
 Exercise the BUILT artifact the way a first-time user would — build, wheel
 install into a clean venv, no-token first run, client registration with an
 isolated HOME, a real MCP stdio client session (tool schemas + live
-read-only calls + a `manual=True` handoff), the 0.0.13→new upgrade path,
+read-only calls + a `manual=True` handoff), the previous-release→candidate upgrade path,
 and uninstall cleanliness:
 
 ```bash
@@ -90,12 +90,52 @@ The fleet does NOT run the dev worktree — it runs the `gpt2agent` binary,
 which resolves to `~/.local/share/gpt2agent-venv` (editable install → the
 clone at `/home/robot/workspace/47-chatgpt2agent/gpt2agent`). Merging to main
 without syncing that clone is exactly how the fleet ended up running ~v0.0.14
-on 2026-09-18 while the fix sat in a worktree. After every merge-to-main:
+on 2026-09-18 while the fix sat in a worktree. For an owner-authorized local candidate rollout, pin the reviewed commit; do not
+use a moving branch as the verification identity. A local rollout does not
+create a public release. After an approved merge, pin the merge commit instead.
+
+Preview first (the command never applies by default):
 
 ```bash
-scripts/fleet-sync.sh origin/main   # fast-forwards the clone, prints version
-                                    # + running MCP servers needing restart
+scripts/fleet-sync.sh <reviewed-sha> --version 0.0.24 \
+  --python "$HOME/.local/share/gpt2agent-venv/bin/python" \
+  --receipt "$HOME/.local/state/gpt2agent/preview-unique.json"
 ```
+
+Repeat `--python` for each editable installation attached to that clone; set
+`--clone` for a different device/path. Inspect the preview, then repeat with
+`--apply` and a **new** receipt path. The updater refuses dirty or concurrently
+changed clones, resolves the ref once, refreshes package metadata without
+upgrading dependencies, and checks version, import location, CLI and fresh MCP
+startup. Failed verification attempts to restore the prior checkout and
+attempted installs; a failed rollback is explicitly recorded. An interrupted
+run leaves an `incomplete` receipt and a lock: inspect before retrying, never
+blindly remove an existing lock. Receipts are private and never overwritten.
+
+For wheel/uv/pipx installations, use that installation's package manager and
+the exact verified wheel, retaining the prior version for rollback. Verify
+outside the source checkout with the target Python:
+
+```bash
+/path/to/target/python -I scripts/verify_install.py --version 0.0.24 \
+  --wheel /path/to/verified/gpt2agent-0.0.24-py3-none-any.whl --mcp
+```
+
+`-I` prevents checkout/PYTHONPATH shadowing. Both code and distribution metadata
+must match; `--wheel` also compares installed package bytes. The fresh MCP
+check uses an unauthenticated temporary home, checks 30 tools and 9 manual
+schemas, and exercises a zero-network manual handoff. It does not prove live
+account authentication or research completion: retain separate account-level
+live receipts. Check dependency health with the installation's package manager;
+do not repair an unrelated shared environment by silently changing its packages.
+
+A rollout receipt must list every inventory target separately: verified,
+not installed, unreachable, failed, or reconnect pending. Check Windows and
+WSL separately. Update one canary before other devices. Existing stdio MCP
+processes keep loaded code until their owning clients reconnect; do not count
+a new-process check as proof that old sessions restarted. Do not terminate
+active research jobs or unrelated client sessions. Recheck the command path,
+package metadata, exact package bytes, and MCP startup on each updated device.
 
 Then clean up, in the same release session — not "later":
 
