@@ -8,6 +8,9 @@ versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- Light research reports observed `web` / `web.run` dispatches even when
+  the modern stream withholds their arguments, preserving tool progress events.
+
 - Heavy Deep Research checks the requested model cap before posting, rejects
   an ordinary Chat downgrade, and reports empty completion as an error (#70).
   Verified Deep Research startup is distinguished from its outer Chat model:

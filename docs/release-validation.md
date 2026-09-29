@@ -39,6 +39,24 @@ pytest -q | tee artifacts/verify/pytest-$(date +%Y%m%d).txt
 
 Must be fully green — 0 failures, no new skips versus the previous run.
 
+The default suite deliberately disables live calls and the Sentinel bridge.
+To exercise the current Chat/research paths on an authenticated, bridge-enabled
+host, use an explicit live selection and keep production pacing enabled:
+
+```bash
+SKIP_LIVE=0 GPT2AGENT_SENTINEL_BRIDGE_OFF= GPT2AGENT_RATELIMIT_OFF= \
+  pytest -q tests/test_backend_tools.py tests/test_deep_research.py \
+  tests/test_sse.py::test_sse_pong
+```
+
+The `*_OFF` switches use nonempty-string semantics: `0` still disables the
+feature. Empty values override the offline defaults in `tests/conftest.py`.
+For the heavy completion test, additionally set `SKIP_HEAVY_DR=0` and select
+`tests/test_sse.py::test_sse_deep_research_heavy`. It must return the report,
+not just acknowledge startup. These calls consume account quota and retain
+normal pacing. Archive failures as well as successful retries; distinguish
+harness configuration errors from upstream or application failures.
+
 ## 4. Blocked-tool annotation check
 
 The README tool-status table must match the `doctor` output from step 1

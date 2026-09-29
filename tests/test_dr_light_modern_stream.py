@@ -439,3 +439,18 @@ def test_light_dr_model_param_overrides_default() -> None:
 
     payload = _build_dr_payload("q", model="gpt-6-pro")
     assert payload["model"] == "gpt-6-pro"
+
+
+@pytest.mark.parametrize("recipient", ["web", "web.run"])
+def test_empty_tool_dispatch_reports_observed_recipient(monkeypatch, recipient):
+    frames = [
+        _msg_line("dispatch", "assistant", [""], "finished_successfully", recipient=recipient),
+        _msg_line("result", "tool", [""], "finished_successfully"),
+        _msg_line("answer", "assistant", ["cited answer"], "finished_successfully"),
+        "data: [DONE]",
+    ]
+    events = _run_light_dr(monkeypatch, frames)
+    assert [e for e in events if e["type"] == "tool"] == [
+        {"type": "tool", "call": recipient}
+    ]
+    assert [e["text"] for e in events if e["type"] == "done"] == ["cited answer"]

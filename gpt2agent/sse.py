@@ -2206,6 +2206,11 @@ class ConversationClient:
                             _invalidate()
                             last_text = ""
                             call_text = content.get("text", "") or _text_of(msg)
+                            # Modern streams can expose the recipient while
+                            # withholding the tool's arguments. Report that
+                            # observed dispatch without inventing a query.
+                            if not call_text and isinstance(recipient, str) and recipient != "all":
+                                call_text = recipient
                             if call_text:
                                 emit.append(
                                     {"type": "tool", "call": call_text}

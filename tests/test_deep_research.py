@@ -62,7 +62,7 @@ def test_deep_research_emits_tool_events():
     assert tool_events, (
         f"no 'tool' events; all event types: {[e['type'] for e in events]}"
     )
-    assert "search" in tool_events[0]["call"].lower(), (
+    assert any(name in tool_events[0]["call"].lower() for name in ("search", "web", "browse")), (
         f"first tool call doesn't look like a search: {tool_events[0]['call']!r}"
     )
 
