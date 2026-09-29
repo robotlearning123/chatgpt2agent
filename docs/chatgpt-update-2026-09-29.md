@@ -45,8 +45,10 @@ still need migration.
 - Light research uses the configured Chat model after retirement of the
   legacy `research` request path. Its reader now handles current v1 delta
   envelopes, patches, continuations, and citation metadata.
-- Heavy research checks model caps before posting and rejects detected
-  downgrades or empty terminal output.
+- Heavy research checks model caps before posting and rejects ordinary Chat
+  downgrades or empty terminal output. A structurally verified Deep Research
+  startup permits the outer Chat orchestration slug; the final report still
+  needs the existing connector provenance and completion checks.
 - Local rate-limit state is separated by `CODEX_HOME`; the new
   `gpt2agent ratelimit --json` command reads it without network access.
 - Temporary conversation recovery stops on the first 404. A persistent

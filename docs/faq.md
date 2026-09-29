@@ -60,7 +60,7 @@ Limits and reset timing are account-reported and can change. Run the bundled
 and run heavy Deep Research serially.
 
 Measured billing model (2026-09-24, two Pro accounts; receipts in
-`artifacts/verify/dr-2acct-recovery-2026-09-23.md`):
+[PR #83](https://github.com/robotlearning123/gpt2agent/pull/83)):
 
 - **Light DR** (`deep_research`): 1 per **completed** search turn from the
   account's monthly `deep_research` bucket — turns that abort in-band cost 0.

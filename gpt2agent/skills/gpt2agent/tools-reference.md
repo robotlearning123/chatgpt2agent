@@ -80,7 +80,7 @@ requires the caller to explicitly choose `temporary=False`.
                 "in primates. Include recent 2025-2026 advances.")
   ```
 - **Notes**:
-  - Uses `model='research'` + `system_hints=['research']` internally (resolves to i-mini-m / SearchGPT backend).
+  - Uses the configured Chat model (`[models].chat`, default `gpt-5-6`) without the retired research hint; connector hints are preserved.
   - Takes 30-120 seconds typically.
   - `history_and_training_disabled` is forced to `False` for DR (ChatGPT refuses DR in temporary chats).
   - The `auto_confirm` prefix is: "Begin the deep research immediately without asking for confirmation. Do not ask clarifying questions; proceed with the best interpretation."

@@ -36,7 +36,7 @@ python -m gpt2agent run             # start MCP server (stdio)
 ## Testing
 
 - Offline: `bash .claude/verify.sh` (full unit/contract suite + ruff; live auto-skip via SKIP_LIVE)
-- Evidence trail: verification receipts in `artifacts/verify/`; raw frame captures under `taskruns/`
+- Evidence trail: sanitized release receipts in `artifacts/verify/`; raw frames may contain resume tokens and must stay outside tracked release files.
 - Live matrix: `scripts/agent-user-journey.sh <worktree>` (15 cases)
 - Release gate: `scripts/release-emulation-test.sh <worktree>` (11 checks)
 - Parameter contracts: `tests/test_param_matrix.py` (34 cases)

@@ -63,7 +63,7 @@ return your plan and feature count.
 
 - `chat` — talk to any model on your account (`model="gpt-6-pro"`, `o3-pro`, …).
 - `deep_research` — web-augmented research with citations (~1 min).
-- `generate_image` — DALL·E image generation.
+- `generate_image` — ChatGPT image generation.
 
 > **Heads up:** `chat` defaults to `temporary=True`, which disables image gen / code
 > interpreter / canvas. Use the dedicated tools (`generate_image`, `code_interpreter`,
