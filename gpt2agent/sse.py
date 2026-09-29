@@ -2453,6 +2453,7 @@ class ConversationClient:
             # follows the start (the connector's own ack) must not finish the
             # stream — Phase 2 polls the widget state instead.
             "dr_async_pending": False,
+            "dr_connector_started": False,
             "done_emitted": False,
             "resolved_model": None,
             "citation_metadata": {},
@@ -2576,6 +2577,17 @@ class ConversationClient:
                     # Async DR accepted — the report arrives in the widget
                     # state, not in the assistant text that follows.
                     state["dr_async_pending"] = True
+                    resource = meta.get("invoked_resource") or {}
+                    state["dr_connector_started"] = (
+                        (msg.get("author") or {}).get("name") == "api_tool.call_tool"
+                        and sdk.get("resource_name") == _DR_APP_RESOURCE
+                        and sdk.get("attribution_id") == _DR_CONNECTOR_ID
+                        and sdk.get("resolved_pineapple_uri") == _DR_CONNECTOR_URI
+                        and sdk.get("distribution_channel") == "openai"
+                        and isinstance(resource, dict)
+                        and isinstance(resource.get("resource_uri"), str)
+                        and resource["resource_uri"].startswith(_DR_RESOURCE_URI_PREFIX)
+                    )
                 parts = content.get("parts") or []
                 text = parts[0] if parts and isinstance(parts[0], str) else ""
                 if text and ("Resource not found" in text or text.startswith("Error")):
@@ -2640,7 +2652,14 @@ class ConversationClient:
                 if slug:
                     state["resolved_model"] = slug
                     requested = model or HEAVY_DR_MODEL
-                    if _is_heavy_dr_downgrade(requested, slug):
+                    # The outer Chat model may be gpt-5-6-instant even when
+                    # the DR connector accepted the background research job.
+                    # Only a verified connector startup permits this echo;
+                    # async polling still requires a completed report widget.
+                    if (
+                        _is_heavy_dr_downgrade(requested, slug)
+                        and not state["dr_connector_started"]
+                    ):
                         init = (
                             getattr(self, "_limits_cache", (0, None))[1] or {}
                         )

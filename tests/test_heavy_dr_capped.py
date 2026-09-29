@@ -388,3 +388,52 @@ def test_ste_metadata_non_downgrade_slug_passes(
     dones = [e for e in events if e.get("type") == "done"]
     assert len(dones) == 1
     assert dones[0]["text"] == _REAL_REPORT
+
+
+@pytest.mark.parametrize("valid_connector", [True, False])
+def test_outer_chat_slug_does_not_reject_verified_async_research(
+    monkeypatch: pytest.MonkeyPatch, valid_connector: bool
+) -> None:
+    """Recorded successful DR uses gpt-5-6-instant as its outer Chat model."""
+    from copy import deepcopy
+    from gpt2agent import sse as sse_mod
+    from tests.test_heavy_dr_parser import _generated_live_detail
+
+    detail = _generated_live_detail(report=_REAL_REPORT)
+    startup = deepcopy(detail["mapping"]["generated-tool-node"]["message"])
+    if not valid_connector:
+        startup["metadata"]["chatgpt_sdk"]["attribution_id"] = "unrelated_connector"
+    frames = [
+        'data: ' + json.dumps({
+            'v': {'message': startup},
+            'conversation_id': 'generated-conversation',
+        }),
+        'data: ' + json.dumps({
+            'type': 'server_ste_metadata',
+            'metadata': {
+                'model_slug': 'gpt-5-6-instant',
+                'tool_name': 'CodeModeTool',
+                'tool_invoked': True,
+            },
+        }),
+        'data: [DONE]',
+    ]
+
+    class Backend(_InitBackend):
+        def get(self, path: str, **kwargs: Any) -> dict:
+            return detail
+
+    async def no_sleep(*args: Any) -> None:
+        pass
+
+    monkeypatch.setattr(sse_mod.asyncio, 'sleep', no_sleep)
+    events, err, _ = _collect_heavy_dr(monkeypatch, frames, backend=Backend(_INIT_OK))
+    if valid_connector:
+        assert err is None
+        done = [e for e in events if e.get('type') == 'done']
+        expected, _ = sse_mod._dr_report_from_widget_state(detail)
+        assert expected
+        assert len(done) == 1 and done[0]['text'] == expected
+    else:
+        assert isinstance(err, UsageLimitError)
+        assert not any(e.get('type') == 'done' for e in events)

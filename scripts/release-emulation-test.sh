@@ -59,7 +59,7 @@ if [ $RC -eq 1 ] && echo "$SUM" | grep -q "0 failed"; then RC=0; fi
 check "D1 doctor live: exit 1 + '0 failed' under blockade" $RC "exit=$RC $SUM"
 
 echo "═══ E. MCP stdio client emulation (installed artifact, real client lib) ═══"
-cat > "$SCRATCH/mcp.py" <<'PYEOF'
+cat > "$SCRATCH/mcp_smoke.py" <<'PYEOF'
 import asyncio, json, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -93,7 +93,7 @@ async def main():
 
 asyncio.run(main())
 PYEOF
-"$VENV/bin/python" "$SCRATCH/mcp.py" "$VENV/bin/gpt2agent" > "$OUT/mcp-client.json" 2> "$OUT/mcp-client.err"
+"$VENV/bin/python" "$SCRATCH/mcp_smoke.py" "$VENV/bin/gpt2agent" > "$OUT/mcp-client.json" 2> "$OUT/mcp-client.err"
 check "E1 MCP stdio client session" $? "$(head -c 300 "$OUT/mcp-client.json" 2>/dev/null)"
 python3 -c "
 import json;d=json.load(open('$OUT/mcp-client.json'))
