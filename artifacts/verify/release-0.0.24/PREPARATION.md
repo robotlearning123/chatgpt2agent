@@ -9,24 +9,27 @@ ready for owner release approval. Remaining fleet work is nonblocking.
 
 ## Current candidate
 
-Application pin **ba9201f** supersedes the earlier f46af68 candidate.
-Supplemental live testing found a missing light-research tool event: the
-upstream exposed web/web.run dispatch recipients but withheld argument text.
-The parser now emits the observed recipient when arguments are empty.
-Independent GLM review passed with a failing-before/passing-after control
-and adversarial replay. Full regression: **655 passed / 13 skipped**.
+Application/workflow pin **d6b9b63** supersedes ba9201f. A fresh Devin native
+team, ccz/GLM, Grok and GPT-6.1 integrity review found and exercised parser,
+MCP clarification and rollback defects. The fixes preserve message roles and
+late references, report incomplete clarification honestly, restore editable
+metadata when the old branch changes, and reject false rollback success.
+See TEAM-REVIEW.md for review identities, negative controls and scope.
 
-Both accounts separately passed all five account/light tests, including tool
-events and citations. PONG plus real heavy completion passed (2/2, 152.69 s).
-The rebuilt artifact passed outsider emulation 11/0 and all 13 code CI jobs
-passed. SHA256SUMS refers to the ba9201f build. Primary and secondary Linux
-installations match its 43 package files and pass isolated MCP checks.
-The Mac still has the earlier candidate and needs connectivity before this
-fix can be deployed; secondary Linux still needs renewed login, and old
-clients need reconnect. Full fleet rollout is not complete, but the owner
-explicitly accepted one verified device as the release-preparation gate.
-The primary installation passes that gate.
-See ACCEPTANCE.md and ROLLOUT.md for the requirement-by-requirement audit.
+Primary regression: **671 passed / 13 skipped**. New live account/light
+selection passed 5/5; PONG and heavy report completion passed 2/2 in 182.32 s.
+Those live stream tests used 9b3f483; its stream code is identical in d6b9b63.
+Final built-artifact lifecycle passed **11/11**, including fresh install,
+MCP live reads/manual handoff, previous-version upgrade and uninstall.
+All 13 required CI jobs plus CodeRabbit passed on d6b9b63. SHA256SUMS identifies
+the final d6b9b63 build. Its uncompressed wheel/sdist contents match the
+independently audited 08cbdf3 build, and 43 package files match d6b9b63 Git objects.
+
+Primary Linux is updated to d6b9b63 and all 43 package files match the final
+wheel; code/metadata, dependencies and isolated MCP 30 tools/9 manual schemas
+pass. Other devices retain their separately recorded earlier candidate state.
+The owner accepted one verified device; no fleet-wide current-version claim
+is made. ACCEPTANCE.md and ROLLOUT.md preserve the evidence boundaries.
 
 ## Scope
 
@@ -62,7 +65,7 @@ The default stays `gpt-5-6`; Codex/Work model selection is separate.
 - Clean wheel/sdist build and Twine validation on `8460522`: pass.
   Wheel has 50 files; source archive has 59. No raw taskruns or JWT-shaped
   values are present. Historical hashes remain in the private preparation archive;
-  `SHA256SUMS` now identifies the current ba9201f build.
+  `SHA256SUMS` now identifies the current d6b9b63 build.
 - Outsider emulation rebuilt from `8460522`: 11 passed / 0 failed. Includes clean install, version,
   no-token doctor, isolated client registration, live doctor, real stdio MCP
   (30 tools, manual parameter on all 9 conversation tools), account and
@@ -125,7 +128,7 @@ Shared editable registrations must be consolidated before moving their clone.
 
 The rebuilt candidate at `ce33f03` passed outsider emulation (11/0); application
 package bytes were unchanged through `f46af68`. This build was superseded by
-`ba9201f`; `SHA256SUMS` identifies that current build.
+`ba9201f` and then `d6b9b63`; `SHA256SUMS` identifies the final d6b9b63 build.
 Final code CI: all 13 required jobs passed, plus CodeRabbit success.
 Three existing installations passed version, metadata, 43-file wheel comparison
 and isolated MCP checks. See `ROLLOUT.md` for live-access and reconnect limits.

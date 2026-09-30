@@ -2,11 +2,11 @@
   "version": "0.0.24",
   "date": "2026-09-29",
   "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
-  "runtime_commit": "ba9201f",
+  "runtime_commit": "d6b9b63525635a5428f6d87e52909a2c8c9a0788",
   "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
   "state": "ready_for_owner_release_approval",
   "offline": {
-    "passed": 655,
+    "passed": 671,
     "skipped": 13,
     "failed": 0
   },
@@ -15,7 +15,8 @@
     "sdist_files": 59,
     "twine": "pass",
     "raw_capture_and_jwt_scan": "pass",
-    "build_commit": "ba9201f"
+    "build_commit": "d6b9b63",
+    "files_match_git": "43 packagefiles match d6b9b63; final archives content-identical to independently audited08cbdf3 build"
   },
   "outsider": {
     "passed": 11,
@@ -27,7 +28,7 @@
     "shellcheck": "pass",
     "release_metadata": "pass",
     "diff_check": "pass",
-    "github_actions": "13 required jobs passed on ba9201f; CodeRabbit success"
+    "github_actions": "13 required jobs and CodeRabbit passed on d6b9b63"
   },
   "live": {
     "light_A": {
@@ -69,6 +70,27 @@
       "failed": 0,
       "seconds": 152.69,
       "scope": "PONG and real heavy connector report completion"
+    },
+    "team_final_light": {
+      "pin": "9b3f483",
+      "passed": 5,
+      "failed": 0,
+      "seconds": 71.54
+    },
+    "team_final_heavy": {
+      "pin": "9b3f483",
+      "passed": 2,
+      "failed": 0,
+      "seconds": 182.32,
+      "scope": "PONG and full heavy report; sse.py unchanged through d6b9b63"
+    },
+    "installed_mcp_light": {
+      "pin": "d6b9b63",
+      "tool_error": false,
+      "chars": 1744,
+      "official_source": true,
+      "incomplete": false,
+      "seconds": 22.68
     }
   },
   "models": {
@@ -120,13 +142,73 @@
       "live_skipped": 6,
       "negative_control": "new regression tests: 2 fail before fix; 2 pass after",
       "adversarial_replay": "PASS; no false positives or answer contamination"
+    },
+    "team_report": "TEAM-REVIEW.md",
+    "team": {
+      "initial_pin": "cf928126",
+      "final_runtime_pin": "d6b9b63",
+      "devin": {
+        "model": "swe-2-high",
+        "native_profiles": [
+          "tester",
+          "verifier"
+        ],
+        "full_suite": {
+          "passed": 655,
+          "skipped": 13
+        },
+        "targeted_passed": 45,
+        "verifier_install_tests": 42,
+        "initial_verdict": "FAIL",
+        "major_finding": "continuation defect independently reproduced; fixed9b3f483; primary reran originalprobes onfinal source"
+      },
+      "ccz_parser": {
+        "model": "glm-5.3",
+        "pin": "9b3f483",
+        "verdict": "PASS",
+        "focused_passed": 78,
+        "focused_skipped": 6,
+        "negative_control_failed": 9
+      },
+      "ccz_rollback": {
+        "model": "glm-5.3",
+        "pin": "d6b9b63",
+        "verdict": "PASS",
+        "targeted_passed": 15,
+        "independent_git_scenarios": 6
+      },
+      "integrity": {
+        "model": "gpt-6.1-sol",
+        "verdict": "PASS",
+        "package_source_pin": "d6b9b63",
+        "same_version_race": "independently reproduced and closure verified"
+      },
+      "grok": {
+        "model": "grok-4.7",
+        "initial_verdict": "FIX-FIRST",
+        "final_pin": "08cbdf3",
+        "verdict": "PASS",
+        "targeted_passed": 83,
+        "closures": [
+          "MCP clarification failure",
+          "detached rollback metadata",
+          "parser delta"
+        ]
+      },
+      "primary": {
+        "verdict": "PASS",
+        "full_passed": 671,
+        "skipped": 13,
+        "installed_files": 43,
+        "outsider_passed": 11
+      }
     }
   },
-  "workflow_commit": "f46af684f9e995dd383b94b837e88040c19569d3",
+  "workflow_commit": "d6b9b63525635a5428f6d87e52909a2c8c9a0788",
   "rollout": {
     "existing_installations_updated": 3,
     "installation_and_isolated_mcp_verified": 3,
-    "primary_final_workflow_pin": "f46af68",
+    "primary_final_workflow_pin": "d6b9b63",
     "secondary_conda_registration": "backed up and consolidated to primary CLI; dependencies unchanged",
     "mac": "Earlier 0.0.24 at ce33f03 verified; final workflow transaction unresolved; newest ba9201f application fix not deployed while SSH unreachable",
     "secondary_linux_live_doctor": "401 expired token; owner login required",
@@ -134,15 +216,15 @@
     "inventory_environments": 15,
     "not_installed_environments": 12,
     "reconnect_count_note": "Snapshot count; can decline naturally as owner clients exit. No processes were terminated.",
-    "current_candidate_verified_installations": 2,
-    "primary_application_pin": "ba9201f",
+    "current_candidate_verified_installations": 1,
+    "primary_application_pin": "d6b9b63",
     "secondary_linux_application_pin": "ba9201f"
   },
   "acceptance_scope": {
     "owner_instruction": "one device verify is fine",
     "required_devices": 1,
     "verified_device": "primary Linux",
-    "application_pin": "ba9201f",
+    "application_pin": "d6b9b63",
     "package_files_verified": 43,
     "isolated_mcp": {
       "tools": 30,

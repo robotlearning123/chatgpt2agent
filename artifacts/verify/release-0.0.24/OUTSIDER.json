@@ -7,5 +7,8 @@
     "account_status": "OK",
     "chat_manual": "OK",
     "list_conversations": "OK"
-  }
+  },
+  "build_commit": "d6b9b63",
+  "package_source": "SHA256SUMS",
+  "install_source": "official PyPI command override; global configuration unchanged"
 }

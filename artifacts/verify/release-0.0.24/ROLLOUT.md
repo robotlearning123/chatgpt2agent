@@ -1,3 +1,15 @@
+# Latest one-device candidate verification
+
+Primary Linux now runs **d6b9b63**. Preview pinned the target; apply refreshed
+editable metadata and passed isolated CLI/MCP checks. A separate final-wheel
+comparison verified all 43 package files, code/metadata 0.0.24, MCP 30 tools,
+9 manual schemas and zero-network handoff. Dependency check passed.
+Only this device is claimed current; the owner accepted one verified device.
+Earlier multi-device records below remain history. Existing owner sessions
+were preserved; new-process acceptance does not claim their restart.
+
+---
+
 # Candidate installation rollout, 2026-09-29
 
 Owner authorized updating existing installations. This is not release publication.

@@ -69,3 +69,14 @@ The five-line runtime correction needs no further simplification. The heavy
 smoke now exercises the actual connector, and the live environment flags match
 the runtime's nonempty-string semantics. Primary full suite: 655/13; real
 account/light selection 5/5 on each account; PONG/heavy completion 2/2.
+
+## Final team review
+
+The fresh team review and defect closures supersede the earlier per-delta
+receipts above; see TEAM-REVIEW.md and VALIDATION.json for exact pins.
+Devin native tester/verifier completed substantive probes after quota handoff.
+GLM accepted parser repairs at 9b3f483; Grok accepted parser/clarification/rollback
+repairs at 08cbdf3; GLM and GPT-6.1 independently accepted the final rollback
+guard at d6b9b63. Primary execution: 671 passed/13 skipped, outsider 11/0,
+final wheel 43 files, isolated MCP 30/9 and real installed research completion.
+No blocking review finding remains; documented limitations are retained.
