@@ -3,6 +3,24 @@
 Repo-specific always-check rules for `/my-review`, `/code-review`, `/simplify`,
 and any independent reviewer. Every line here traces to a confirmed incident.
 
+## Merge gate
+
+The owner accepts independent cross-model verification in place of a second
+human approval. Before merging, the responsible agent must verify:
+
+- A reviewer from a different model family has inspected the committed change,
+  with a recorded PASS, commit/range, model identity and execution evidence.
+  Re-review subsequent changes; a stale verdict does not cover new code.
+- The primary has independently checked the result, completed simplification,
+  and closed all blocking findings and review discussions.
+- Required CI passes on the current PR head, which is up to date with main.
+
+GitHub requires the PR, required checks and resolved discussions, with zero
+required approving GitHub reviews. Cross-model evidence is a workflow gate
+checked by the responsible agent; a green CI badge alone does not establish it.
+Merge normally with the verified head pinned; do not bypass CI or branch rules.
+Release publication still requires the owner's explicit authorization.
+
 ## Always check
 
 - **A dependency pin is a claim about the environment.** Code must not assume the
