@@ -3,8 +3,9 @@
 Date: 2026-09-29. Base: `e911a3a` (published v0.0.23).
 Candidate branch: `release/v0.0.24`.
 State: release prepared, not tagged or published. Owner-authorized candidate
-installation updates are recorded in `ROLLOUT.md`; runtime acceptance remains
-partial because a device is offline, another needs login, and old clients need reconnect.
+installation updates are recorded in `ROLLOUT.md`. The owner revised device
+acceptance to one verified device; primary Linux passes. The candidate is
+ready for owner release approval. Remaining fleet work is nonblocking.
 
 ## Current candidate
 
@@ -22,7 +23,9 @@ passed. SHA256SUMS refers to the ba9201f build. Primary and secondary Linux
 installations match its 43 package files and pass isolated MCP checks.
 The Mac still has the earlier candidate and needs connectivity before this
 fix can be deployed; secondary Linux still needs renewed login, and old
-clients need reconnect. **Full fleet acceptance is not complete.**
+clients need reconnect. Full fleet rollout is not complete, but the owner
+explicitly accepted one verified device as the release-preparation gate.
+The primary installation passes that gate.
 See ACCEPTANCE.md and ROLLOUT.md for the requirement-by-requirement audit.
 
 ## Scope

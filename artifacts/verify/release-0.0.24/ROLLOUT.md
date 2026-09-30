@@ -28,3 +28,12 @@ transaction blindly. No tag, merge, publication, or owner-session restart occurr
 
 Current candidate ba9201f is verified on two of the three installed environments.
 The Mac's earlier 0.0.24 version string is not evidence of the latest package bytes.
+
+## Owner-revised release acceptance
+
+The owner explicitly instructed "one device verify is fine". Primary Linux
+is the accepted device: ba9201f installed package, all 43 wheel files, matching
+code/metadata, dependency health, fresh MCP 30 tools / 9 manual schemas and
+manual handoff pass. This satisfies the device gate for release preparation.
+Mac connectivity, secondary account renewal and old-client reconnect remain
+operational follow-up, not blockers to preparing this release.

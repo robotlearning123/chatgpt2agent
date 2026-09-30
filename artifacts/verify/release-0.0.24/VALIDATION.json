@@ -4,7 +4,7 @@
   "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
   "runtime_commit": "ba9201f",
   "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
-  "state": "prepared_pending_fleet_acceptance",
+  "state": "ready_for_owner_release_approval",
   "offline": {
     "passed": 655,
     "skipped": 13,
@@ -137,5 +137,25 @@
     "current_candidate_verified_installations": 2,
     "primary_application_pin": "ba9201f",
     "secondary_linux_application_pin": "ba9201f"
+  },
+  "acceptance_scope": {
+    "owner_instruction": "one device verify is fine",
+    "required_devices": 1,
+    "verified_device": "primary Linux",
+    "application_pin": "ba9201f",
+    "package_files_verified": 43,
+    "isolated_mcp": {
+      "tools": 30,
+      "manual_schemas": 9,
+      "manual_handoff": "pass"
+    },
+    "dependency_check": "pass",
+    "other_device_rollout": "recorded, not a release-preparation gate",
+    "fresh_doctor": {
+      "ok": 24,
+      "failed": 0,
+      "blocked_legacy": 1,
+      "unverified_writes_or_files": 4
+    }
   }
 }

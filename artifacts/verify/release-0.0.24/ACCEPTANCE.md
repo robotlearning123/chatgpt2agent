@@ -3,6 +3,12 @@
 Candidate application and test pin: `ba9201f`. This audit supplements the
 verification history; it does not authorize publication.
 
+The owner explicitly revised device acceptance to **one verified device**
+("one device verify is fine"). The primary Linux installation satisfies that
+gate: current candidate bytes, code/metadata, dependencies, fresh isolated MCP
+and account-level live evidence. Other fleet work remains recorded but is not
+a release-preparation blocker. Status: **ready for owner release approval**.
+
 | Requirement | Evidence | State |
 |---|---|---|
 | Current ChatGPT compatibility | September 29 compatibility report; live model-routing receipts | Verified with documented Work/Codex versus Chat boundary |
@@ -14,7 +20,7 @@ verification history; it does not authorize publication.
 | Health and README boundaries | Both primary doctors 24 OK / 0 failed / 1 blocked legacy gate / 4 unverified; README distinguishes gate checks from executed tools | Pass with stated limits |
 | Manual fallback | Isolated handoff with zero network; 9 schemas checked; live conversation gate is open through bridge | Pass for applicable fallback check; no new human browser roundtrip |
 | Independent review and simplification | Independent GLM PASS at ba9201f; 18 targeted passes, negative control and adversarial replay | Pass |
-| Existing device installations | See ROLLOUT.md and private per-device receipts | Incomplete: Mac unreachable; secondary login expired; old clients need reconnect |
+| One-device acceptance (owner-revised scope) | Primary Linux ba9201f; 43 package files match built wheel; metadata, dependencies and fresh MCP pass; live evidence above | Pass; other fleet work tracked separately |
 | Publish preparation | 0.0.24 manifests/changelog; draft PR #87; proposed annotated tag v0.0.24 | Prepared; no merge/tag/publish authorized |
 
 The 13 default skips are one live account test, three light-research tests,
