@@ -217,3 +217,39 @@ def test_rollback_restores_metadata_when_previous_branch_changes(
         assert git(args.clone, 'rev-parse', 'owner-branch') == target
     if branch_change != 'stable':
         assert receipt['rollback']['branch'] == 'left detached; previous branch changed'
+
+
+def test_rollback_never_claims_restored_after_late_same_version_branch_move(
+    deployment, monkeypatch,
+):
+    args, previous, _ = deployment
+    args.apply = True
+    args.version = '0.0.23'
+    git(args.clone, 'config', 'user.name', 'Test')
+    git(args.clone, 'config', 'user.email', 'test@example.invalid')
+    marker = args.clone / 'gpt2agent/marker.py'
+    marker.write_text('candidate = True\n')
+    git(args.clone, 'add', '.')
+    git(args.clone, 'commit', '-qm', 'same-version candidate')
+    target = git(args.clone, 'rev-parse', 'HEAD')
+    args.ref = target
+    git(args.clone, 'checkout', '-qb', 'owner-branch', previous)
+    real_run = fleet_sync.run
+
+    def run(*command, **kwargs):
+        if command[0] == 'git':
+            if command[-3:] == ('checkout', '--quiet', 'owner-branch'):
+                real_run('git', '-C', str(args.clone), 'update-ref',
+                         'refs/heads/owner-branch', target)
+            return real_run(*command, **kwargs)
+        if 'pip' in command:
+            return ''
+        raise RuntimeError('injected verification failure')
+
+    monkeypatch.setattr(fleet_sync, 'run', run)
+    receipt = {}
+    with pytest.raises(RuntimeError, match='injected'):
+        fleet_sync.sync(args, receipt)
+    assert git(args.clone, 'rev-parse', 'owner-branch') == target
+    assert receipt['rollback']['status'] == 'failed'
+    assert 'checkout changed' in receipt['rollback']['error']

@@ -113,6 +113,8 @@ def sync(args: argparse.Namespace, receipt: dict) -> None:
                 if any(item["version"] != old_version or item["metadata"] != old_version
                        for item in restored):
                     raise ValueError("rollback code or metadata version mismatch")
+                if git(clone, "status", "--porcelain") or git(clone, "rev-parse", "HEAD") != previous:
+                    raise ValueError("rollback checkout changed during restoration")
                 receipt["rollback"] = {"status": "restored", "installs": restored,
                                        "branch": branch_state}
             except Exception as exc:
