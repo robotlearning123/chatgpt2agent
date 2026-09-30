@@ -7,7 +7,22 @@ installation updates are recorded in `ROLLOUT.md`. The owner revised device
 acceptance to one verified device; primary Linux passes. The candidate is
 ready for owner release approval. Remaining fleet work is nonblocking.
 
-## Current candidate
+## September 30 merge follow-up
+
+Current runtime candidate: `b1d4aed95c78cc0c15962ba0e2e86e712247009b`. The queue worker now honors the
+configured chat model for light research and preserves explicit overrides;
+heavy routing is unchanged. Primary validation: **675 passed / 13 skipped**,
+Ruff, release metadata and diff checks pass. Two light regressions fail before
+the fix; both heavy controls pass before and after.
+
+This section supersedes the candidate and approval state below: the owner has
+authorized merging. Existing package hashes, outsider, device and live evidence
+remain pinned to d6b9b63 and do not certify this new runtime byte-for-byte.
+The current task is to finish the reviewed PR merge; publication must use
+rebuilt artifacts and verify the new source. See MERGE-REVIEW.md for the
+follow-up review and disposition of GitHub discussions.
+
+## Earlier candidate verification
 
 Application/workflow pin **d6b9b63** supersedes ba9201f. A fresh Devin native
 team, ccz/GLM, Grok and GPT-6.1 integrity review found and exercised parser,

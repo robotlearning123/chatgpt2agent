@@ -2,13 +2,14 @@
   "version": "0.0.24",
   "date": "2026-09-29",
   "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
-  "runtime_commit": "d6b9b63525635a5428f6d87e52909a2c8c9a0788",
+  "runtime_commit": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
   "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
-  "state": "ready_for_owner_release_approval",
+  "state": "reviewed_pending_normal_merge",
   "offline": {
-    "passed": 671,
+    "passed": 675,
     "skipped": 13,
-    "failed": 0
+    "failed": 0,
+    "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b"
   },
   "package": {
     "wheel_files": 50,
@@ -16,7 +17,8 @@
     "twine": "pass",
     "raw_capture_and_jwt_scan": "pass",
     "build_commit": "d6b9b63",
-    "files_match_git": "43 packagefiles match d6b9b63; final archives content-identical to independently audited08cbdf3 build"
+    "files_match_git": "43 packagefiles match d6b9b63; final archives content-identical to independently audited08cbdf3 build",
+    "scope": "Historical d6b9b63 build; not the current runtime candidate"
   },
   "outsider": {
     "passed": 11,
@@ -238,6 +240,44 @@
       "failed": 0,
       "blocked_legacy": 1,
       "unverified_writes_or_files": 4
+    }
+  },
+  "post_review_delta": {
+    "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
+    "base": "3bd6fd5",
+    "changes": [
+      "queued light research configured model and explicit override",
+      "heavy timeout and fallback documentation",
+      "document credential-safe subprocess errors"
+    ],
+    "negative_control": "2 light cases fail before fix; 2 heavy controls pass",
+    "package_and_device_scope": "New wheel/sdist built and Twine-checked; 43 wheel package files match b1d4aed. Existing outsider, installed-device and live records remain pinned to d6b9b63.",
+    "build": {
+      "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
+      "package_files_match_git": 43,
+      "artifacts": {
+        "gpt2agent-0.0.24.tar.gz": "515895cb152ba9a3c3b2aef8dc63b35b4a593717f79935f4a087d9ba6bbeb406",
+        "gpt2agent-0.0.24-py3-none-any.whl": "ea6781684481a71b6f27d2d9e4c1cefe5cddefd8c91f64725c8ed2bed6af5feb"
+      },
+      "twine": "pass"
+    },
+    "documentation_pin": "2b76a1e685cf121690119e7337db13cb6e177419",
+    "review": {
+      "grok": {
+        "model": "grok-4.7",
+        "verdict": "PASS",
+        "runtime_pin": "b1d4aed",
+        "focused_passed": 47,
+        "documentation_closure_pin": "2b76a1e"
+      },
+      "independent_integrity": {
+        "model": "gpt-6.1-sol",
+        "verdict": "PASS",
+        "focused_passed": 4,
+        "negative_control_failed": 2,
+        "documentation_closure_pin": "2b76a1e"
+      },
+      "primary": "PASS"
     }
   }
 }
