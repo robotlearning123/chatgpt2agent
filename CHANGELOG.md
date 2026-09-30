@@ -8,6 +8,10 @@ versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- Light research isolates tool-message patches from answer text, waits for
+  trailing citation metadata before completion, and preserves reordered text
+  and references. Malformed heavy-stream auxiliary metadata is ignored.
+
 - Light research reports observed `web` / `web.run` dispatches even when
   the modern stream withholds their arguments, preserving tool progress events.
 

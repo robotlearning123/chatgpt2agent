@@ -61,7 +61,8 @@ The default stays `gpt-5-6`; Codex/Work model selection is separate.
   metadata validation for proposed tag `v0.0.24`: pass.
 - Clean wheel/sdist build and Twine validation on `8460522`: pass.
   Wheel has 50 files; source archive has 59. No raw taskruns or JWT-shaped
-  values are present; hashes are in `SHA256SUMS`.
+  values are present. Historical hashes remain in the private preparation archive;
+  `SHA256SUMS` now identifies the current ba9201f build.
 - Outsider emulation rebuilt from `8460522`: 11 passed / 0 failed. Includes clean install, version,
   no-token doctor, isolated client registration, live doctor, real stdio MCP
   (30 tools, manual parameter on all 9 conversation tools), account and
@@ -97,7 +98,8 @@ now serves both research modes, and its five safety tests pass unchanged.
 
 Independent GLM 5.3 review passed the final code at `8460522` and independently
 reproduced 642 passed / 13 skipped. See `REVIEW.md` for findings, fixes, and
-review boundaries; `VALIDATION.json` and `SHA256SUMS` record the final evidence.
+review boundaries; `VALIDATION.json` and `SHA256SUMS` now record the current
+candidate, with the earlier evidence retained as history.
 Grok and Devin attempts stalled without substantive verdicts and are not
 counted as acceptance. The reviewer required this sanitized receipt to be
 committed before tagging; it is included in the preparation commit.
@@ -122,7 +124,8 @@ extra files, and checks MCP tools/manual schemas with networking disabled.
 Shared editable registrations must be consolidated before moving their clone.
 
 The rebuilt candidate at `ce33f03` passed outsider emulation (11/0); application
-package bytes are unchanged through `f46af68`. `SHA256SUMS` identifies this build.
+package bytes were unchanged through `f46af68`. This build was superseded by
+`ba9201f`; `SHA256SUMS` identifies that current build.
 Final code CI: all 13 required jobs passed, plus CodeRabbit success.
 Three existing installations passed version, metadata, 43-file wheel comparison
 and isolated MCP checks. See `ROLLOUT.md` for live-access and reconnect limits.

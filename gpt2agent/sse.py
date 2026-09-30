@@ -1966,7 +1966,7 @@ class ConversationClient:
                 done_text = ""
                 round_completed_successfully = False
                 stream_succeeded = False
-                # v1-delta state: patches apply onto the last seen assistant
+                # v1-delta state: patches apply onto the active message
                 # envelope; refs/srg may ride ANY message's metadata (live
                 # capture E10a3: refs on system + tool messages too).
                 _cur_msg: dict = {}
@@ -2017,16 +2017,8 @@ class ConversationClient:
                     nonlocal last_text, done_text
                     nonlocal round_completed_successfully
                     if status == "finished_successfully":
-                        emit.append(
-                            {
-                                "type": "done",
-                                "text": apply_inline_citations(
-                                    new, refs_latest
-                                ),
-                                "content_references": refs_latest,
-                                "search_result_groups": srg_latest,
-                            }
-                        )
+                        # Hold the candidate until EOF: later metadata can
+                        # add citations and later lifecycles can invalidate it.
                         round_completed_successfully = True
                         last_text = new
                         done_text = new
@@ -2091,7 +2083,7 @@ class ConversationClient:
                     nonlocal _cur_msg, _cur_status, _last_patch_path
                     nonlocal _implicit_prefix, _envelope_seen
                     nonlocal last_assistant_msg_id
-                    nonlocal round_completed_successfully, done_text, last_text
+                    nonlocal last_text
                     p, o, v = f.get("p"), f.get("o"), f.get("v")
 
                     # Batch patch — the wire usually tags these
@@ -2113,6 +2105,7 @@ class ConversationClient:
                         if not _cur_msg and not _envelope_seen and (
                             p.endswith("/content/parts/0")
                             or p == "/message/status"
+                            or p.startswith("/message/metadata")
                         ):
                             # Patches before any envelope (wire reordering):
                             # seed an implicit assistant-text anchor instead
@@ -2133,23 +2126,20 @@ class ConversationClient:
                             and not _envelope_seen
                         ):
                             _implicit_prefix = _cur_text()
+                        is_answer = (
+                            (_cur_msg.get("author") or {}).get("role") == "assistant"
+                            and (_cur_msg.get("content") or {}).get("content_type") == "text"
+                            and _cur_msg.get("recipient") in (None, "all")
+                        )
                         if p == "/message/status" and isinstance(v, str):
                             _cur_status = v
-                            if (_cur_msg.get("author") or {}).get(
-                                "role"
-                            ) == "assistant" and (
-                                _cur_msg.get("content") or {}
-                            ).get("content_type") == "text":
+                            if is_answer:
                                 _text_update(_cur_text(), v)
                         elif p.endswith("/content/parts/0") and isinstance(v, str):
-                            if (_cur_msg.get("author") or {}).get(
-                                "role"
-                            ) == "assistant" and o in (None, "append"):
+                            if is_answer and o in (None, "append"):
                                 # o=="append": the payload IS the delta.
                                 _append_delta(v)
-                            elif (_cur_msg.get("author") or {}).get(
-                                "role"
-                            ) == "assistant":
+                            elif is_answer:
                                 # replace/other ops carry a new snapshot.
                                 _text_update(
                                     _cur_text(), _cur_status or "in_progress"
@@ -2170,7 +2160,6 @@ class ConversationClient:
                         # mis-attributed stray text onto the new message
                         # (Devin S1 reproduction, 2026-09-23).
                         _last_patch_path = None
-                        _was_first_envelope = not _envelope_seen
                         _envelope_seen = True
                         role = (msg.get("author") or {}).get("role", "")
                         content = msg.get("content") or {}
@@ -2187,6 +2176,12 @@ class ConversationClient:
                             last_assistant_msg_id = msg_id
 
                         _capture_refs(meta)
+                        # System reference annotations can interleave an
+                        # assistant lifecycle without changing its patch anchor.
+                        # User/tool/dispatch messages have their own lifecycle.
+                        if role != "system":
+                            _cur_msg = msg
+                            _cur_status = status
 
                         # Completion belongs to the latest relevant
                         # lifecycle, not to any earlier clean `done`. A later
@@ -2219,7 +2214,7 @@ class ConversationClient:
 
                         # Text streaming — assistant in-progress or finished
                         if role == "assistant" and ct == "text":
-                            if _implicit_prefix and _was_first_envelope:
+                            if _implicit_prefix:
                                 # Pre-envelope patches met their envelope:
                                 # merge deterministically. The envelope wins
                                 # when it already carries the accumulation
@@ -2246,17 +2241,16 @@ class ConversationClient:
                     # the legacy endpoint (append semantics, like chat
                     # stream()'s no-path branch — not a full snapshot).
                     if isinstance(v, str) and v:
-                        if (
-                            _last_patch_path
-                            and _last_patch_path.endswith("/content/parts/0")
-                            and _cur_msg
+                        if _last_patch_path:
+                            # Continuations inherit their path AND role; a
+                            # metadata/tool continuation is never answer text.
+                            _frame({"p": _last_patch_path, "o": "append", "v": v})
+                        elif not _envelope_seen or (
+                            (_cur_msg.get("author") or {}).get("role") == "assistant"
+                            and (_cur_msg.get("content") or {}).get("content_type") == "text"
+                            and _cur_msg.get("recipient") in (None, "all")
                         ):
-                            _apply_message_patch(
-                                _cur_msg, _last_patch_path, "append", v
-                            )
-                        # Either way the payload is the delta — append it
-                        # directly instead of re-deriving from the snapshot.
-                        _append_delta(v)
+                            _append_delta(v)
 
                 try:
                     async for raw_line in resp.aiter_lines():
@@ -2293,7 +2287,14 @@ class ConversationClient:
                     # On exception, propagate without faking a done event,
                     # so the caller doesn't mistake partial output for a
                     # complete answer (cf. code-review medium #2).
-                    if stream_succeeded and not round_completed_successfully:
+                    if stream_succeeded and round_completed_successfully:
+                        yield {
+                            "type": "done",
+                            "text": apply_inline_citations(done_text, refs_latest),
+                            "content_references": refs_latest,
+                            "search_result_groups": srg_latest,
+                        }
+                    elif stream_succeeded:
                         terminal = {
                             "type": "done",
                             "text": last_text,
@@ -2653,7 +2654,9 @@ class ConversationClient:
                     state["conversation_id"] = obj["conversation_id"]
                 return
             if t == "server_ste_metadata":
-                md = obj.get("metadata") or {}
+                md = obj.get("metadata")
+                if not isinstance(md, dict):
+                    return
                 if md.get("tool_invoked"):
                     state["tool_invoked"] = True
                 slug = md.get("model_slug")

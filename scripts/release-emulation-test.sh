@@ -50,13 +50,13 @@ echo "═══ D. live doctor with real token (read-only) ═══"
 if [ -f "$HOME/.gpt2agent/sentinel-bridge/ENABLED" ]; then
   "$VENV/bin/pip" install --quiet colorama esprima > /dev/null 2>&1 || true
 fi
-# Documented contract (doctor.py): exit 0 only when nothing failed AND nothing
-# blocked; under the upstream blockade exit 1 is EXPECTED with "0 failed".
+# A blocked legacy gate is informational when the bridge is healthy (exit 0).
+# Known upstream blocks can return exit 1 with zero failures; record the summary.
 "$VENV/bin/gpt2agent" doctor > "$OUT/doctor-live.log" 2>&1
 RC=$?
 SUM=$(tail -1 "$OUT/doctor-live.log")
 if [ $RC -eq 1 ] && echo "$SUM" | grep -q "0 failed"; then RC=0; fi
-check "D1 doctor live: exit 1 + '0 failed' under blockade" $RC "exit=$RC $SUM"
+check "D1 doctor live: no failures (known upstream blocks allowed)" $RC "exit=$RC $SUM"
 
 echo "═══ E. MCP stdio client emulation (installed artifact, real client lib) ═══"
 cat > "$SCRATCH/mcp_smoke.py" <<'PYEOF'

@@ -15,7 +15,7 @@ Covers:
   an empty terminal event.
 * (C) A ``server_ste_metadata`` frame reporting a cheaper ``model_slug``
   than requested is a silent downgrade — raise ``UsageLimitError`` naming
-  both slugs, at the moment the metadata frame arrives. ``i-mini-m``
+  both slugs, after all stream metadata is checked and before final completion. ``i-mini-m``
   (the documented orchestration echo), the requested slug itself, and
   other ``*-pro`` tier slugs must NOT trip the check.
 """
@@ -444,3 +444,11 @@ def test_outer_chat_slug_does_not_reject_verified_async_research(
     else:
         assert isinstance(err, UsageLimitError)
         assert not any(e.get('type') == 'done' for e in events)
+
+
+@pytest.mark.parametrize("metadata", [[{"model_slug": "gpt-5-mini"}], "gpt-5-mini"])
+def test_malformed_auxiliary_metadata_does_not_abort_report(monkeypatch, metadata):
+    malformed = "data: " + json.dumps({"type": "server_ste_metadata", "metadata": metadata})
+    events, err, _ = _collect_heavy_dr(monkeypatch, [malformed, *_FRAMES])
+    assert err is None
+    assert [e["text"] for e in events if e["type"] == "done"] == [_REAL_REPORT]

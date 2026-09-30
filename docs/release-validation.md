@@ -12,11 +12,12 @@ gpt2agent doctor | tee artifacts/verify/doctor-$(date +%Y%m%d).txt
 
 Record the version and date in the release notes. Expect read-only rows to
 report OK; rows for tools blocked by the upstream Sentinel/Turnstile challenge
-must be unchanged from the previous release — a newly blocked or newly fixed
-row means the environment changed, not the code. Exit code note: `doctor`
-exits 1 while any row is blocked upstream (by design, `doctor.py`), so during
-the blockade the healthy gate is **exit 1 with "0 failed"** in the summary —
-exit 2 means no token, any "N failed" row is a real regression.
+must be compared with the previous release; investigate newly changed rows.
+`doctor` exits 0 when checked surfaces are healthy, including when only the
+legacy gate is blocked and the bridge is OK. Other failed or blocked rows
+produce exit 1; exit 2 means no token. A known upstream blockade with zero
+failures can be recorded as a limitation, but does not prove live conversation
+completion. Any failed row blocks live acceptance until its cause is diagnosed.
 
 ## 2. Manual-handoff roundtrip
 

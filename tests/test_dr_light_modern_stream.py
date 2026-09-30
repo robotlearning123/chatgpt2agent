@@ -454,3 +454,69 @@ def test_empty_tool_dispatch_reports_observed_recipient(monkeypatch, recipient):
         {"type": "tool", "call": recipient}
     ]
     assert [e["text"] for e in events if e["type"] == "done"] == ["cited answer"]
+
+
+@pytest.mark.parametrize("finish_answer", [False, True])
+def test_tool_patches_do_not_complete_or_contaminate_answer(monkeypatch, finish_answer):
+    frames = [
+        _msg_line("a1", "assistant", ["The answer is "], "in_progress"),
+        _msg_line("t1", "tool", [""], "in_progress"),
+        _patch_line("/message/content/parts/0", "append", "RAW TOOL OUTPUT"),
+        _patch_line("/message/status", "replace", "finished_successfully"),
+    ]
+    if finish_answer:
+        frames.append(_msg_line("a2", "assistant", ["42"], "finished_successfully"))
+    events = _run_light_dr(monkeypatch, frames + ["data: [DONE]"])
+    dones = [e for e in events if e["type"] == "done"]
+    assert len(dones) == 1
+    assert "RAW TOOL OUTPUT" not in str(events)
+    assert bool(dones[0].get("terminated_abnormally")) is (not finish_answer)
+    if finish_answer:
+        assert dones[0]["text"] == "42"
+
+
+@pytest.mark.parametrize("refs_first", [False, True])
+def test_reordered_refs_reach_final_done(monkeypatch, refs_first):
+    ref_frame = _patch_line("/message/metadata/content_references", "append", REFS)
+    frames = [
+        _msg_line("a1", "assistant", ["Python 3.14"], "finished_successfully"),
+    ]
+    frames.insert(0 if refs_first else len(frames), ref_frame)
+    events = _run_light_dr(monkeypatch, frames + ["data: [DONE]"])
+    dones = [e for e in events if e["type"] == "done"]
+    assert len(dones) == 1
+    assert dones[0]["content_references"] == REFS
+    assert dones[0]["text"] == "[1](https://python.org/)"
+
+
+def test_implicit_prefix_survives_user_echo(monkeypatch):
+    events = _run_light_dr(monkeypatch, [
+        _patch_line("/message/content/parts/0", "append", "Hello"),
+        _msg_line("u1", "user", ["question"], "finished_successfully"),
+        _msg_line("a1", "assistant", [""], "finished_successfully"),
+        "data: [DONE]",
+    ])
+    assert [e["text"] for e in events if e["type"] == "done"] == ["Hello"]
+
+
+def test_metadata_continuation_does_not_emit_text(monkeypatch):
+    events = _run_light_dr(monkeypatch, [
+        _msg_line("a1", "assistant", ["answer"], "in_progress"),
+        _patch_line("/message/metadata/note", "replace", "meta"),
+        'data: {"v": "STRAY-META-TAIL"}',
+        _patch_line("/message/status", "replace", "finished_successfully"),
+        "data: [DONE]",
+    ])
+    assert "STRAY-META-TAIL" not in str(events)
+
+
+def test_later_tool_lifecycle_revokes_completed_candidate(monkeypatch):
+    events = _run_light_dr(monkeypatch, [
+        _msg_line("a1", "assistant", ["intermediate answer"], "finished_successfully"),
+        _msg_line("t1", "tool", ["raw output"], "finished_successfully"),
+        "data: [DONE]",
+    ])
+    dones = [e for e in events if e["type"] == "done"]
+    assert len(dones) == 1
+    assert dones[0].get("terminated_abnormally") is True
+    assert dones[0]["text"] == ""
