@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# v0.0.14 large human-user emulation test (outsider gate).
+# Built-artifact user emulation (outsider release gate).
 # Exercises the BUILT artifact the way a real user would: fresh venv install,
 # isolated HOME, first-run flows, live MCP stdio client calls, upgrade path.
 # Never touches the real pipx env, real ~/.claude, or real ~/.codex (token is
 # read-only via CODEX_HOME passthrough only where noted).
 set -uo pipefail
 W="${1:?usage: release-emulation-test.sh <release-worktree>}"
-OUT=$W/artifacts/verify/human-emulation-20260915
-mkdir -p "$OUT"
+W=$(cd -P "$W" && pwd)
+mkdir -p "$W/artifacts/verify"
+OUT=$(mktemp -d "$W/artifacts/verify/human-emulation.XXXXXXXX")
+SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/gpt2agent-release.XXXXXXXX")
+echo "Receipts: $OUT; isolated environments: $SCRATCH"
 PASS=0; FAIL=0
 check() { # check <name> <exit-code> [detail]
   if [ "$2" -eq 0 ]; then PASS=$((PASS+1)); echo "PASS  $1 ${3:-}"; else FAIL=$((FAIL+1)); echo "FAIL  $1 ${3:-}"; fi
@@ -16,15 +19,15 @@ check() { # check <name> <exit-code> [detail]
 echo "═══ A. build & artifact checks ═══"
 cd -P "$W" || exit 2
 EXPECTED=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-rm -rf dist && python -m build > "$OUT/build.log" 2>&1
-check "A1 python -m build" $? "$(find dist -maxdepth 1 -type f -printf '%f ' 2>/dev/null)"
-python -m twine check dist/* > "$OUT/twine.log" 2>&1
+python -m build --outdir "$OUT/dist" > "$OUT/build.log" 2>&1
+check "A1 python -m build" $? "$(find "$OUT/dist" -maxdepth 1 -type f -printf '%f ' 2>/dev/null)"
+python -m twine check "$OUT/dist/"* > "$OUT/twine.log" 2>&1
 check "A2 twine check" $?
-WHEEL=$(find dist -maxdepth 1 -name '*.whl' | head -1)
+WHEEL=$(find "$OUT/dist" -maxdepth 1 -name '*.whl' | head -1)
 
 echo "═══ B. outsider first install (isolated HOME, no dev deps) ═══"
-VENV=/tmp/gpt2agent-rel14-venv; ISOHOME=/tmp/gpt2agent-rel14-home
-rm -rf "$VENV" "$ISOHOME"; mkdir -p "$ISOHOME"
+VENV=$SCRATCH/venv; ISOHOME=$SCRATCH/home
+mkdir -p "$ISOHOME"
 python -m venv "$VENV" > /dev/null 2>&1
 "$VENV/bin/pip" install --quiet "$WHEEL" > "$OUT/pip-install.log" 2>&1
 check "B1 pip install wheel (clean venv)" $?
@@ -47,23 +50,23 @@ echo "═══ D. live doctor with real token (read-only) ═══"
 if [ -f "$HOME/.gpt2agent/sentinel-bridge/ENABLED" ]; then
   "$VENV/bin/pip" install --quiet colorama esprima > /dev/null 2>&1 || true
 fi
-# Documented contract (doctor.py): exit 0 only when nothing failed AND nothing
-# blocked; under the upstream blockade exit 1 is EXPECTED with "0 failed".
+# A blocked legacy gate is informational when the bridge is healthy (exit 0).
+# Known upstream blocks can return exit 1 with zero failures; record the summary.
 "$VENV/bin/gpt2agent" doctor > "$OUT/doctor-live.log" 2>&1
 RC=$?
 SUM=$(tail -1 "$OUT/doctor-live.log")
 if [ $RC -eq 1 ] && echo "$SUM" | grep -q "0 failed"; then RC=0; fi
-check "D1 doctor live: exit 1 + '0 failed' under blockade" $RC "exit=$RC $SUM"
+check "D1 doctor live: no failures (known upstream blocks allowed)" $RC "exit=$RC $SUM"
 
 echo "═══ E. MCP stdio client emulation (installed artifact, real client lib) ═══"
-cat > /tmp/gpt2agent-rel14-mcp.py <<'PYEOF'
-import asyncio, json
+cat > "$SCRATCH/mcp_smoke.py" <<'PYEOF'
+import asyncio, json, sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 async def main():
     results = {}
-    params = StdioServerParameters(command="/tmp/gpt2agent-rel14-venv/bin/gpt2agent", args=["run", "--stdio"])
+    params = StdioServerParameters(command=sys.argv[1], args=["run", "--stdio"])
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as s:
             await s.initialize()
@@ -90,7 +93,7 @@ async def main():
 
 asyncio.run(main())
 PYEOF
-"$VENV/bin/python" /tmp/gpt2agent-rel14-mcp.py > "$OUT/mcp-client.json" 2> "$OUT/mcp-client.err"
+"$VENV/bin/python" "$SCRATCH/mcp_smoke.py" "$VENV/bin/gpt2agent" > "$OUT/mcp-client.json" 2> "$OUT/mcp-client.err"
 check "E1 MCP stdio client session" $? "$(head -c 300 "$OUT/mcp-client.json" 2>/dev/null)"
 python3 -c "
 import json;d=json.load(open('$OUT/mcp-client.json'))
@@ -99,15 +102,15 @@ assert d['account_status']=='OK' and d['chat_manual']=='OK' and d['list_conversa
 " 2>/dev/null
 check "E2 tool_count>=25 + manual on 9 + live calls" $?
 
-echo "═══ F. upgrade path 0.0.13 -> 0.0.14 (scratch venv) ═══"
-UVENV=/tmp/gpt2agent-rel14-upg
-rm -rf "$UVENV"; python -m venv "$UVENV" > /dev/null 2>&1
-"$UVENV/bin/pip" install --quiet "gpt2agent==0.0.13" > "$OUT/pip-013.log" 2>&1
+echo "═══ F. upgrade path 0.0.23 -> candidate (scratch venv) ═══"
+UVENV=$SCRATCH/upgrade
+python -m venv "$UVENV" > /dev/null 2>&1
+"$UVENV/bin/pip" install --quiet "gpt2agent==0.0.23" > "$OUT/pip-previous.log" 2>&1
 RC1=$?
 "$UVENV/bin/pip" install --quiet --upgrade "$WHEEL" > "$OUT/pip-upg.log" 2>&1
 RC2=$?
 V2=$("$UVENV/bin/gpt2agent" --version 2>&1)
-check "F1 0.0.13 install + upgrade to wheel" $((RC1|RC2)) "now: $V2"
+check "F1 0.0.23 install + upgrade to wheel" $((RC1|RC2)) "now: $V2"
 
 echo "═══ G. uninstall cleanliness ═══"
 "$UVENV/bin/pip" uninstall -y -q gpt2agent > /dev/null 2>&1

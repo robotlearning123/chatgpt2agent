@@ -20,10 +20,10 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 
 ### chat
 
-- **Purpose**: Send a single prompt to any ChatGPT model and get a text response.
+- **Purpose**: Send a single prompt to a ChatGPT Chat model and get a text response.
 - **Parameters**:
   - `prompt` (str, required) -- the user message to send.
-  - `model` (str, default: value from `config.toml` `[models].chat`, fallback `"gpt-5-6"`) -- model slug. Run `list_models` to see all available slugs (some exposed slugs, e.g. Work-only GPT-6 Sol/Luna, resolve to `gpt-5-6` on this surface).
+  - `model` (str, default: value from `config.toml` `[models].chat`, fallback `"gpt-5-6"`) -- model slug. Run `list_models` to see all available slugs (Work catalog entries, including `gpt-6.1-sol-wm`, do not establish Chat support; GPT-6 Sol/Luna requests previously resolved to `gpt-5-6`).
   - `temporary` (bool, default: `True`) -- when `True`, sets `history_and_training_disabled=True` which prevents the conversation from being saved and **blocks tool-based features** (image gen, code interpreter, canvas, memory persistence). Set `False` to enable those features.
   - `manual` (bool, default: `False`) -- when `True`, make zero network calls and return a JSON handoff (`status: manual_handoff`) with the exact prompt to paste into chatgpt.com, the target URL, and readback steps via `list_conversations`/`get_conversation`. Fallback while the upstream Sentinel challenge blocks `/backend-api/conversation`.
 - **Returns**: `str` -- the assistant's reply text.
@@ -37,9 +37,12 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 - **Notes**:
   - `temporary=True` (default) means the conversation is ephemeral -- not saved to ChatGPT history, cannot use image gen / code interpreter / canvas.
   - If you need tool-based features (image gen, code interpreter, canvas), you **must** pass `temporary=False`.
-  - Available model slugs depend on your subscription tier. Pro plan unlocks `gpt-6-pro`, `o3-pro`, etc. GPT-5.5 retires from ChatGPT surfaces (not the OpenAI API) on 2026-10-14; GPT-6 Sol/Luna are Work & Codex-only.
+  - Available model slugs depend on your subscription tier. Pro plan unlocks `gpt-6-pro`, `o3-pro`, etc. GPT-5.5 retires from ChatGPT surfaces (not the OpenAI API) on 2026-10-14; GPT-6.1 Sol and GPT-6 Sol/Luna are Work & Codex-only.
 
 ---
+
+Temporary handoff recovery stops on a conversation 404. A saved-history retry
+requires the caller to explicitly choose `temporary=False`.
 
 ### agent
 
@@ -77,7 +80,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
                 "in primates. Include recent 2025-2026 advances.")
   ```
 - **Notes**:
-  - Uses `model='research'` + `system_hints=['research']` internally (resolves to i-mini-m / SearchGPT backend).
+  - Uses the configured Chat model (`[models].chat`, default `gpt-5-6`) without the retired research hint; connector hints are preserved.
   - Takes 30-120 seconds typically.
   - `history_and_training_disabled` is forced to `False` for DR (ChatGPT refuses DR in temporary chats).
   - The `auto_confirm` prefix is: "Begin the deep research immediately without asking for confirmation. Do not ask clarifying questions; proceed with the best interpretation."
@@ -141,7 +144,7 @@ Source: `gpt2agent/server.py` and `gpt2agent/tools/*.py`.
 
 ### generate_image
 
-- **Purpose**: Generate an image using ChatGPT's built-in image generation (DALL-E).
+- **Purpose**: Generate an image using ChatGPT's built-in image generation.
 - **Parameters**:
   - `prompt` (str, required) -- description of the image to generate.
   - `model` (str, default: `"gpt-5-6"`) -- model to use (must have `image_gen_tool_enabled`).

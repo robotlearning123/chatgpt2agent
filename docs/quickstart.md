@@ -52,11 +52,20 @@ Then **restart your MCP client** (Claude Code spawns the server fresh on restart
 Codex picks it up on next run). Ask your agent to call `account_status` — it should
 return your plan and feature count.
 
+> **Lane reality:** `account_status` and the other read-only tools work with no
+> further setup. Conversation tools (`chat`, `deep_research`, …) need a lane:
+> the sentinel bridge for REST (owner-supplied, see
+> [how-it-works.md](./how-it-works.md#the-sentinel-challenge)), or
+> `browser=True`, or `manual=True` where supported. Automatic browser fallback
+> on an upstream challenge is available for `chat`, `agent`, and `deep_research`
+> when enabled. `gpt2agent doctor` reports sentinel/bridge status and read-only
+> probe results; it does not execute conversation tools or select a lane for each.
+
 ## 5. First calls
 
 - `chat` — talk to any model on your account (`model="gpt-6-pro"`, `o3-pro`, …).
 - `deep_research` — web-augmented research with citations (~1 min).
-- `generate_image` — DALL·E image generation.
+- `generate_image` — ChatGPT image generation.
 
 > **Heads up:** `chat` defaults to `temporary=True`, which disables image gen / code
 > interpreter / canvas. Use the dedicated tools (`generate_image`, `code_interpreter`,

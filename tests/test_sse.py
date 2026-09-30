@@ -1,7 +1,8 @@
 """Live SSE roundtrip: ask model to reply with PONG, verify stream parses.
 
 Live tests are skipped by default to keep `pytest tests/` offline-safe.
-Opt in with ``SKIP_LIVE=0`` (and, for the heavy DR variant, ``SKIP_HEAVY_DR=0``).
+See docs/release-validation.md for live environment flags. Heavy DR also
+requires ``SKIP_HEAVY_DR=0``.
 """
 
 from __future__ import annotations
@@ -25,12 +26,12 @@ _NEEDS_AUTH = pytest.mark.skipif(
 @pytest.mark.skipif(_SKIP_LIVE, reason="SKIP_LIVE=1 (default); set SKIP_LIVE=0 to run")
 def test_sse_pong():
     from gpt2agent.backend import BackendClient
-    from gpt2agent.sse import ConversationClient
+    from gpt2agent.sse import ConversationClient, LIGHT_DR_MODEL
 
     conv = ConversationClient(BackendClient())
     out = asyncio.run(
         conv.complete(
-            "gpt-5-3",
+            LIGHT_DR_MODEL,
             [{"role": "user", "content": "Reply with exactly: PONG"}],
         )
     )
@@ -48,13 +49,18 @@ def test_sse_deep_research_heavy():
     from gpt2agent.sse import ConversationClient
 
     conv = ConversationClient(BackendClient())
-    out = asyncio.run(
-        conv.complete(
-            "research",
-            [{"role": "user", "content": "Summarize: what is 2+2? One sentence."}],
-        )
-    )
-    assert out and out.strip(), "empty DR response"
+    async def collect():
+        return [event async for event in conv.deep_research_heavy(
+            "Compare Python 3.13 and 3.14 using python.org release notes. "
+            "Include two source links, under 150 words. Proceed without clarification."
+        )]
+
+    events = asyncio.run(collect())
+    completed = [event for event in events if event["type"] == "done"]
+    assert completed, "heavy research never completed"
+    text = completed[-1].get("text", "").strip()
+    assert text, "empty heavy research report"
+    assert not text.casefold().startswith("deep research has started"), "acknowledgement only"
 
 
 def test_heavy_dr_payload_structure():

@@ -1,0 +1,283 @@
+{
+  "version": "0.0.24",
+  "date": "2026-09-29",
+  "base": "e911a3a11f2dc46236e377b8df058b8d5a25d683",
+  "runtime_commit": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
+  "pull_request": "https://github.com/robotlearning123/gpt2agent/pull/87",
+  "state": "reviewed_pending_normal_merge",
+  "offline": {
+    "passed": 675,
+    "skipped": 13,
+    "failed": 0,
+    "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b"
+  },
+  "package": {
+    "wheel_files": 50,
+    "sdist_files": 59,
+    "twine": "pass",
+    "raw_capture_and_jwt_scan": "pass",
+    "build_commit": "d6b9b63",
+    "files_match_git": "43 packagefiles match d6b9b63; final archives content-identical to independently audited08cbdf3 build",
+    "scope": "Historical d6b9b63 build; not the current runtime candidate"
+  },
+  "outsider": {
+    "passed": 11,
+    "failed": 0,
+    "mcp_tools": 30
+  },
+  "checks": {
+    "ruff": "pass",
+    "shellcheck": "pass",
+    "release_metadata": "pass",
+    "diff_check": "pass",
+    "github_actions": "13 required jobs and CodeRabbit passed on d6b9b63"
+  },
+  "live": {
+    "light_A": {
+      "seconds": 16.7,
+      "chars": 1197
+    },
+    "light_B": {
+      "seconds": 14.6,
+      "chars": 1335
+    },
+    "heavy_A_895e5d1": {
+      "seconds": 142.4,
+      "chars": 1932
+    },
+    "heavy_B_895e5d1": {
+      "seconds": 260.5,
+      "chars": 1374
+    },
+    "heavy_A_8460522": {
+      "seconds": 500.0,
+      "chars": 1599,
+      "tool_error": false,
+      "transient_poll_http500": 3
+    },
+    "supplemental_A": {
+      "passed": 5,
+      "failed": 0,
+      "seconds": 67.74,
+      "scope": "account and light completion/tool-events/references"
+    },
+    "supplemental_B": {
+      "passed": 5,
+      "failed": 0,
+      "seconds": 65.23,
+      "scope": "account and light completion/tool-events/references"
+    },
+    "current_sse": {
+      "passed": 2,
+      "failed": 0,
+      "seconds": 152.69,
+      "scope": "PONG and real heavy connector report completion"
+    },
+    "team_final_light": {
+      "pin": "9b3f483",
+      "passed": 5,
+      "failed": 0,
+      "seconds": 71.54
+    },
+    "team_final_heavy": {
+      "pin": "9b3f483",
+      "passed": 2,
+      "failed": 0,
+      "seconds": 182.32,
+      "scope": "PONG and full heavy report; sse.py unchanged through d6b9b63"
+    },
+    "installed_mcp_light": {
+      "pin": "d6b9b63",
+      "tool_error": false,
+      "chars": 1744,
+      "official_source": true,
+      "incomplete": false,
+      "seconds": 22.68
+    }
+  },
+  "models": {
+    "catalog_entries_per_account": 24,
+    "gpt61_chat_requests": 2,
+    "gpt61_chat_executions_confirmed": 0,
+    "resolved_model": "gpt-5-6",
+    "default_unchanged": "gpt-5-6"
+  },
+  "publication": {
+    "tag_created": false,
+    "merged": false,
+    "published": false,
+    "candidate_installation_authorized": true
+  },
+  "review": {
+    "writer": "Codex (GPT family)",
+    "reviewer": "ccz / glm-5.3",
+    "verdict": "PASS",
+    "source_pin": "4e632bd",
+    "delta_pin": "8460522",
+    "independent_passed": 642,
+    "independent_skipped": 13,
+    "reproduction_cases": 7,
+    "negative_control_failures": 3,
+    "condition": "sanitized preparation receipts committed",
+    "primary_verdict": "PASS",
+    "workflow": {
+      "reviewer": "ccz / glm-5.3",
+      "verdict": "PASS",
+      "initial_pin": "ce33f03",
+      "final_pin": "f46af68",
+      "independent_full_suite": {
+        "passed": 651,
+        "skipped": 13
+      },
+      "final_targeted_tests": 11,
+      "real_reproductions": [
+        "unexpected installed file rejection",
+        "stale rollback metadata rejection",
+        "consistent rollback restored"
+      ]
+    },
+    "tool_events_delta": {
+      "pin": "ba9201f",
+      "reviewer": "ccz / glm-5.3",
+      "verdict": "PASS",
+      "targeted_passed": 18,
+      "live_skipped": 6,
+      "negative_control": "new regression tests: 2 fail before fix; 2 pass after",
+      "adversarial_replay": "PASS; no false positives or answer contamination"
+    },
+    "team_report": "TEAM-REVIEW.md",
+    "team": {
+      "initial_pin": "cf928126",
+      "final_runtime_pin": "d6b9b63",
+      "devin": {
+        "model": "swe-2-high",
+        "native_profiles": [
+          "tester",
+          "verifier"
+        ],
+        "full_suite": {
+          "passed": 655,
+          "skipped": 13
+        },
+        "targeted_passed": 45,
+        "verifier_install_tests": 42,
+        "initial_verdict": "FAIL",
+        "major_finding": "continuation defect independently reproduced; fixed9b3f483; primary reran originalprobes onfinal source"
+      },
+      "ccz_parser": {
+        "model": "glm-5.3",
+        "pin": "9b3f483",
+        "verdict": "PASS",
+        "focused_passed": 78,
+        "focused_skipped": 6,
+        "negative_control_failed": 9
+      },
+      "ccz_rollback": {
+        "model": "glm-5.3",
+        "pin": "d6b9b63",
+        "verdict": "PASS",
+        "targeted_passed": 15,
+        "independent_git_scenarios": 6
+      },
+      "integrity": {
+        "model": "gpt-6.1-sol",
+        "verdict": "PASS",
+        "package_source_pin": "d6b9b63",
+        "same_version_race": "independently reproduced and closure verified"
+      },
+      "grok": {
+        "model": "grok-4.7",
+        "initial_verdict": "FIX-FIRST",
+        "final_pin": "08cbdf3",
+        "verdict": "PASS",
+        "targeted_passed": 83,
+        "closures": [
+          "MCP clarification failure",
+          "detached rollback metadata",
+          "parser delta"
+        ]
+      },
+      "primary": {
+        "verdict": "PASS",
+        "full_passed": 671,
+        "skipped": 13,
+        "installed_files": 43,
+        "outsider_passed": 11
+      }
+    }
+  },
+  "workflow_commit": "d6b9b63525635a5428f6d87e52909a2c8c9a0788",
+  "rollout": {
+    "existing_installations_updated": 3,
+    "installation_and_isolated_mcp_verified": 3,
+    "primary_final_workflow_pin": "d6b9b63",
+    "secondary_conda_registration": "backed up and consolidated to primary CLI; dependencies unchanged",
+    "mac": "Earlier 0.0.24 at ce33f03 verified; final workflow transaction unresolved; newest ba9201f application fix not deployed while SSH unreachable",
+    "secondary_linux_live_doctor": "401 expired token; owner login required",
+    "pre_update_primary_mcp_processes_pending_reconnect": 11,
+    "inventory_environments": 15,
+    "not_installed_environments": 12,
+    "reconnect_count_note": "Snapshot count; can decline naturally as owner clients exit. No processes were terminated.",
+    "current_candidate_verified_installations": 1,
+    "primary_application_pin": "d6b9b63",
+    "secondary_linux_application_pin": "ba9201f"
+  },
+  "acceptance_scope": {
+    "owner_instruction": "one device verify is fine",
+    "required_devices": 1,
+    "verified_device": "primary Linux",
+    "application_pin": "d6b9b63",
+    "package_files_verified": 43,
+    "isolated_mcp": {
+      "tools": 30,
+      "manual_schemas": 9,
+      "manual_handoff": "pass"
+    },
+    "dependency_check": "pass",
+    "other_device_rollout": "recorded, not a release-preparation gate",
+    "fresh_doctor": {
+      "ok": 24,
+      "failed": 0,
+      "blocked_legacy": 1,
+      "unverified_writes_or_files": 4
+    }
+  },
+  "post_review_delta": {
+    "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
+    "base": "3bd6fd5",
+    "changes": [
+      "queued light research configured model and explicit override",
+      "heavy timeout and fallback documentation",
+      "document credential-safe subprocess errors"
+    ],
+    "negative_control": "2 light cases fail before fix; 2 heavy controls pass",
+    "package_and_device_scope": "New wheel/sdist built and Twine-checked; 43 wheel package files match b1d4aed. Existing outsider, installed-device and live records remain pinned to d6b9b63.",
+    "build": {
+      "pin": "b1d4aed95c78cc0c15962ba0e2e86e712247009b",
+      "package_files_match_git": 43,
+      "artifacts": {
+        "gpt2agent-0.0.24.tar.gz": "515895cb152ba9a3c3b2aef8dc63b35b4a593717f79935f4a087d9ba6bbeb406",
+        "gpt2agent-0.0.24-py3-none-any.whl": "ea6781684481a71b6f27d2d9e4c1cefe5cddefd8c91f64725c8ed2bed6af5feb"
+      },
+      "twine": "pass"
+    },
+    "documentation_pin": "2b76a1e685cf121690119e7337db13cb6e177419",
+    "review": {
+      "grok": {
+        "model": "grok-4.7",
+        "verdict": "PASS",
+        "runtime_pin": "b1d4aed",
+        "focused_passed": 47,
+        "documentation_closure_pin": "2b76a1e"
+      },
+      "independent_integrity": {
+        "model": "gpt-6.1-sol",
+        "verdict": "PASS",
+        "focused_passed": 4,
+        "negative_control_failed": 2,
+        "documentation_closure_pin": "2b76a1e"
+      },
+      "primary": "PASS"
+    }
+  }
+}

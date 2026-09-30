@@ -49,6 +49,28 @@ Zed nests the command under `context_servers`:
 }
 ```
 
+## Multiple ChatGPT accounts in one clientToken selection follows `CODEX_HOME` (default `~/.codex`), so a second
+account is a second server entry with its own `env` — both run side by side
+in the same client, each with its own token, quota, and rate-limit budget:
+
+```json
+{
+  "mcpServers": {
+    "gpt2agent":   { "command": "gpt2agent", "args": ["run", "--stdio"] },
+    "gpt2agent-b": {
+      "command": "gpt2agent",
+      "args": ["run", "--stdio"],
+      "env": { "CODEX_HOME": "/home/you/.codex-second-account" }
+    }
+  }
+}
+```
+
+Log the second account in once with
+`CODEX_HOME=~/.codex-second-account codex login`, then restart the client.
+Tools are identical under both entries — pick the entry (and thus the
+account) by which server you call.
+
 ## Claude Code plugin
 
 Instead of `gpt2agent install --client claude-code`, you can install via the plugin
@@ -99,3 +121,19 @@ stdio is the default and safest. The HTTP transport is **unauthenticated** and
 proxies your full account, so it binds `127.0.0.1` only and refuses non-loopback
 hosts unless you set `GPT2AGENT_ALLOW_REMOTE=1` (put it behind your own auth proxy).
 See the README's **Security & risk** section.
+
+## Timeouts
+
+gpt2agent tool calls can run long: light `deep_research` tens of seconds,
+`deep_research_heavy` can spend up to 1800 s in the initial SSE phase and
+another 1800 s polling for completion. Allow more than 3600 s plus startup
+overhead for the complete tool call.
+
+- **Claude Code:** `MCP_TIMEOUT` (server startup, ms, default 30000) and
+  `MCP_TOOL_TIMEOUT` (tool execution, ms, default 100000000 ≈ 28 h — heavy DR
+  fits the default). A `.mcp.json` per-server `timeout` field overrides
+  `MCP_TOOL_TIMEOUT`; HTTP/SSE/connector servers have a separate 60 s
+  per-request cap unless the value is raised above 60000.
+  Source: code.claude.com/docs env-vars reference (verified 2026-09-24).
+- Other clients: look for a per-server or global tool timeout setting and
+  raise it above 3600 s, with additional startup overhead, for heavy DR.

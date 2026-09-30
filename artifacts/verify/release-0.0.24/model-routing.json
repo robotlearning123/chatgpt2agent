@@ -1,0 +1,12 @@
+[
+  {
+    "requested": "gpt-6.1-sol-wm",
+    "answer": "RELEASE_MODEL_CHECK\n\n---\n**Model note** \u2014 requested `gpt-6.1-sol-wm` but the server resolved `gpt-5-6` (usage cap or upstream routing). Retry later, pick a model explicitly, or use browser=True.",
+    "seconds": 28.6
+  },
+  {
+    "requested": "gpt-6.1-sol",
+    "answer": "RELEASE_MODEL_CHECK\n\n---\n**Model note** \u2014 requested `gpt-6.1-sol` but the server resolved `gpt-5-6` (usage cap or upstream routing). Retry later, pick a model explicitly, or use browser=True.",
+    "seconds": 6.3
+  }
+]

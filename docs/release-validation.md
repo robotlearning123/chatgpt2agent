@@ -12,11 +12,12 @@ gpt2agent doctor | tee artifacts/verify/doctor-$(date +%Y%m%d).txt
 
 Record the version and date in the release notes. Expect read-only rows to
 report OK; rows for tools blocked by the upstream Sentinel/Turnstile challenge
-must be unchanged from the previous release — a newly blocked or newly fixed
-row means the environment changed, not the code. Exit code note: `doctor`
-exits 1 while any row is blocked upstream (by design, `doctor.py`), so during
-the blockade the healthy gate is **exit 1 with "0 failed"** in the summary —
-exit 2 means no token, any "N failed" row is a real regression.
+must be compared with the previous release; investigate newly changed rows.
+`doctor` exits 0 when checked surfaces are healthy, including when only the
+legacy gate is blocked and the bridge is OK. Other failed or blocked rows
+produce exit 1; exit 2 means no token. A known upstream blockade with zero
+failures can be recorded as a limitation, but does not prove live conversation
+completion. Any failed row blocks live acceptance until its cause is diagnosed.
 
 ## 2. Manual-handoff roundtrip
 
@@ -39,6 +40,24 @@ pytest -q | tee artifacts/verify/pytest-$(date +%Y%m%d).txt
 
 Must be fully green — 0 failures, no new skips versus the previous run.
 
+The default suite deliberately disables live calls and the Sentinel bridge.
+To exercise the current Chat/research paths on an authenticated, bridge-enabled
+host, use an explicit live selection and keep production pacing enabled:
+
+```bash
+SKIP_LIVE=0 GPT2AGENT_SENTINEL_BRIDGE_OFF= GPT2AGENT_RATELIMIT_OFF= \
+  pytest -q tests/test_backend_tools.py tests/test_deep_research.py \
+  tests/test_sse.py::test_sse_pong
+```
+
+The `*_OFF` switches use nonempty-string semantics: `0` still disables the
+feature. Empty values override the offline defaults in `tests/conftest.py`.
+For the heavy completion test, additionally set `SKIP_HEAVY_DR=0` and select
+`tests/test_sse.py::test_sse_deep_research_heavy`. It must return the report,
+not just acknowledge startup. These calls consume account quota and retain
+normal pacing. Archive failures as well as successful retries; distinguish
+harness configuration errors from upstream or application failures.
+
 ## 4. Blocked-tool annotation check
 
 The README tool-status table must match the `doctor` output from step 1
@@ -50,7 +69,7 @@ update the README table in the same release — do not ship a stale status.
 Exercise the BUILT artifact the way a first-time user would — build, wheel
 install into a clean venv, no-token first run, client registration with an
 isolated HOME, a real MCP stdio client session (tool schemas + live
-read-only calls + a `manual=True` handoff), the 0.0.13→new upgrade path,
+read-only calls + a `manual=True` handoff), the previous-release→candidate upgrade path,
 and uninstall cleanliness:
 
 ```bash
@@ -90,12 +109,57 @@ The fleet does NOT run the dev worktree — it runs the `gpt2agent` binary,
 which resolves to `~/.local/share/gpt2agent-venv` (editable install → the
 clone at `/home/robot/workspace/47-chatgpt2agent/gpt2agent`). Merging to main
 without syncing that clone is exactly how the fleet ended up running ~v0.0.14
-on 2026-09-18 while the fix sat in a worktree. After every merge-to-main:
+on 2026-09-18 while the fix sat in a worktree. For an owner-authorized local candidate rollout, pin the reviewed commit; do not
+use a moving branch as the verification identity. A local rollout does not
+create a public release. After an approved merge, pin the merge commit instead.
+
+Preview first (the command never applies by default):
 
 ```bash
-scripts/fleet-sync.sh origin/main   # fast-forwards the clone, prints version
-                                    # + running MCP servers needing restart
+scripts/fleet-sync.sh <reviewed-sha> --version 0.0.24 \
+  --python "$HOME/.local/share/gpt2agent-venv/bin/python" \
+  --receipt "$HOME/.local/state/gpt2agent/preview-unique.json"
 ```
+
+Before moving a shared clone, inventory every attached editable installation.
+Include each interpreter in the update, or back up and consolidate an obsolete
+registration first, so an omitted environment cannot silently change code
+while retaining old metadata.
+
+Repeat `--python` for each editable installation attached to that clone; set
+`--clone` for a different device/path. Inspect the preview, then repeat with
+`--apply` and a **new** receipt path. The updater refuses dirty or concurrently
+changed clones, resolves the ref once, refreshes package metadata without
+upgrading dependencies, and checks version, import location, CLI and fresh MCP
+startup. Failed verification attempts to restore the prior checkout and
+attempted installs; a failed rollback is explicitly recorded. An interrupted
+run leaves an `incomplete` receipt and a lock: inspect before retrying, never
+blindly remove an existing lock. Receipts are private and never overwritten.
+
+For wheel/uv/pipx installations, use that installation's package manager and
+the exact verified wheel, retaining the prior version for rollback. Verify
+outside the source checkout with the target Python:
+
+```bash
+/path/to/target/python -I scripts/verify_install.py --version 0.0.24 \
+  --wheel /path/to/verified/gpt2agent-0.0.24-py3-none-any.whl --mcp
+```
+
+`-I` prevents checkout/PYTHONPATH shadowing. Both code and distribution metadata
+must match; `--wheel` also compares installed package bytes. The fresh MCP
+check uses an unauthenticated temporary home, checks 30 tools and 9 manual
+schemas, and exercises a zero-network manual handoff. It does not prove live
+account authentication or research completion: retain separate account-level
+live receipts. Check dependency health with the installation's package manager;
+do not repair an unrelated shared environment by silently changing its packages.
+
+A rollout receipt must list every inventory target separately: verified,
+not installed, unreachable, failed, or reconnect pending. Check Windows and
+WSL separately. Update one canary before other devices. Existing stdio MCP
+processes keep loaded code until their owning clients reconnect; do not count
+a new-process check as proof that old sessions restarted. Do not terminate
+active research jobs or unrelated client sessions. Recheck the command path,
+package metadata, exact package bytes, and MCP startup on each updated device.
 
 Then clean up, in the same release session — not "later":
 

@@ -1,0 +1,18 @@
+{
+  "checked_at": "2026-09-29T21:33:09Z",
+  "source": "live conversation/init via usage command",
+  "accounts": {
+    "A": {
+      "feature_name": "image_gen",
+      "remaining": 1000,
+      "reset_after": "2026-09-30T21:32:52.192230+00:00"
+    },
+    "B": {
+      "feature_name": "image_gen",
+      "remaining": 1000,
+      "reset_after": "2026-09-30T21:33:06.290299+00:00"
+    }
+  },
+  "interpretation": "Backend advertises approximately 24-hour reset, not monthly. Remaining counter is generic image_gen, not a GPT-Image-2.5-specific entitlement. Actual reset was not observed over 24 hours.",
+  "work_codex_pricing": "https://learn.chatgpt.com/docs/pricing#image-generation-usage-limits"
+}

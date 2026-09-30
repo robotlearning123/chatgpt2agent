@@ -1,0 +1,14 @@
+{
+  "passed": 11,
+  "failed": 0,
+  "mcp": {
+    "tool_count": 30,
+    "manual_param_on_9": true,
+    "account_status": "OK",
+    "chat_manual": "OK",
+    "list_conversations": "OK"
+  },
+  "build_commit": "d6b9b63",
+  "package_source": "SHA256SUMS",
+  "install_source": "official PyPI command override; global configuration unchanged"
+}
