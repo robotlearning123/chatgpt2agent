@@ -211,10 +211,12 @@ The HTTP transport is **unauthenticated** — use stdio. Full policy:
   the last verified date, not live state.
 - **Quota before spending:** `gpt2agent usage` (or MCP `usage_stats`).
 - **Lane precedence** is `manual` > `browser` > REST per tool call; on
-  `UpstreamChallengeError` with browser enabled, conversation tools fall back
-  to the browser lane automatically.
-- **Long calls:** light DR tens of seconds, heavy DR up to 30 min (`max_wait`
-  1800 s) — set your client's tool timeout accordingly (per-client notes:
+  `UpstreamChallengeError` with browser enabled, `chat`, `agent`, and
+  `deep_research` fall back to the browser lane automatically. Other
+  conversation tools do not share this automatic fallback.
+- **Long calls:** light DR typically takes tens of seconds. Heavy DR can use
+  1800 s for initial SSE plus another 1800 s polling; allow a tool timeout
+  above 3600 s plus startup overhead (per-client notes:
   [Client setup](./docs/clients.md#timeouts)).
 - **Environment:** `CODEX_HOME` (account selection), `GPT2AGENT_SENTINEL_BRIDGE`,
   `GPT2AGENT_SENTINEL_BRIDGE_OFF=1`, `GPT2AGENT_RAW_DUMP` (debug frames) —
