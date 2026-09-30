@@ -461,3 +461,44 @@ def test_bundled_runner_uses_short_cited_final_after_long_clarification(
     assert long_question not in report
     assert final_url in report
     assert stale_url not in report
+
+
+@pytest.mark.parametrize("outcome", ["unresolved", "followup_incomplete", "completed"])
+def test_mcp_tool_honors_clarification_outcome(monkeypatch, outcome):
+    """Drive real stream parsing through the registered MCP tool consumer."""
+    from gpt2agent import backend as backend_mod
+    from gpt2agent import sse as sse_mod
+    from gpt2agent.server import build_server
+
+    rounds = [_frame_clarification("conv-mcp", "clar-1")]
+    if outcome == "unresolved":
+        rounds += [
+            _frame_clarification("conv-mcp", "clar-2"),
+            _frame_clarification("conv-mcp", "clar-3"),
+        ]
+    elif outcome == "followup_incomplete":
+        rounds.append(["data: [DONE]"])
+    else:
+        rounds.append(_frame_real("conv-mcp", "report"))
+    _ScriptedSession._next = rounds
+    monkeypatch.setattr(backend_mod, "BackendClient", _FakeBackend)
+    monkeypatch.setattr(sse_mod, "AsyncSession", _ScriptedSession)
+    monkeypatch.setattr(sse_mod, "SentinelGate", _FakeSentinel)
+    monkeypatch.setenv("GPT2AGENT_QUEUE_OFF", "1")
+    mcp = build_server({
+        "server": {"host": "127.0.0.1", "port": 9000},
+        "models": {"chat": "gpt-5-6", "agent": "agent-mode"},
+    })
+    out = asyncio.run(mcp._tool_manager._tools["deep_research"].fn("topic"))
+    assert not _ScriptedSession._next
+    if outcome == "completed":
+        assert out.startswith(_REAL_REPORT)
+        assert "Sources:" in out
+        assert "Report may be incomplete" not in out
+        assert _CLARIFICATION_TEXT not in out
+    else:
+        assert "Report may be incomplete" in out
+        if outcome == "unresolved":
+            assert out.startswith(_CLARIFICATION_TEXT)
+        else:
+            assert _CLARIFICATION_TEXT not in out

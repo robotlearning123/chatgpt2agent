@@ -388,6 +388,8 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
         # completed answer must not be discarded because a later lifecycle
         # started and never finished (Devin S3 S6b — user saw the partial
         # + truncation note instead of the completed 'first answer').
+        # Explicit clarification outcomes revoke the earlier question: it
+        # never constituted a completed report.
         clean_done: dict | None = None
         last_done: dict | None = None
 
@@ -399,7 +401,11 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
                     tool_calls.append(event["call"])
                 elif event["type"] == "done":
                     last_done = event
-                    if not event.get("terminated_abnormally"):
+                    if event.get("clarification_unresolved") or event.get(
+                        "clarification_followup_incomplete"
+                    ):
+                        clean_done = None
+                    elif not event.get("terminated_abnormally"):
                         clean_done = event
         except UpstreamChallengeError:
             if cfg.get("browser", {}).get("enabled"):

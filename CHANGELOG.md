@@ -8,6 +8,11 @@ versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
+- MCP light research marks unresolved clarification as incomplete instead of
+  returning the question as a successful report.
+- Fleet rollback restores editable metadata even when the previous branch was
+  moved or deleted concurrently, preserving the changed ref and staying detached.
+
 - Light research isolates tool-message patches from answer text, waits for
   trailing citation metadata before completion, and preserves reordered text
   and references. Malformed heavy-stream auxiliary metadata is ignored.

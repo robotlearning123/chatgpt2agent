@@ -172,3 +172,48 @@ def test_wheel_verification_rejects_leftover_code_but_allows_python_cache(tmp_pa
     (package / 'obsolete_backend.py').write_text('unexpected importable code')
     with pytest.raises(ValueError, match='unexpected.*obsolete_backend'):
         verify_files(package, wheel)
+
+
+@pytest.mark.parametrize('branch_change', ['stable', 'moved', 'deleted'])
+def test_rollback_restores_metadata_when_previous_branch_changes(
+    deployment, monkeypatch, branch_change,
+):
+    args, previous, target = deployment
+    args.apply = True
+    git(args.clone, 'checkout', '-qb', 'owner-branch', previous)
+    versions = dict.fromkeys(args.python, '0.0.23')
+    real_run = fleet_sync.run
+    original_inspect = fleet_sync.inspect
+    monkeypatch.setattr(fleet_sync, 'inspect', lambda python: {
+        **original_inspect(python), 'metadata': versions[python],
+    })
+
+    def run(*command, **kwargs):
+        if command[0] == 'git':
+            return real_run(*command, **kwargs)
+        if 'pip' in command:
+            head = git(args.clone, 'rev-parse', 'HEAD')
+            if head == target and command[0] == 'python-b':
+                raise RuntimeError('second target install failed')
+            versions[command[0]] = '0.0.24' if head == target else '0.0.23'
+            if head == target and branch_change == 'moved':
+                git(args.clone, 'update-ref', 'refs/heads/owner-branch', target)
+            elif head == target and branch_change == 'deleted':
+                git(args.clone, 'update-ref', '-d', 'refs/heads/owner-branch')
+            return ''
+        raise AssertionError(command)
+
+    monkeypatch.setattr(fleet_sync, 'run', run)
+    receipt = {}
+    with pytest.raises(RuntimeError, match='second target install failed'):
+        fleet_sync.sync(args, receipt)
+    assert git(args.clone, 'rev-parse', 'HEAD') == previous
+    assert versions == dict.fromkeys(args.python, '0.0.23')
+    assert receipt['rollback']['status'] == 'restored'
+    assert git(args.clone, 'branch', '--show-current') == (
+        'owner-branch' if branch_change == 'stable' else ''
+    )
+    if branch_change == 'moved':
+        assert git(args.clone, 'rev-parse', 'owner-branch') == target
+    if branch_change != 'stable':
+        assert receipt['rollback']['branch'] == 'left detached; previous branch changed'

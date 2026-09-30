@@ -92,10 +92,19 @@ def sync(args: argparse.Namespace, receipt: dict) -> None:
                 if git(clone, "status", "--porcelain") or git(clone, "rev-parse", "HEAD") != target:
                     raise ValueError("concurrent clone changes prevent safe rollback")
                 git(clone, "checkout", "--quiet", "--detach", previous)
+                branch_state = "detached"
                 if previous_branch:
-                    if git(clone, "rev-parse", previous_branch) != previous:
-                        raise ValueError("previous branch moved; rollback left detached")
-                    git(clone, "checkout", "--quiet", previous_branch)
+                    try:
+                        branch_tip = git(clone, "rev-parse", "--verify", f"refs/heads/{previous_branch}")
+                    except RuntimeError:
+                        branch_tip = None
+                    if branch_tip == previous:
+                        git(clone, "checkout", "--quiet", previous_branch)
+                        branch_state = "restored"
+                    else:
+                        # Preserve another actor's ref change while restoring
+                        # editable metadata against the detached old commit.
+                        branch_state = "left detached; previous branch changed"
                 for python in attempted:
                     run(python, "-m", "pip", "install", "--disable-pip-version-check", "--no-deps",
                         "--editable", str(clone), cwd=clone.parent)
@@ -104,7 +113,8 @@ def sync(args: argparse.Namespace, receipt: dict) -> None:
                 if any(item["version"] != old_version or item["metadata"] != old_version
                        for item in restored):
                     raise ValueError("rollback code or metadata version mismatch")
-                receipt["rollback"] = {"status": "restored", "installs": restored}
+                receipt["rollback"] = {"status": "restored", "installs": restored,
+                                       "branch": branch_state}
             except Exception as exc:
                 receipt["rollback"] = {"status": "failed", "error": str(exc)}
         raise
