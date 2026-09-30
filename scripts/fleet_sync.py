@@ -18,6 +18,8 @@ import tempfile
 def run(*command: str, cwd: Path | None = None) -> str:
     result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=300)
     if result.returncode:
+        # Child stderr and arguments may contain credential-bearing URLs.
+        # Keep the receipt error bounded to the exit code and executable.
         raise RuntimeError(f"command failed ({result.returncode}): {command[0]}")
     return result.stdout.strip()
 

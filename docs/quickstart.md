@@ -56,8 +56,10 @@ return your plan and feature count.
 > further setup. Conversation tools (`chat`, `deep_research`, …) need a lane:
 > the sentinel bridge for REST (owner-supplied, see
 > [how-it-works.md](./how-it-works.md#the-sentinel-challenge)), or
-> `browser=True`, or `manual=True`. `gpt2agent doctor` shows which lane each
-> tool has.
+> `browser=True`, or `manual=True` where supported. Automatic browser fallback
+> on an upstream challenge is available for `chat`, `agent`, and `deep_research`
+> when enabled. `gpt2agent doctor` reports sentinel/bridge status and read-only
+> probe results; it does not execute conversation tools or select a lane for each.
 
 ## 5. First calls
 

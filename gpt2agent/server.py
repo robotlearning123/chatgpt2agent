@@ -665,7 +665,10 @@ def build_server(cfg: dict[str, Any]) -> FastMCP:
             return {"text": text}
         if kind in ("deep_research", "deep_research_heavy"):
             gen = (
-                conv.deep_research(p["query"], connectors=p.get("connectors"))
+                conv.deep_research(
+                    p["query"], model=p.get("model") or chat_model,
+                    connectors=p.get("connectors"),
+                )
                 if kind == "deep_research"
                 else conv.deep_research_heavy(
                     p["query"],

@@ -125,8 +125,9 @@ See the README's **Security & risk** section.
 ## Timeouts
 
 gpt2agent tool calls can run long: light `deep_research` tens of seconds,
-`deep_research_heavy` up to 30 minutes (server-side `max_wait` 1800 s). Check
-your client's tool-call timeout if heavy runs get cut off.
+`deep_research_heavy` can spend up to 1800 s in the initial SSE phase and
+another 1800 s polling for completion. Allow more than 3600 s plus startup
+overhead for the complete tool call.
 
 - **Claude Code:** `MCP_TIMEOUT` (server startup, ms, default 30000) and
   `MCP_TOOL_TIMEOUT` (tool execution, ms, default 100000000 ≈ 28 h — heavy DR
@@ -135,4 +136,4 @@ your client's tool-call timeout if heavy runs get cut off.
   per-request cap unless the value is raised above 60000.
   Source: code.claude.com/docs env-vars reference (verified 2026-09-24).
 - Other clients: look for a per-server or global tool timeout setting and
-  raise it above 1800 s for heavy DR.
+  raise it above 3600 s, with additional startup overhead, for heavy DR.

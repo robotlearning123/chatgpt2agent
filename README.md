@@ -103,7 +103,8 @@ side in one client with independent tokens, quotas, and rate budgets →
 | **Manual** | `chat("hi", manual=True)` | Nothing (zero network) | Fallback — returns a paste-into-chatgpt.com JSON handoff |
 
 Precedence: `manual=True` > `browser=True` > REST. On an upstream challenge,
-conversation tools fall back to the browser lane automatically when it is enabled.
+`chat`, `agent`, and `deep_research` fall back to the browser lane automatically
+when it is enabled. Other conversation tools do not share this automatic fallback.
 
 ### The sentinel bridge (REST lane)
 
