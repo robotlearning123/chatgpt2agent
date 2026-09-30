@@ -14,23 +14,24 @@ echo "Receipts: $OUT; isolated environments: $SCRATCH"
 PASS=0; FAIL=0
 check() { # check <name> <exit-code> [detail]
   if [ "$2" -eq 0 ]; then PASS=$((PASS+1)); echo "PASS  $1 ${3:-}"; else FAIL=$((FAIL+1)); echo "FAIL  $1 ${3:-}"; fi
+  return "$2"
 }
 
 echo "═══ A. build & artifact checks ═══"
 cd -P "$W" || exit 2
-EXPECTED=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+EXPECTED=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])") || exit 2
 python -m build --outdir "$OUT/dist" > "$OUT/build.log" 2>&1
-check "A1 python -m build" $? "$(find "$OUT/dist" -maxdepth 1 -type f -printf '%f ' 2>/dev/null)"
+check "A1 python -m build" $? "$OUT/dist" || exit 1
 python -m twine check "$OUT/dist/"* > "$OUT/twine.log" 2>&1
-check "A2 twine check" $?
+check "A2 twine check" $? || exit 1
 WHEEL=$(find "$OUT/dist" -maxdepth 1 -name '*.whl' | head -1)
 
 echo "═══ B. outsider first install (isolated HOME, no dev deps) ═══"
 VENV=$SCRATCH/venv; ISOHOME=$SCRATCH/home
 mkdir -p "$ISOHOME"
-python -m venv "$VENV" > /dev/null 2>&1
+python -m venv "$VENV" > /dev/null 2>&1 || exit 1
 "$VENV/bin/pip" install --quiet "$WHEEL" > "$OUT/pip-install.log" 2>&1
-check "B1 pip install wheel (clean venv)" $?
+check "B1 pip install wheel (clean venv)" $? || exit 1
 V=$("$VENV/bin/gpt2agent" --version 2>&1)
 if [ "$V" = "gpt2agent $EXPECTED" ] || [ "$V" = "$EXPECTED" ]; then VB=0; else VB=1; fi
 check "B2 gpt2agent --version == pyproject version" "$VB" "got: $V (expected $EXPECTED)"
@@ -55,7 +56,7 @@ fi
 "$VENV/bin/gpt2agent" doctor > "$OUT/doctor-live.log" 2>&1
 RC=$?
 SUM=$(tail -1 "$OUT/doctor-live.log")
-if [ $RC -eq 1 ] && echo "$SUM" | grep -q "0 failed"; then RC=0; fi
+if [ $RC -eq 1 ] && echo "$SUM" | grep -Eq ', 0 failed(,|$)'; then RC=0; fi
 check "D1 doctor live: no failures (known upstream blocks allowed)" $RC "exit=$RC $SUM"
 
 echo "═══ E. MCP stdio client emulation (installed artifact, real client lib) ═══"
@@ -104,13 +105,15 @@ check "E2 tool_count>=25 + manual on 9 + live calls" $?
 
 echo "═══ F. upgrade path 0.0.23 -> candidate (scratch venv) ═══"
 UVENV=$SCRATCH/upgrade
-python -m venv "$UVENV" > /dev/null 2>&1
+python -m venv "$UVENV" > /dev/null 2>&1 || exit 1
 "$UVENV/bin/pip" install --quiet "gpt2agent==0.0.23" > "$OUT/pip-previous.log" 2>&1
 RC1=$?
 "$UVENV/bin/pip" install --quiet --upgrade "$WHEEL" > "$OUT/pip-upg.log" 2>&1
 RC2=$?
 V2=$("$UVENV/bin/gpt2agent" --version 2>&1)
-check "F1 0.0.23 install + upgrade to wheel" $((RC1|RC2)) "now: $V2"
+RC3=$?
+if [ "$V2" != "gpt2agent $EXPECTED" ]; then RC3=1; fi
+check "F1 0.0.23 install + upgrade to wheel" $((RC1|RC2|RC3)) "now: $V2 (expected: gpt2agent $EXPECTED)"
 
 echo "═══ G. uninstall cleanliness ═══"
 "$UVENV/bin/pip" uninstall -y -q gpt2agent > /dev/null 2>&1

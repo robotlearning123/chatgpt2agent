@@ -3,6 +3,17 @@
 Runbook for validating a gpt2agent release before tagging. Archive every
 receipt under `artifacts/verify/` so the run is auditable later.
 
+Before expensive live or install checks, inspect active PRs/worktrees and the
+actual merge requirements. Record the reviewed source commit, acceptance scope,
+cross-model verdict and existing owner authorization. Finish source changes and
+review first; later changes invalidate only the evidence they affect. Compare
+the merged tree with the reviewed tree before choosing the release tag target.
+
+Keep one current status receipt pointing to immutable per-attempt evidence.
+Refresh it after each stage completes; do not leave preparation status looking
+current after publication. Apply the self-review/test/improve/closeout loop in
+[REVIEW.md](../REVIEW.md) to both the product and this release workflow.
+
 ## 1. Pre-release health check
 
 ```bash
@@ -79,6 +90,15 @@ scripts/release-emulation-test.sh <release-worktree> | tee artifacts/verify/huma
 Must end `RESULT: N passed, 0 failed`. Introduced after v0.0.14's first cut
 caught a missed `.claude-plugin/plugin.json` version bump and a test-harness
 stdio flag error before they reached users.
+
+Check that the chosen build interpreter has `build` and `twine` before starting.
+Keep dependency caches enabled for normal clean-environment installs: a clean
+venv does not require downloading every dependency again. If a newly published
+version is missing from the package index, retain the failure, verify the PyPI
+version JSON and allow index propagation before retrying. Use cache bypass only
+to diagnose a stale index, then restore normal caching. Verify downloaded public
+wheel/sdist hashes against the CI artifacts; a local rebuild has different
+archive hashes and must not substitute for the published files.
 
 ## 6. Owner publish gate (added 2026-09-15 — mandatory)
 
