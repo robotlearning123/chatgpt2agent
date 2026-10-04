@@ -50,3 +50,29 @@ first dot free on Pro), (G3) endpoint evidence from a captured HAR.
   dot_named_fields=[], astra_catalog_slugs=['gpt-6-astra-wm'],
   unknown_conversation_origins=[].
 - Real server build: 31 tools registered, dots_status present.
+
+## Addendum (2026-10-04 afternoon): control is LIVE — status COMPLETE for scheduled work
+
+The conclusion "dots not rolled out" was overturned: the dot runs on this
+account and its recurring work rides /backend-api/automations (internal
+codenames aeon/jawbone — the literal string "dot" appears nowhere, which is
+why marker scans missed it).
+
+- GET /backend-api/automations: 25 items, all executor=cloud, 2 with
+  aeon_id; one dot reporting task ran MINUTELY/10m (last_run
+  2026-10-04T14:45:16Z).
+- Routes/fields from the desktop app.asar: save/remove/set_status;
+  jawbone_id (set_status), automation_id (remove).
+- Schema via three server-disclosed 422 rounds: title required; schedule =
+  full VEVENT string; timing_mode = int 0/1/2 (exact/flexible/condition).
+- NEW tools in PR #89 (commit a858392): list_automations,
+  create_automation (disabled by default), set_automation_status,
+  remove_automation; dots_status gains an automations evidence block.
+- Suite: 693 passed / 14 skipped / ruff clean; count guard 35.
+- Live control loop through the MCP tools: create-disabled (id
+  6ac271541bcc81909e265a5d99f9539e) → listed → set_status ok → remove ok →
+  still present: False. Both throwaway automations cleaned; account back to
+  its original 25.
+- Remaining gap (not blocking scheduled-work control): direct dot chat
+  messaging — dot threads are absent from /backend-api/conversations;
+  needs one captured HAR from the desktop app (runbook docs/dots.md).
