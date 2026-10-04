@@ -25,6 +25,15 @@ _AUTOMATIONS_PATH = "/backend-api/automations"
 _PROMPT_CAP = 280
 
 
+def _has_on_value(v) -> bool:
+    """True when a dot-named field carries an ON value: a non-off scalar, or
+    a non-empty container with at least one truthy leaf."""
+    if isinstance(v, (dict, list)):
+        vals = v.values() if isinstance(v, dict) else v
+        return any(_has_on_value(x) for x in vals)
+    return v not in (False, None, 0, "", "disabled", "false")
+
+
 async def _safe_get(client: BackendClient, path: str, target: str,
                     errors: list[str], label: str):
     """GET that degrades instead of killing the whole status report; the
@@ -156,25 +165,28 @@ def register(mcp, client: BackendClient) -> None:
         cloud_autos = [a for a in auto_items if isinstance(a, dict) and a.get("executor") == "cloud"]
         aeon_count = sum(1 for a in cloud_autos if a.get("aeon_id"))
 
-        # A dot-named key claims detection only when its scalar value is not
-        # an explicit off (False/None/0) — e.g. {"dots_enabled": false} must
-        # not read as available (found by independent review 2026-10-04).
-        hard_marker = any(
-            (not isinstance(v, (dict, list)) and v not in (False, None, 0, "", "disabled", "false"))
-            or (isinstance(v, (dict, list)) and v)
-            for _, v in dot_fields
-        )
+        # A dot-named key claims detection only when it carries an ON value:
+        # a non-off scalar, or a container with at least one truthy leaf —
+        # {"dots_enabled": false} and {"dots": {"enabled": false}} must not
+        # read as available (found by independent review 2026-10-04).
+        hard_marker = any(_has_on_value(v) for _, v in dot_fields)
         detected = hard_marker or any("dot" in o.lower() for o in unknown_origins)
-        hint = (
-            "Dots detected — use list_dots / dot_messages / the automation tools."
-            if detected else
-            "No dot markers yet. If you have not created a dot: create one in the "
-            "ChatGPT desktop app or desktop web (Pro plan; rollout is gradual), then "
-            "retry. The automation tools may still work regardless. Details: docs/dots.md"
-        )
+        upstream_failed = len(errors) >= 4  # every surface failed: token/network
+        if detected:
+            status, hint = "detected", "Dots detected — use list_dots / dot_messages / the automation tools."
+        elif upstream_failed:
+            status = "unknown_upstream_error"
+            hint = ("Could not read any account surface — check the token "
+                    "(codex login) and connection; see `errors`. This is NOT a "
+                    "'no dots' verdict.")
+        else:
+            status = "not_rolled_out"
+            hint = ("No dot markers yet. If you have not created a dot: create one in the "
+                    "ChatGPT desktop app or desktop web (Pro plan; rollout is gradual), then "
+                    "retry. The automation tools may still work regardless. Details: docs/dots.md")
         return {
             "dots_detected": detected,
-            "status": "detected" if detected else "not_rolled_out",
+            "status": status,
             "hint": hint,
             "checked_conversations": len(items) if isinstance(items, list) else 0,
             "automation_conversation_ids": automation_ids,

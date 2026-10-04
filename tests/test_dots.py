@@ -91,6 +91,7 @@ def test_not_rolled_out_without_markers() -> None:
     assert out["automations"]["cloud_executor"] == 0
     assert out["automations"]["with_aeon_id"] == 0
     assert "set_automation_status" in out["automations"]["note"]
+    assert out["errors"] == []
 
 
 def test_detected_via_dot_named_field() -> None:
@@ -436,3 +437,45 @@ def test_prompt_cap_asserts_both_sides() -> None:
     out = _run(mcp, "list_automations")
     assert len(out[0]["prompt"]) == 281  # 280 + ellipsis
     assert out[0]["prompt"].startswith("pppp")
+
+
+def test_nested_off_flag_is_not_detection() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/accounts/check"] = {
+        "accounts": {"a": {"features": [{"dots": {"enabled": False}}]}}}
+    mcp, _ = _reg(routes)
+    assert _run(mcp, "dots_status")["dots_detected"] is False
+    routes["/backend-api/accounts/check"] = {
+        "accounts": {"a": {"features": [{"dots": {"enabled": False, "id": "d1"}}]}}}
+    mcp, _ = _reg(routes)
+    assert _run(mcp, "dots_status")["dots_detected"] is True  # a truthy leaf counts
+
+
+def test_total_upstream_failure_is_unknown_not_absent() -> None:
+    class DeadClient(FakeClient):
+        def get(self, path, target_path=None, **k):
+            raise RuntimeError("HTTP 401 Unauthorized — token expired")
+
+    mcp = FakeMCP()
+    dots.register(mcp, DeadClient(dict(_ROUTES_ABSENT)))
+    out = _run(mcp, "dots_status")
+    assert out["dots_detected"] is False
+    assert out["status"] == "unknown_upstream_error"
+    assert "NOT a 'no dots' verdict" in out["hint"]
+    assert len(out["errors"]) == 4
+
+
+def test_partial_failure_still_reports_rolled_out_state() -> None:
+    routes = dict(_ROUTES_ABSENT)
+
+    class OneDeadClient(FakeClient):
+        def get(self, path, target_path=None, **k):
+            if path.startswith("/backend-api/models"):
+                raise RuntimeError("HTTP 500 for models")
+            return super().get(path, target_path, **k)
+
+    mcp = FakeMCP()
+    dots.register(mcp, OneDeadClient(routes))
+    out = _run(mcp, "dots_status")
+    assert out["status"] == "not_rolled_out"  # 3/4 surfaces readable = still a verdict
+    assert len(out["errors"]) == 1
