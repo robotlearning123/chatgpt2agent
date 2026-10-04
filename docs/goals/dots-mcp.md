@@ -76,3 +76,27 @@ why marker scans missed it).
 - Remaining gap (not blocking scheduled-work control): direct dot chat
   messaging — dot threads are absent from /backend-api/conversations;
   needs one captured HAR from the desktop app (runbook docs/dots.md).
+
+## Addendum 2 (2026-10-04 evening): full dot surface reverse-engineered
+
+Method: relaunched the Mac ChatGPT app with --remote-debugging-port +
+--log-net-log (Chromium net-log), drove the dot UI via CDP (typed and sent
+messages), and parsed the net-log for the app's real API calls.
+
+New surfaces found and live-verified:
+- GET /backend-api/tbo — the dot registry (aeon instances)
+- GET /backend-api/messaging/rooms + /rooms/{id}/messages — the dot DM room
+  and full conversation (DOT messages = calpico-member-* author prefix)
+- E2E: app-sent message → dot replied "PONG-APP"/"PONG-JWT" in 6-10 s →
+  read back via REST.
+
+Send-path boundary (A/B verified): REST POST to the room persists the
+message but never wakes the dot, with or without a fresh
+x-openai-thread-route calpico JWT (TTL 300 s, from the netlog). The wake
+rides the app's realtime stack (attestation + celsius websocket).
+
+Final PR #89 scope (7 tools, 37 total): dots_status, list_automations,
+create_automation (disabled-by-default), set_automation_status,
+remove_automation, list_dots, dot_messages. Suite: 697 passed / 14 skipped /
+ruff clean; verify_release: 0.0.25. Six labeled test messages remain in the
+dot room (dot instructed to only reply PONG).
