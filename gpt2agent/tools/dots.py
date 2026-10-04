@@ -119,9 +119,17 @@ def register(mcp, client: BackendClient) -> None:
         aeon_count = sum(1 for a in cloud_autos if a.get("aeon_id"))
 
         detected = bool(dot_fields) or any("dot" in o.lower() for o in unknown_origins)
+        hint = (
+            "Dots detected — use list_dots / dot_messages / the automation tools."
+            if detected else
+            "No dot markers yet. If you have not created a dot: create one in the "
+            "ChatGPT desktop app or desktop web (Pro plan; rollout is gradual), then "
+            "retry. The automation tools may still work regardless. Details: docs/dots.md"
+        )
         return {
             "dots_detected": detected,
             "status": "detected" if detected else "not_rolled_out",
+            "hint": hint,
             "checked_conversations": len(items) if isinstance(items, list) else 0,
             "automation_conversation_ids": automation_ids,
             "dot_named_fields": dot_fields,
@@ -276,7 +284,9 @@ def register(mcp, client: BackendClient) -> None:
         `room_id` comes from `list_dots`; when omitted, the first room with an
         `aeon_id` is used (the account's dot DM). Returns a list of dicts
         with: `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted,
-        truncated to 400 chars). The upstream page cap is 32 messages.
+        truncated to 400 chars). The upstream page cap is 32 messages. When
+        the account has no dot yet, returns a friendly dict instead:
+        `{"status": "no_dot", "dots_available": false, "how_to_enable": ...}`.
         Sending is deliberately NOT offered: REST posts persist but do not
         wake the dot (the wake rides the desktop app's realtime channel) —
         see docs/dots.md.
@@ -289,7 +299,13 @@ def register(mcp, client: BackendClient) -> None:
                     room_id = r["id"]
                     break
         if not room_id:
-            return {"error": "no dot room found on this account (create a dot first)"}
+            return {
+                "status": "no_dot",
+                "dots_available": False,
+                "how_to_enable": "Create your dot in the ChatGPT desktop app or "
+                                 "desktop web (Pro plan; rollout is gradual), then "
+                                 "retry. See docs/dots.md.",
+            }
         data = await async_get(
             client,
             f"/backend-api/messaging/rooms/{room_id}/messages?limit={min(max(1, limit), 32)}",
@@ -307,3 +323,56 @@ def register(mcp, client: BackendClient) -> None:
                 "text": text[:400] + ("…" if len(text) > 400 else ""),
             })
         return out
+
+    @mcp.tool()
+    async def send_to_dot(text: str, room_id: str | None = None) -> dict:
+        """Send a message to your dot (async delivery; the dot replies later).
+
+        `room_id` defaults to the dot DM from `list_dots`. The message is
+        delivered into the dot's room and the dot processes it on its own
+        cadence — observed latency ~16 minutes (n=1, 2026-10-04), versus
+        ~6-10 s when typed in the desktop app (which rides the realtime
+        channel). Poll `dot_messages` for the reply. Returns
+        `{delivered, verified_in_room, room_id, note}` — delivery is judged
+        by the message appearing in the room, NOT by the upstream HTTP code
+        (upstream answers 422 "stable send identifier" even on successful
+        persistence; that is expected). For instant turnaround, type in the
+        ChatGPT desktop app instead.
+        """
+        if not room_id:
+            rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
+                                    target_path="/backend-api/messaging/rooms") or {}
+            for r in rooms.get("items") or []:
+                if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
+                    room_id = r["id"]
+                    break
+        if not room_id:
+            return {"delivered": False,
+                    "how_to_enable": "Create your dot in the ChatGPT desktop app or "
+                                     "desktop web (Pro plan), then retry. See docs/dots.md."}
+        try:
+            await async_post(client, f"/backend-api/messaging/rooms/{room_id}/messages",
+                             json={"content": {"text": text}},
+                             target_path=f"/backend-api/messaging/rooms/{room_id}/messages")
+        except RuntimeError as e:
+            # 422 "stable send identifier" is the expected upstream answer for
+            # API sends; persistence is verified below by readback.
+            if "422" not in str(e):
+                raise
+        data = await async_get(
+            client,
+            f"/backend-api/messaging/rooms/{room_id}/messages?limit=8",
+            target_path=f"/backend-api/messaging/rooms/{room_id}/messages",
+        ) or {}
+        seen = any(
+            isinstance(m, dict) and text[:60] in str((m.get("content") or {}).get("text") or "")
+            for m in (data.get("items") or [])
+        )
+        return {
+            "delivered": seen,
+            "verified_in_room": seen,
+            "room_id": room_id,
+            "note": "Dot processes API-sent messages on its own cadence "
+                    "(observed ~16 min; app-typed messages get ~6-10 s turnaround). "
+                    "Poll dot_messages for the reply.",
+        }

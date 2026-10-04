@@ -34,26 +34,25 @@ Evidence the dot is active on the checked account: automations with
 ChatGPT desktop app bundle (`app.asar`) — zero blind fuzzing; the only
 write probes were schema-driven (422 detail → correct → success).
 
-## Still gated: waking the dot over REST (send path)
+## Sending to the dot: async, minutes-level latency
 
-The dot's conversation is fully readable (`dot_messages`). Sending was
-reverse-engineered to the wire level on 2026-10-04:
+`send_to_dot` delivers a message into the dot's room. Wire facts
+(2026-10-04, all verified by execution):
 
 - `POST /backend-api/messaging/rooms/{room}/messages` with
-  `{"content": {"text": ...}}` **persists** the message (it appears in the
-  room) but returns 422 "stable send identifier" and **does not wake the
-  dot** — verified by A/B: a message typed in the desktop app (driven via
-  CDP) got a dot reply in ~6-10 s; identical REST posts (with and without a
-  freshly captured `x-openai-thread-route` calpico JWT, TTL 300 s) never
-  woke it.
-- The wake path rides the desktop app's realtime stack: `aeon/prepare`
-  (202), `ios/attestation_challenge`, the `celsius/ws/user` websocket, and
-  the thread-route JWT. Route discovery was done via a Chromium net-log of
-  the app (URLs only; no credentials extracted).
-- Until that handshake is replicated (or OpenAI ships an API), **sending to
-  the dot = type in the app** (the Mac app can be driven by the owner, and
-  the always-on Mac makes this practical), while everything read/control
-  side is programmatic.
+  `{"content": {"text": ...}}` **persists** the message. Upstream answers
+  422 "stable send identifier" even on success (also with a freshly captured
+  `x-openai-thread-route` calpico JWT, TTL 300 s) — the tool tolerates the
+  422 and judges delivery by readback.
+- The dot **does** process API-sent messages, on its own cadence: an
+  API-sent "reply PONG-REST" got its `DOT: PONG-REST` answer ~16 minutes
+  later (n=1). App-typed messages (driven via CDP for the A/B) got replies
+  in ~6-10 s — the desktop app rides a realtime stack (`aeon/prepare`,
+  `ios/attestation_challenge`, `celsius/ws/user` websocket) that REST does
+  not. Suspected sweep mechanism: the dot's recurring automation runs pick
+  up pending room messages.
+- So: programmatic send works when minutes-level latency is fine; for
+  instant turnaround, type in the ChatGPT desktop app.
 
 Test etiquette note: the 2026-10-04 verification left six clearly-labeled
 `[gpt2agent …验证…]` test messages in the dot room; the dot was instructed

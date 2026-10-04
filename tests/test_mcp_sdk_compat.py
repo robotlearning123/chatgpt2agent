@@ -122,4 +122,4 @@ def test_build_server_call_site_uses_the_guard_under_v2_style_sdk(
     }
     mcp = server.build_server(cfg)
     assert isinstance(mcp, _V2LikeReal)  # constructed without host/port
-    assert len(mcp._tool_manager._tools) == 37
+    assert len(mcp._tool_manager._tools) == 38

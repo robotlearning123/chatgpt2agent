@@ -28,12 +28,13 @@ versioning: [SemVer](https://semver.org/).
   - `dot_messages`: read the dot conversation (role-classified DOT/OWNER,
     PII-redacted; upstream page cap 32). Verified live — includes reading the
     dot's replies end-to-end.
-  - Sending to the dot is deliberately NOT implemented: REST POSTs to the
-    room persist (visible in `dot_messages`) but do not wake the dot — the
-    wake rides the desktop app's realtime channel (`x-openai-thread-route`
-    calpico JWT + attestation/websocket; verified by A/B on 2026-10-04:
-    app-sent messages get dot replies in seconds, REST-with-JWT sends do
-    not). Precise gap + capture runbook in `docs/dots.md`.
+  - `send_to_dot`: deliver a message into the dot's room from an MCP client.
+    Upstream answers 422 "stable send identifier" even on successful
+    persistence — the tool tolerates it and verifies delivery by readback.
+    The dot processes API-sent messages on its own cadence: observed ~16 min
+    to a `PONG` reply (n=1, 2026-10-04), versus ~6-10 s for app-typed
+    messages (realtime channel). Instant turnaround still requires typing in
+    the desktop app. No-dot accounts get a friendly `how_to_enable` dict.
 - Known upstream gate: `target_thread_id` automations (output delivered into
   an existing chat thread) are refused with HTTP 503
   `orbit_access_unavailable` (reproducible A/B against a plain create,

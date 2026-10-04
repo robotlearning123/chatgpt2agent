@@ -804,8 +804,22 @@ results = memory_search("keyword from new fact")
 - **Parameters**:
   - `limit` (int, default: `20`, capped at 32 upstream)
   - `room_id` (str, optional) -- from `list_dots`; defaults to the first aeon room
-- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). Returns `{"error": ...}` when no dot room exists.
+- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). When the account has no dot yet, returns `{status: "no_dot", dots_available: false, how_to_enable: ...}`.
 - **When to use**: Read what the dot has done/replied; pair with `list_automations`.
 - **Notes**:
-  - Sending is deliberately NOT offered: REST posts persist but do not wake the dot (the wake rides the desktop app's realtime channel; verified 2026-10-04). See `docs/dots.md`.
+  - To send, use `send_to_dot` (async, minutes-level latency); instant turnaround requires the desktop app's realtime channel. See `docs/dots.md`.
   - DOT messages are identified by the `calpico-member-*` author prefix.
+
+---
+
+### send_to_dot
+
+- **Purpose**: Send a message to your dot (async delivery — the dot replies later).
+- **Parameters**:
+  - `text` (str, required) -- the message
+  - `room_id` (str, optional) -- from `list_dots`; defaults to the dot DM
+- **Returns**: `dict` -- `delivered` / `verified_in_room` (bool — judged by the message appearing in the room, NOT the upstream HTTP code), `room_id`, `note` (latency guidance).
+- **When to use**: Hand work to the dot from an MCP client when minutes-level latency is fine; poll `dot_messages` for the reply.
+- **Notes**:
+  - Upstream answers 422 "stable send identifier" even on successful persistence — expected and tolerated; delivery is verified by readback.
+  - Observed latency ~16 min (n=1, 2026-10-04); app-typed messages turn around in ~6-10 s (realtime channel). For instant turnaround, type in the ChatGPT desktop app.

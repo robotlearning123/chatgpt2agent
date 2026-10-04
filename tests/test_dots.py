@@ -271,7 +271,70 @@ def test_dot_messages_explicit_room_and_limit_cap() -> None:
     assert client.gets[-1] == "/backend-api/messaging/rooms/r9/messages?limit=32"
 
 
-def test_dot_messages_no_room_honest_error() -> None:
+def test_dot_messages_no_room_friendly_guidance() -> None:
     mcp, _ = _reg(_ROUTES_ABSENT)
     out = _run(mcp, "dot_messages")
-    assert "error" in out and "no dot room" in out["error"]
+    assert out["status"] == "no_dot"
+    assert out["dots_available"] is False
+    assert "desktop" in out["how_to_enable"] and "docs/dots.md" in out["how_to_enable"]
+
+
+def test_dots_status_carries_friendly_hint() -> None:
+    mcp, _ = _reg(_ROUTES_ABSENT)
+    out = _run(mcp, "dots_status")
+    assert "desktop" in out["hint"] and "docs/dots.md" in out["hint"]
+
+
+def test_send_to_dot_delivered_despite_422() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r1", "aeon_id": "a1"}]}
+    routes["/backend-api/messaging/rooms/r1/messages"] = {"items": [
+        {"created_at": "t1", "account_user_id": "user-X", "content": {"text": "hello dot please reply"}},
+    ]}
+    posts = {"/backend-api/messaging/rooms/r1/messages": RuntimeError(
+        'HTTP 422 for /backend-api/messaging/rooms/r1/messages: {"detail":"Messaging with the user\'s dot requires a stable send identifier"}')}
+
+    class ThrowClient(FakeClient):
+        def post(self, path, json=None, target_path=None, **k):
+            self.posted.append((path, json))
+            h = posts.get(path)
+            if h is not None:
+                raise h
+            return {}
+
+    mcp = FakeMCP()
+    dots.register(mcp, ThrowClient(routes))
+    out = _run(mcp, "send_to_dot", text="hello dot please reply")
+    assert out["delivered"] is True and out["verified_in_room"] is True
+    assert out["room_id"] == "r1"
+    assert "dot_messages" in out["note"]
+
+
+def test_send_to_dot_not_in_room_marks_undelivered() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r1", "aeon_id": "a1"}]}
+    routes["/backend-api/messaging/rooms/r1/messages"] = {"items": []}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "send_to_dot", text="hello")
+    assert out["delivered"] is False
+
+
+def test_send_to_dot_no_room_friendly() -> None:
+    mcp, _ = _reg(_ROUTES_ABSENT)
+    out = _run(mcp, "send_to_dot", text="hello")
+    assert out["delivered"] is False and "desktop" in out["how_to_enable"]
+
+
+def test_send_to_dot_reraises_non_422_errors() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r1", "aeon_id": "a1"}]}
+
+    class ErrClient(FakeClient):
+        def post(self, path, json=None, target_path=None, **k):
+            raise RuntimeError("HTTP 500 boom")
+
+    mcp = FakeMCP()
+    dots.register(mcp, ErrClient(routes))
+    import pytest
+    with pytest.raises(RuntimeError):
+        asyncio.run(mcp.tools["send_to_dot"](text="hello"))
