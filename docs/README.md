@@ -17,7 +17,7 @@ User-facing documentation. (Project/contributor internals live in
   quotas and their reset clocks, and what stays out of reach.
 
 For the full per-tool reference (every argument, return shape, and gotcha for all
-30 tools), see [`gpt2agent/skills/gpt2agent/tools-reference.md`](../gpt2agent/skills/gpt2agent/tools-reference.md).
+31 tools), see [`gpt2agent/skills/gpt2agent/tools-reference.md`](../gpt2agent/skills/gpt2agent/tools-reference.md).
 
 Security model and ToS/account-ban risk are covered in the main
 [README](../README.md#security--risk--read-before-you-run-this).

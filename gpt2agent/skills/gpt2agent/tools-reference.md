@@ -397,6 +397,32 @@ requires the caller to explicitly choose `temporary=False`.
 
 ---
 
+### dots_status
+
+- **Purpose**: Report whether OpenAI dots (always-on GPT-6 Astra agents) are usable on this account, via read-only structural markers.
+- **Parameters**: None.
+- **Returns**: `dict` -- contains:
+  - `dots_detected` (bool)
+  - `status` (str) -- `"detected"` or `"not_rolled_out"`
+  - `checked_conversations` (int)
+  - `automation_conversation_ids` (list[str]) -- conversations flagged `is_automation_conversation` (dot candidates)
+  - `dot_named_fields` (list[str]) -- any dot-named keys found in account payloads
+  - `astra_catalog_slugs` (list[str]) -- GPT-6 Astra catalog entries (context only; NOT dots access)
+  - `unknown_conversation_origins` (list[str])
+- **When to use**: Before attempting any dots workflow; to check whether the gradual dots rollout has reached the account.
+- **Example**:
+  ```python
+  status = dots_status()
+  if not status["dots_detected"]:
+      print("dots not on this account yet:", status["status"])
+  ```
+- **Notes**:
+  - Dots have no documented API (2026-10-04); detection is marker-based on three GET surfaces (conversations, models, accounts check). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
+  - Read-only; no conversation writes, no endpoint guessing.
+  - See `docs/dots.md` for the unlock runbook (dot creation is desktop-UI-only).
+
+---
+
 ### list_apps
 
 - **Purpose**: Return ChatGPT connected apps and connectors.

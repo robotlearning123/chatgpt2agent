@@ -6,6 +6,7 @@ from gpt2agent.tools import (
     apps,
     codex,
     conversations,
+    dots,
     gpts,
     images,
     instructions,
@@ -24,6 +25,7 @@ def register_all(mcp, client: BackendClient, conv=None, cfg=None) -> None:
     gpts.register(mcp, client)
     conversations.register(mcp, client)
     apps.register(mcp, client)
+    dots.register(mcp, client)
     writes.register(mcp, client)
     images.register(mcp, client, conv, cfg=cfg)
     tools_features.register(mcp, client, conv, cfg=cfg)

@@ -4,6 +4,18 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `dots_status` MCP tool: read-only detection of OpenAI dots (always-on
+  GPT-6 Astra agents, launched 2026-09-29) via structural markers on the
+  conversations / model-catalog / account-check surfaces. Dots have no
+  documented API and are not yet rolled out to the checked accounts; the
+  tool reports `not_rolled_out` until markers land (unit-tested to flip to
+  `detected` when they do). Catalog `astra` slugs never claim detection —
+  `gpt-6-astra-wm` routes to `gpt-5-6`. Unlock runbook: `docs/dots.md`.
+
 ## [0.0.24] - 2026-09-29
 
 ### Fixed
