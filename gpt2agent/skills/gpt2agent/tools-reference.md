@@ -409,17 +409,91 @@ requires the caller to explicitly choose `temporary=False`.
   - `dot_named_fields` (list[str]) -- any dot-named keys found in account payloads
   - `astra_catalog_slugs` (list[str]) -- GPT-6 Astra catalog entries (context only; NOT dots access)
   - `unknown_conversation_origins` (list[str])
-- **When to use**: Before attempting any dots workflow; to check whether the gradual dots rollout has reached the account.
+  - `automations` (dict) -- `{total, cloud_executor, with_aeon_id, note}`: the dot scheduled-work surface
+- **When to use**: Before attempting any dots workflow; to check whether the gradual dots rollout has reached the account and whether dot-driven automations exist.
 - **Example**:
   ```python
   status = dots_status()
-  if not status["dots_detected"]:
-      print("dots not on this account yet:", status["status"])
+  print(status["automations"])  # cloud-executor counts = dot runtime usage
   ```
 - **Notes**:
-  - Dots have no documented API (2026-10-04); detection is marker-based on three GET surfaces (conversations, models, accounts check). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
+  - Dots have no documented API (2026-10-04); detection is marker-based on four GET surfaces (conversations, models, accounts check, automations). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
   - Read-only; no conversation writes, no endpoint guessing.
-  - See `docs/dots.md` for the unlock runbook (dot creation is desktop-UI-only).
+  - Direct dot messaging is still gated — see `docs/dots.md` for the HAR runbook.
+
+---
+
+### list_automations
+
+- **Purpose**: List scheduled automations — the dot's recurring work surface.
+- **Parameters**:
+  - `limit` (int, default: `20`) -- maximum number of automations to return.
+- **Returns**: `list[dict]` -- each dict contains:
+  - `id` (str) -- the handle for the write tools
+  - `title` (str) -- PII-redacted
+  - `prompt` (str) -- PII-redacted, truncated to 280 chars
+  - `is_enabled` (bool)
+  - `executor` (str) -- `"cloud"` = dot runtime
+  - `timing_mode` (str), `schedule` (str, RRULE excerpt, single line)
+  - `last_run_time` (str), `next_run_times` (list, first 3)
+  - `display_emoji` (str), `can_delete` (bool)
+- **When to use**: Inspect what the dot is scheduled to do; get ids before enabling/disabling/removing.
+- **Example**:
+  ```python
+  autos = list_automations(limit=10)
+  active = [a for a in autos if a["is_enabled"]]
+  ```
+- **Notes**:
+  - Titles and prompts are PII-redacted; prompts truncated.
+  - Async handler; one GET.
+
+---
+
+### create_automation
+
+- **Purpose**: Create a scheduled automation (dot recurring work). Created DISABLED by default.
+- **Parameters**:
+  - `prompt` (str, required) -- what the automation should do each run
+  - `title` (str, default: first 60 chars of prompt)
+  - `frequency` (str, default: `"daily"`) -- daily/weekly/hourly/minutely
+  - `by_hour` (int, default: `3`), `by_minute` (int, default: `0`)
+  - `rrule` (str, optional) -- raw RRULE body, overrides frequency/by_* (e.g. `"FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9"`)
+  - `timezone` (str, default: `"UTC"`)
+  - `executor` (str, default: `"cloud"`) -- `"cloud"` = dot runtime
+  - `enabled` (bool, default: `False`) -- paused at birth; enable via `set_automation_status`
+  - `model` (str, optional), `reasoning_effort` (str, optional)
+- **Returns**: `dict` -- the created automation (with `id`).
+- **When to use**: Schedule recurring dot work from an MCP client.
+- **Example**:
+  ```python
+  a = create_automation(prompt="Summarize repo activity", title="repo digest",
+                        frequency="daily", by_hour=9)
+  set_automation_status(automation_id=a["id"], enabled=True)
+  ```
+- **Notes**:
+  - Wire shape verified by execution 2026-10-04 (title required; `schedule` = full VEVENT string; `timing_mode` = 0 for exact schedules).
+  - Disabled-by-default is deliberate: nothing runs until explicitly enabled.
+
+---
+
+### set_automation_status
+
+- **Purpose**: Enable or disable a scheduled automation.
+- **Parameters**:
+  - `automation_id` (str, required) -- from `list_automations`
+  - `enabled` (bool, required)
+- **Returns**: `dict` -- upstream response.
+- **Notes**: Wire field is `jawbone_id` upstream; verified 2026-10-04.
+
+---
+
+### remove_automation
+
+- **Purpose**: Delete a scheduled automation.
+- **Parameters**:
+  - `automation_id` (str, required) -- from `list_automations`
+- **Returns**: `dict` -- upstream response.
+- **Notes**: Irreversible on the account; the ChatGPT UI has no undo for deleted automations.
 
 ---
 

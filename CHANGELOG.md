@@ -8,13 +8,22 @@ versioning: [SemVer](https://semver.org/).
 
 ### Added
 
-- `dots_status` MCP tool: read-only detection of OpenAI dots (always-on
-  GPT-6 Astra agents, launched 2026-09-29) via structural markers on the
-  conversations / model-catalog / account-check surfaces. Dots have no
-  documented API and are not yet rolled out to the checked accounts; the
-  tool reports `not_rolled_out` until markers land (unit-tested to flip to
-  `detected` when they do). Catalog `astra` slugs never claim detection —
-  `gpt-6-astra-wm` routes to `gpt-5-6`. Unlock runbook: `docs/dots.md`.
+- Dots/automations MCP surface (OpenAI dots = always-on GPT-6 Astra agents,
+  launched 2026-09-29; no documented API — routes and payload shapes
+  extracted from the ChatGPT desktop app bundle and verified by execution
+  2026-10-04):
+  - `dots_status`: read-only marker detection across conversations / model
+    catalog / account check / automations, plus cloud-executor automation
+    counts (the dot scheduled-work surface). Catalog `astra` slugs never
+    claim detection — `gpt-6-astra-wm` routes to `gpt-5-6`.
+  - `list_automations`: the dot's recurring work (PII-redacted, truncated).
+  - `create_automation`: schedules dot work; created DISABLED by default
+    (server-validated schema learned from its own 422 details: title
+    required, `schedule` = full VEVENT string, `timing_mode` = int enum).
+  - `set_automation_status` / `remove_automation`: enable/disable/delete.
+    Full control loop verified live through the MCP tools (create-disabled →
+    list → set_status → remove → confirmed gone). Direct dot messaging
+    remains gated on a captured HAR — runbook in `docs/dots.md`.
 
 ## [0.0.24] - 2026-09-29
 

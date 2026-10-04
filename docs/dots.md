@@ -1,63 +1,52 @@
 # OpenAI dots support
 
-Status: **detection only** (2026-10-04). Dots are OpenAI's always-on GPT-6
-Astra agents (launched 2026-09-29). They have no documented API, roll out
-gradually to Pro plans, and a dot can only be created in the ChatGPT desktop
-app or desktop web UI. Until a dot exists on the account and real dot traffic
-has been captured, this package exposes exactly one honest surface: the
-`dots_status` MCP tool.
+Status: **scheduled-work control live** (2026-10-04). Dots are OpenAI's
+always-on GPT-6 Astra agents (launched 2026-09-29). They have no documented
+API, but their recurring work rides the automations service, which this
+package now drives end-to-end. Direct dot messaging is still gated (below).
 
-## What dots_status does
+## Tools
 
-Three read-only GETs (conversations, model catalog, account check) and a
-structural marker scan:
+- `dots_status` — read-only detection across conversations / catalog /
+  account-check / automations. `dots_detected` flips only on hard markers
+  (dot-named keys, dot `conversation_origin`); `automations` reports the
+  cloud-executor counts (the dot runtime surface). Catalog `astra` slugs
+  never claim detection — `gpt-6-astra-wm` routes to `gpt-5-6`.
+- `list_automations` — the dot's scheduled work (PII-redacted, truncated).
+- `create_automation` — **defaults to `enabled=False`**: automations are
+  created paused and only run after an explicit
+  `set_automation_status(..., enabled=True)` (or the ChatGPT UI).
+- `set_automation_status` / `remove_automation` — enable/disable/delete.
 
-- `dots_detected` becomes true only on hard markers: a dot-named field in any
-  payload, or a `conversation_origin` naming dots.
-- `is_automation_conversation` conversations are reported as candidates
-  (`automation_conversation_ids`) but never alone claim detection.
-- `astra_catalog_slugs` is context only: `gpt-6-astra-wm` ships in the
-  catalog of accounts without dots and routes to `gpt-5-6` like the other
-  `-wm` slugs (verified 2026-10-04).
+## Verified wire shape (2026-10-04, by execution)
 
-A live `not_rolled_out` result is a powered negative: the unit tests
-(`tests/test_dots.py`) prove the same code flips to `detected` when markers
-are present.
+`POST /backend-api/automations/save` — server-validated schema learned in
+three rounds from its own 422 details (title required; `schedule` = full
+`BEGIN:VEVENT\nDTSTART:…\nRRULE:…\nEND:VEVENT` string; `timing_mode` = int
+enum 0/1/2 = exact/flexible/condition). `set_status` takes
+`{jawbone_id, is_enabled}`; `remove` takes `{automation_id}`. Full control
+loop verified live through the MCP tools: create-disabled → list →
+set_status → remove → confirmed gone.
 
-## Why no send/control tool yet
+Evidence the dot is active on the checked account: automations with
+`executor: "cloud"` and `aeon_id` (one running MINUTELY/10m as of
+2026-10-04T14:45Z). Route names and payload fields were extracted from the
+ChatGPT desktop app bundle (`app.asar`) — zero blind fuzzing; the only
+write probes were schema-driven (422 detail → correct → success).
 
-Fabricating a `send_to_dot` endpoint without evidence would violate the
-project's anti-hallucination standard. The evidence base (2026-10-04,
-spike `08_dots_spike.py` + macOS desktop app inspection, private research
-repo `research/dots-mcp`):
+## Still gated: direct dot messaging
 
-- `me` / `accounts-check` / `tasks` / `models` / `conversations` /
-  `conversation/init`: zero dot-named keys.
-- `GET /backend-api/dots`, `/dot`, `/agent_companions`: 404.
-- One 422 round on `conversation_mode.kind` enum guesses — stopped
-  immediately per the account-safety directive (no fuzzing).
-- ChatGPT desktop 26.930 on macOS: app data and the full 1.6 GB web profile
-  cache contain no dots frontend code — the rollout has not reached the
-  account.
-
-## Unlock runbook (owner, ~5 minutes on the Mac)
-
-1. Wait for the dots entry point to appear in the ChatGPT desktop app
-   (gradual rollout; `dots_status` flips to `detected` the moment markers
-   land in account reads).
-2. Create the first dot (included in Pro).
-3. DevTools → Network → Preserve log; interact with the dot once (message,
-   Activity, a scheduled task).
-4. Export the HAR and place it in the private research repo. HAR contains
-   credentials — it must never enter this public repo.
-5. From the HAR: endpoint spec → gated `send_to_dot` / `dot_activity` tools
-   (design in the research repo's `DOTS-MCP-READINESS.md` §5). Dot messaging
-   will require `temporary=False` — dot memory is the point of a dot.
+No endpoint evidence yet for messaging the dot's own chat thread
+(`thread_mode: existing_chat`, dot threads do not appear in
+`/backend-api/conversations`). Unlock runbook: with the dot's chat open in
+the desktop app, capture one interaction via DevTools HAR (contains
+credentials — private repo only); the endpoint spec from that HAR turns into
+a `send_to_dot` tool. Dot messaging will require `temporary=False` — dot
+memory is the point of a dot.
 
 ## Account safety
 
-Probing discipline: read-only GETs and documented payload shapes only; at
-most one validation round when a new surface is probed, then stop; prefer
-capturing real traffic over guessing endpoints. Dots conversations also run
-under the account's authority — any future control tool surfaces explicit
-confirmation for consequential actions rather than automating approvals.
+Read-only GETs and schema-driven writes only; automations are created
+disabled by default; PII redaction on all listed prompts/titles. Dots run
+under the account's authority — keep human review for consequential dot
+work; this package never auto-approves dot actions.
