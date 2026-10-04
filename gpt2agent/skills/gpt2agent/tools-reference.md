@@ -784,3 +784,28 @@ results = memory_search("keyword from new fact")
 7. **Codex label resolution**: `codex_task_create` resolves `environment_id` from `repo_label` by fetching all environments. Raises `ValueError` on no match or ambiguous match.
 
 8. **Download URL expiry**: File download URLs from `get_file_download_url` and `generate_image` expire after approximately 1 hour.
+
+---
+
+### list_dots
+
+- **Purpose**: List the account's dots (always-on agents) with their DM rooms.
+- **Parameters**:
+  - `limit` (int, default: `10`)
+- **Returns**: `list[dict]` -- `aeon_id` (dot instance id = automation runtime id), `display_name`, `room_id`, `room_name`, `room_updated_at`.
+- **When to use**: Discover the dot before reading messages (`dot_messages`) or scheduling work (`create_automation`).
+- **Notes**: Reads `/backend-api/tbo` (aeon registry) + `/backend-api/messaging/rooms`; joins on `aeon_id`.
+
+---
+
+### dot_messages
+
+- **Purpose**: Read the dot conversation (newest last).
+- **Parameters**:
+  - `limit` (int, default: `20`, capped at 32 upstream)
+  - `room_id` (str, optional) -- from `list_dots`; defaults to the first aeon room
+- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). Returns `{"error": ...}` when no dot room exists.
+- **When to use**: Read what the dot has done/replied; pair with `list_automations`.
+- **Notes**:
+  - Sending is deliberately NOT offered: REST posts persist but do not wake the dot (the wake rides the desktop app's realtime channel; verified 2026-10-04). See `docs/dots.md`.
+  - DOT messages are identified by the `calpico-member-*` author prefix.

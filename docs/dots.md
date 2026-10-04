@@ -34,15 +34,30 @@ Evidence the dot is active on the checked account: automations with
 ChatGPT desktop app bundle (`app.asar`) — zero blind fuzzing; the only
 write probes were schema-driven (422 detail → correct → success).
 
-## Still gated: direct dot messaging
+## Still gated: waking the dot over REST (send path)
 
-No endpoint evidence yet for messaging the dot's own chat thread
-(`thread_mode: existing_chat`, dot threads do not appear in
-`/backend-api/conversations`). Unlock runbook: with the dot's chat open in
-the desktop app, capture one interaction via DevTools HAR (contains
-credentials — private repo only); the endpoint spec from that HAR turns into
-a `send_to_dot` tool. Dot messaging will require `temporary=False` — dot
-memory is the point of a dot.
+The dot's conversation is fully readable (`dot_messages`). Sending was
+reverse-engineered to the wire level on 2026-10-04:
+
+- `POST /backend-api/messaging/rooms/{room}/messages` with
+  `{"content": {"text": ...}}` **persists** the message (it appears in the
+  room) but returns 422 "stable send identifier" and **does not wake the
+  dot** — verified by A/B: a message typed in the desktop app (driven via
+  CDP) got a dot reply in ~6-10 s; identical REST posts (with and without a
+  freshly captured `x-openai-thread-route` calpico JWT, TTL 300 s) never
+  woke it.
+- The wake path rides the desktop app's realtime stack: `aeon/prepare`
+  (202), `ios/attestation_challenge`, the `celsius/ws/user` websocket, and
+  the thread-route JWT. Route discovery was done via a Chromium net-log of
+  the app (URLs only; no credentials extracted).
+- Until that handshake is replicated (or OpenAI ships an API), **sending to
+  the dot = type in the app** (the Mac app can be driven by the owner, and
+  the always-on Mac makes this practical), while everything read/control
+  side is programmatic.
+
+Test etiquette note: the 2026-10-04 verification left six clearly-labeled
+`[gpt2agent …验证…]` test messages in the dot room; the dot was instructed
+to only reply PONG and not act on them.
 
 ## Account safety
 

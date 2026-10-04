@@ -36,9 +36,10 @@ class FakeClient:
 
     def get(self, path: str, target_path: str | None = None, **k: Any) -> Any:
         self.gets.append(path)
-        for pat, val in self.routes.items():
+        # longest-prefix match wins, mirroring real route resolution
+        for pat in sorted(self.routes, key=len, reverse=True):
             if path == pat or path.startswith(pat):
-                return val
+                return self.routes[pat]
         return {}
 
     def post(self, path: str, json: Any = None, target_path: str | None = None, **k: Any) -> Any:
@@ -226,3 +227,51 @@ def test_remove_uses_automation_id() -> None:
     path, body = client.posted[0]
     assert path == "/backend-api/automations/remove"
     assert body == {"automation_id": "abc"}
+
+
+def test_list_dots_joins_aeon_with_room() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/tbo"] = {"items": [
+        {"id": "user~abc", "display_name": "Alfred"},
+        {"id": "orphan", "display_name": ""},
+    ]}
+    routes["/backend-api/messaging/rooms"] = {"items": [
+        {"id": "r1", "name": "dot", "type": "DM", "aeon_id": "user~abc", "updated_at": "t"},
+    ]}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "list_dots")
+    assert out == [
+        {"aeon_id": "user~abc", "display_name": "Alfred", "room_id": "r1",
+         "room_name": "dot", "room_updated_at": "t"},
+        {"aeon_id": "orphan", "display_name": "", "room_id": None,
+         "room_name": None, "room_updated_at": None},
+    ]
+
+
+def test_dot_messages_classifies_roles_sorts_and_redacts() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [
+        {"id": "r1", "aeon_id": "a1"},
+    ]}
+    routes["/backend-api/messaging/rooms/r1/messages"] = {"items": [
+        {"created_at": "2026-10-04T02", "account_user_id": "calpico-member-abc",
+         "content": {"text": "me@example.com done"}},
+        {"created_at": "2026-10-04T01", "account_user_id": "user-X",
+         "content": {"text": "hello"}},
+    ]}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "dot_messages")
+    assert [m["role"] for m in out] == ["OWNER", "DOT"]  # sorted by created_at
+    assert "me@example.com" not in out[1]["text"]
+
+
+def test_dot_messages_explicit_room_and_limit_cap() -> None:
+    mcp, client = _reg(_ROUTES_ABSENT)
+    _run(mcp, "dot_messages", room_id="r9", limit=99)
+    assert client.gets[-1] == "/backend-api/messaging/rooms/r9/messages?limit=32"
+
+
+def test_dot_messages_no_room_honest_error() -> None:
+    mcp, _ = _reg(_ROUTES_ABSENT)
+    out = _run(mcp, "dot_messages")
+    assert "error" in out and "no dot room" in out["error"]

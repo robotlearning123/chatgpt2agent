@@ -235,3 +235,75 @@ def register(mcp, client: BackendClient) -> None:
             json={"automation_id": automation_id},
             target_path="/backend-api/automations/remove",
         ) or {}
+
+    @mcp.tool()
+    async def list_dots(limit: int = 10) -> list[dict]:
+        """List the account's dots (always-on agents) with their DM rooms.
+
+        Returns a list of dicts with: `aeon_id` (the dot instance id, also
+        the automation runtime id), `display_name`, `room_id`, `room_name`,
+        `room_updated_at`. Reads two GET surfaces: the aeon registry
+        (`/backend-api/tbo`) and the messaging rooms list. Messages are read
+        with `dot_messages`; scheduled work with `list_automations`.
+        """
+        tbos = await async_get(client, "/backend-api/tbo?limit=25",
+                               target_path="/backend-api/tbo") or {}
+        rooms = await async_get(client, f"/backend-api/messaging/rooms?limit={max(1, limit)}",
+                                target_path="/backend-api/messaging/rooms") or {}
+        room_by_aeon = {
+            r.get("aeon_id"): r
+            for r in (rooms.get("items") or []) if isinstance(r, dict) and r.get("aeon_id")
+        }
+        out: list[dict] = []
+        for t in (tbos.get("items") or [])[: max(0, limit)]:
+            if not isinstance(t, dict):
+                continue
+            aeon = t.get("id")
+            room = room_by_aeon.get(aeon) or {}
+            out.append({
+                "aeon_id": aeon,
+                "display_name": t.get("display_name") or "",
+                "room_id": room.get("id"),
+                "room_name": room.get("name"),
+                "room_updated_at": room.get("updated_at"),
+            })
+        return out
+
+    @mcp.tool()
+    async def dot_messages(limit: int = 20, room_id: str | None = None) -> list[dict]:
+        """Read the dot conversation (newest last).
+
+        `room_id` comes from `list_dots`; when omitted, the first room with an
+        `aeon_id` is used (the account's dot DM). Returns a list of dicts
+        with: `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted,
+        truncated to 400 chars). The upstream page cap is 32 messages.
+        Sending is deliberately NOT offered: REST posts persist but do not
+        wake the dot (the wake rides the desktop app's realtime channel) —
+        see docs/dots.md.
+        """
+        if not room_id:
+            rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
+                                    target_path="/backend-api/messaging/rooms") or {}
+            for r in rooms.get("items") or []:
+                if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
+                    room_id = r["id"]
+                    break
+        if not room_id:
+            return {"error": "no dot room found on this account (create a dot first)"}
+        data = await async_get(
+            client,
+            f"/backend-api/messaging/rooms/{room_id}/messages?limit={min(max(1, limit), 32)}",
+            target_path=f"/backend-api/messaging/rooms/{room_id}/messages",
+        ) or {}
+        items = data.get("items") or []
+        msgs = [m for m in items if isinstance(m, dict)]
+        msgs.sort(key=lambda m: str(m.get("created_at") or ""))
+        out: list[dict] = []
+        for m in msgs:
+            text = redact(str((m.get("content") or {}).get("text") or ""))
+            out.append({
+                "role": "DOT" if str(m.get("account_user_id") or "").startswith("calpico-member-") else "OWNER",
+                "created_at": m.get("created_at"),
+                "text": text[:400] + ("…" if len(text) > 400 else ""),
+            })
+        return out

@@ -22,8 +22,18 @@ versioning: [SemVer](https://semver.org/).
     required, `schedule` = full VEVENT string, `timing_mode` = int enum).
   - `set_automation_status` / `remove_automation`: enable/disable/delete.
     Full control loop verified live through the MCP tools (create-disabled →
-    list → set_status → remove → confirmed gone). Direct dot messaging
-    remains gated on a captured HAR — runbook in `docs/dots.md`.
+    list → set_status → remove → confirmed gone).
+  - `list_dots`: the account's dots (aeon registry `/backend-api/tbo` joined
+    with messaging rooms on `aeon_id`) with their DM room ids.
+  - `dot_messages`: read the dot conversation (role-classified DOT/OWNER,
+    PII-redacted; upstream page cap 32). Verified live — includes reading the
+    dot's replies end-to-end.
+  - Sending to the dot is deliberately NOT implemented: REST POSTs to the
+    room persist (visible in `dot_messages`) but do not wake the dot — the
+    wake rides the desktop app's realtime channel (`x-openai-thread-route`
+    calpico JWT + attestation/websocket; verified by A/B on 2026-10-04:
+    app-sent messages get dot replies in seconds, REST-with-JWT sends do
+    not). Precise gap + capture runbook in `docs/dots.md`.
 - Known upstream gate: `target_thread_id` automations (output delivered into
   an existing chat thread) are refused with HTTP 503
   `orbit_access_unavailable` (reproducible A/B against a plain create,
