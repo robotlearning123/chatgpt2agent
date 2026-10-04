@@ -106,7 +106,7 @@ def test_detected_via_dot_named_field() -> None:
 def test_detected_via_conversation_origin() -> None:
     routes = dict(_ROUTES_ABSENT)
     routes["/backend-api/conversations"] = {"items": [
-        _conv(conversation_origin={"type": "dot", "dot_id": "d1"}),
+        _conv(conversation_origin={"type": "dot"}),
     ]}
     mcp, _ = _reg(routes)
     out = _run(mcp, "dots_status")
@@ -288,22 +288,20 @@ def test_dots_status_carries_friendly_hint() -> None:
 def test_send_to_dot_delivered_despite_422() -> None:
     routes = dict(_ROUTES_ABSENT)
     routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r1", "aeon_id": "a1"}]}
-    routes["/backend-api/messaging/rooms/r1/messages"] = {"items": [
-        {"created_at": "t1", "account_user_id": "user-X", "content": {"text": "hello dot please reply"}},
+    state = {"items": [
+        {"id": "m0", "created_at": "t0", "account_user_id": "user-X", "content": {"text": "old"}},
     ]}
-    posts = {"/backend-api/messaging/rooms/r1/messages": RuntimeError(
-        'HTTP 422 for /backend-api/messaging/rooms/r1/messages: {"detail":"Messaging with the user\'s dot requires a stable send identifier"}')}
+    routes["/backend-api/messaging/rooms/r1/messages"] = state
 
-    class ThrowClient(FakeClient):
+    class AppendClient(FakeClient):
         def post(self, path, json=None, target_path=None, **k):
             self.posted.append((path, json))
-            h = posts.get(path)
-            if h is not None:
-                raise h
-            return {}
-
+            if path.endswith("/messages"):
+                state["items"].append({"id": "m1", "created_at": "t1", "account_user_id": "user-X",
+                                       "content": {"text": json["content"]["text"]}})
+            raise RuntimeError('HTTP 422 for path: {"detail":"Messaging with the user\'s dot requires a stable send identifier"}')
     mcp = FakeMCP()
-    dots.register(mcp, ThrowClient(routes))
+    dots.register(mcp, AppendClient(routes))
     out = _run(mcp, "send_to_dot", text="hello dot please reply")
     assert out["delivered"] is True and out["verified_in_room"] is True
     assert out["room_id"] == "r1"
@@ -338,3 +336,42 @@ def test_send_to_dot_reraises_non_422_errors() -> None:
     import pytest
     with pytest.raises(RuntimeError):
         asyncio.run(mcp.tools["send_to_dot"](text="hello"))
+
+
+def test_rrule_per_frequency_no_collapse() -> None:
+    mcp, client = _reg(_ROUTES_ABSENT)
+    _run(mcp, "create_automation", prompt="h", frequency="hourly")
+    _run(mcp, "create_automation", prompt="m", frequency="MINUTELY")
+    _run(mcp, "create_automation", prompt="d", frequency="daily")
+    rules = [b["schedule"].split("RRULE:")[1].split("\n")[0] for _, b in client.posted]
+    assert rules[0] == "FREQ=HOURLY;BYMINUTE=0"
+    assert rules[1] == "FREQ=MINUTELY"
+    assert rules[2] == "FREQ=DAILY;BYHOUR=3;BYMINUTE=0"
+
+
+def test_send_to_dot_stale_repeat_is_not_delivery() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r1", "aeon_id": "a1"}]}
+    state = {"items": [
+        {"id": "m0", "created_at": "t0", "account_user_id": "user-X", "content": {"text": "hello"}},
+    ]}
+    routes["/backend-api/messaging/rooms/r1/messages"] = state
+
+    class NoPersistClient(FakeClient):
+        def post(self, path, json=None, target_path=None, **k):
+            self.posted.append((path, json))  # 422 AND nothing persisted
+
+    mcp = FakeMCP()
+    dots.register(mcp, NoPersistClient(routes))
+    out = _run(mcp, "send_to_dot", text="hello")  # identical text already in room
+    assert out["delivered"] is False
+
+
+def test_dots_status_falsy_dot_flag_is_not_detection() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/accounts/check"] = {
+        "accounts": {"a": {"features": [{"dots_enabled": False}]}}}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "dots_status")
+    assert out["dots_detected"] is False
+    assert out["dot_named_fields"] == ["accounts_check.accounts.a.features[0].dots_enabled"]

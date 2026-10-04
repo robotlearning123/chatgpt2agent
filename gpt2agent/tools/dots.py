@@ -25,19 +25,34 @@ _AUTOMATIONS_PATH = "/backend-api/automations"
 _PROMPT_CAP = 280
 
 
-def _dot_named_fields(obj: Any, path: str = "$", hits: list[str] | None = None) -> list[str]:
-    """Paths of every dict key whose name is the word ``dot``/``dots``."""
+def _dot_named_fields(obj: Any, path: str = "$", hits: list[str] | None = None) -> list[tuple[str, Any]]:
+    """(path, value) of every dict key whose name is the word ``dot``/``dots``."""
     hits = hits if hits is not None else []
     if isinstance(obj, dict):
         for k, v in obj.items():
             p = f"{path}.{k}"
             if isinstance(k, str) and _DOT_KEY_RE.search(k):
-                hits.append(p)
+                hits.append((p, v))
             _dot_named_fields(v, p, hits)
     elif isinstance(obj, list):
         for i, v in enumerate(obj[:100]):
             _dot_named_fields(v, f"{path}[{i}]", hits)
     return hits
+
+
+def _rrule_for(frequency: str, by_hour: int, by_minute: int) -> str:
+    """RRULE body per frequency — BYHOUR is a *filter*, so it must only be
+    applied where it means "at this time each day" (daily/weekly). Appending
+    it to HOURLY/MINUTELY would collapse recurrence to once a day at that
+    hour (found by independent review 2026-10-04)."""
+    f = frequency.lower()
+    if f == "minutely":
+        return "FREQ=MINUTELY"
+    if f == "hourly":
+        return f"FREQ=HOURLY;BYMINUTE={by_minute}"
+    if f == "weekly":
+        return f"FREQ=WEEKLY;BYHOUR={by_hour};BYMINUTE={by_minute}"
+    return f"FREQ=DAILY;BYHOUR={by_hour};BYMINUTE={by_minute}"
 
 
 def _vevent(rrule: str, dtstart: str) -> str:
@@ -118,7 +133,14 @@ def register(mcp, client: BackendClient) -> None:
         cloud_autos = [a for a in auto_items if isinstance(a, dict) and a.get("executor") == "cloud"]
         aeon_count = sum(1 for a in cloud_autos if a.get("aeon_id"))
 
-        detected = bool(dot_fields) or any("dot" in o.lower() for o in unknown_origins)
+        # A dot-named key claims detection only when its scalar value is not
+        # an explicit off (False/None/0) — e.g. {"dots_enabled": false} must
+        # not read as available (found by independent review 2026-10-04).
+        hard_marker = any(
+            not isinstance(v, (dict, list)) and v not in (False, None, 0, "", "disabled", "false")
+            for _, v in dot_fields
+        ) or any(isinstance(v, (dict, list)) for _, v in dot_fields)
+        detected = hard_marker or any("dot" in o.lower() for o in unknown_origins)
         hint = (
             "Dots detected — use list_dots / dot_messages / the automation tools."
             if detected else
@@ -132,7 +154,7 @@ def register(mcp, client: BackendClient) -> None:
             "hint": hint,
             "checked_conversations": len(items) if isinstance(items, list) else 0,
             "automation_conversation_ids": automation_ids,
-            "dot_named_fields": dot_fields,
+            "dot_named_fields": [p for p, _ in dot_fields],
             "astra_catalog_slugs": astra_slugs,
             "unknown_conversation_origins": sorted(set(unknown_origins)),
             "automations": {
@@ -201,7 +223,7 @@ def register(mcp, client: BackendClient) -> None:
         `id`). Wire shape verified by execution 2026-10-04 (title required,
         schedule = full VEVENT string, timing_mode = 0 for exact schedules).
         """
-        rule = rrule or f"FREQ={frequency.upper()};BYHOUR={by_hour};BYMINUTE={by_minute}"
+        rule = rrule or _rrule_for(frequency, by_hour, by_minute)
         payload: dict[str, Any] = {
             "title": title or prompt[:60],
             "prompt": prompt,
@@ -278,7 +300,7 @@ def register(mcp, client: BackendClient) -> None:
         return out
 
     @mcp.tool()
-    async def dot_messages(limit: int = 20, room_id: str | None = None) -> list[dict]:
+    async def dot_messages(limit: int = 20, room_id: str | None = None) -> list[dict] | dict:
         """Read the dot conversation (newest last).
 
         `room_id` comes from `list_dots`; when omitted, the first room with an
@@ -350,24 +372,47 @@ def register(mcp, client: BackendClient) -> None:
             return {"delivered": False,
                     "how_to_enable": "Create your dot in the ChatGPT desktop app or "
                                      "desktop web (Pro plan), then retry. See docs/dots.md."}
+        text = (text or "").strip()
+        if not text:
+            return {"delivered": False, "error": "text must be a non-empty string"}
+
+        def _ids_and_owner_texts(data: dict) -> tuple[set, dict]:
+            ids: set = set()
+            owner_texts: dict = {}
+            for m in data.get("items") or []:
+                if not isinstance(m, dict) or not m.get("id"):
+                    continue
+                ids.add(m["id"])
+                if not str(m.get("account_user_id") or "").startswith("calpico-member-"):
+                    owner_texts[m["id"]] = str((m.get("content") or {}).get("text") or "")
+            return ids, owner_texts
+
+        # Readback is judged against ids present BEFORE the send, matching the
+        # exact full text on an OWNER-authored NEW message — stale repeats,
+        # DOT quotations, or shared prefixes cannot claim delivery
+        # (found by independent review 2026-10-04).
+        before = await async_get(
+            client, f"/backend-api/messaging/rooms/{room_id}/messages?limit=8",
+            target_path=f"/backend-api/messaging/rooms/{room_id}/messages") or {}
+        prior_ids, _ = _ids_and_owner_texts(before)
+
         try:
             await async_post(client, f"/backend-api/messaging/rooms/{room_id}/messages",
                              json={"content": {"text": text}},
                              target_path=f"/backend-api/messaging/rooms/{room_id}/messages")
         except RuntimeError as e:
-            # 422 "stable send identifier" is the expected upstream answer for
-            # API sends; persistence is verified below by readback.
-            if "422" not in str(e):
+            # Expected upstream answer for API sends: HTTP 422 with the
+            # stable-send-identifier detail, on successful persistence.
+            # Anything else is a real failure and must surface.
+            msg = str(e)
+            if not ("422" in msg and "stable send identifier" in msg):
                 raise
-        data = await async_get(
-            client,
-            f"/backend-api/messaging/rooms/{room_id}/messages?limit=8",
-            target_path=f"/backend-api/messaging/rooms/{room_id}/messages",
-        ) or {}
-        seen = any(
-            isinstance(m, dict) and text[:60] in str((m.get("content") or {}).get("text") or "")
-            for m in (data.get("items") or [])
-        )
+
+        after = await async_get(
+            client, f"/backend-api/messaging/rooms/{room_id}/messages?limit=8",
+            target_path=f"/backend-api/messaging/rooms/{room_id}/messages") or {}
+        new_ids, owner_texts = _ids_and_owner_texts(after)
+        seen = any(owner_texts.get(i) == text for i in new_ids - prior_ids)
         return {
             "delivered": seen,
             "verified_in_room": seen,
