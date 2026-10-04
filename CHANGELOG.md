@@ -31,10 +31,14 @@ versioning: [SemVer](https://semver.org/).
   - `send_to_dot`: deliver a message into the dot's room from an MCP client.
     Upstream answers 422 "stable send identifier" even on successful
     persistence — the tool tolerates it and verifies delivery by readback.
-    The dot processes API-sent messages on its own cadence: observed ~16 min
-    to a `PONG` reply (n=1, 2026-10-04), versus ~6-10 s for app-typed
-    messages (realtime channel). Instant turnaround still requires typing in
-    the desktop app. No-dot accounts get a friendly `how_to_enable` dict.
+    The dot processes API-sent messages on its own cadence: 4/4 E2E-confirmed
+    replies on 2026-10-04 (~16/10/8 min PONGs + a six-subbot formation task
+    answered `SUBBOTS-DONE 6` in ~8 min, zero side effects), versus ~6-10 s
+    for app-typed messages (realtime channel). Instant turnaround still
+    requires typing in the desktop app. No-dot accounts get a friendly
+    `how_to_enable` dict. `create_automation` validates `frequency`
+    (daily/weekly/hourly/minutely) — typos raise instead of silently
+    scheduling DAILY.
 - Known upstream gate: `target_thread_id` automations (output delivered into
   an existing chat thread) are refused with HTTP 503
   `orbit_access_unavailable` (reproducible A/B against a plain create,

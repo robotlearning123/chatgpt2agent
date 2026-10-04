@@ -87,8 +87,10 @@ def test_not_rolled_out_without_markers() -> None:
     assert out["dot_named_fields"] == []
     # astra catalog presence alone must NOT claim dots
     assert out["astra_catalog_slugs"] == ["gpt-6-astra-wm"]
-    assert out["automations"] == {"total": 0, "cloud_executor": 0, "with_aeon_id": 0,
-                                  "note": out["automations"]["note"]}
+    assert out["automations"]["total"] == 0
+    assert out["automations"]["cloud_executor"] == 0
+    assert out["automations"]["with_aeon_id"] == 0
+    assert "set_automation_status" in out["automations"]["note"]
 
 
 def test_detected_via_dot_named_field() -> None:
@@ -375,3 +377,62 @@ def test_dots_status_falsy_dot_flag_is_not_detection() -> None:
     out = _run(mcp, "dots_status")
     assert out["dots_detected"] is False
     assert out["dot_named_fields"] == ["accounts_check.accounts.a.features[0].dots_enabled"]
+
+
+def test_invalid_frequency_raises_not_silent_daily() -> None:
+    import pytest
+    mcp, client = _reg(_ROUTES_ABSENT)
+    for bad in ("monthly", "yearly", "weekley", "weekly!", "WEEKLYx"):
+        with pytest.raises(ValueError, match="frequency must be one of"):
+            _run(mcp, "create_automation", prompt="p", frequency=bad)
+    assert client.posted == []  # nothing reached the wire
+
+
+def test_frequency_whitespace_and_case_normalized() -> None:
+    mcp, client = _reg(_ROUTES_ABSENT)
+    _run(mcp, "create_automation", prompt="p", frequency=" Weekly ")
+    _, body = client.posted[0]
+    assert "RRULE:FREQ=WEEKLY;BYHOUR=3;BYMINUTE=0" in body["schedule"]
+
+
+def test_empty_dot_container_is_not_detection() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/accounts/check"] = {
+        "accounts": {"a": {"features": [{"dots": {}}]}}}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "dots_status")
+    assert out["dots_detected"] is False
+    # a NON-empty container still detects
+    routes["/backend-api/accounts/check"] = {
+        "accounts": {"a": {"features": [{"dots": {"enabled": True}}]}}}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "dots_status")
+    assert out["dots_detected"] is True
+
+
+def test_dots_status_degrades_on_partial_endpoint_failure() -> None:
+    routes = dict(_ROUTES_ABSENT)
+
+    class FlakyClient(FakeClient):
+        def get(self, path, target_path=None, **k):
+            if path.startswith("/backend-api/automations"):
+                raise RuntimeError("HTTP 500 for automations")
+            return super().get(path, target_path, **k)
+
+    mcp = FakeMCP()
+    dots.register(mcp, FlakyClient(routes))
+    out = _run(mcp, "dots_status")
+    assert out["dots_detected"] is False  # still answers
+    assert any("automations" in e for e in out["errors"])
+    assert out["checked_conversations"] == 2  # other surfaces intact
+
+
+def test_prompt_cap_asserts_both_sides() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/automations"] = {"items": [
+        {"id": "a1", "title": "t", "prompt": "p" * 500},
+    ]}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "list_automations")
+    assert len(out[0]["prompt"]) == 281  # 280 + ellipsis
+    assert out[0]["prompt"].startswith("pppp")

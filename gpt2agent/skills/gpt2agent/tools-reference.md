@@ -417,9 +417,9 @@ requires the caller to explicitly choose `temporary=False`.
   print(status["automations"])  # cloud-executor counts = dot runtime usage
   ```
 - **Notes**:
-  - Dots have no documented API (2026-10-04); detection is marker-based on four GET surfaces (conversations, models, accounts check, automations). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
+  - Dots have no documented API (2026-10-04); detection is marker-based on four GET surfaces (conversations, models, accounts check, automations), each error-tolerant (`errors` lists per-surface failures). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
   - Read-only; no conversation writes, no endpoint guessing.
-  - Direct dot messaging is still gated — see `docs/dots.md` for the HAR runbook.
+  - To message the dot use `send_to_dot` (async, minutes-level); see `docs/dots.md`.
 
 ---
 

@@ -25,6 +25,28 @@ _AUTOMATIONS_PATH = "/backend-api/automations"
 _PROMPT_CAP = 280
 
 
+async def _safe_get(client: BackendClient, path: str, target: str,
+                    errors: list[str], label: str):
+    """GET that degrades instead of killing the whole status report; the
+    failure is surfaced in `errors` (found by completeness critic 2026-10-04)."""
+    try:
+        return await async_get(client, path, target_path=target)
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"{label}: {str(e).splitlines()[0][:120]}")
+        return None
+
+
+async def _default_dot_room(client: BackendClient) -> str | None:
+    """First messaging room tied to an aeon (the dot DM). Single source for
+    dot_messages/send_to_dot default resolution."""
+    rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
+                            target_path="/backend-api/messaging/rooms") or {}
+    for r in rooms.get("items") or []:
+        if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
+            return str(r["id"])
+    return None
+
+
 def _dot_named_fields(obj: Any, path: str = "$", hits: list[str] | None = None) -> list[tuple[str, Any]]:
     """(path, value) of every dict key whose name is the word ``dot``/``dots``."""
     hits = hits if hits is not None else []
@@ -40,12 +62,21 @@ def _dot_named_fields(obj: Any, path: str = "$", hits: list[str] | None = None) 
     return hits
 
 
+_FREQUENCIES = ("daily", "weekly", "hourly", "minutely")
+
+
 def _rrule_for(frequency: str, by_hour: int, by_minute: int) -> str:
     """RRULE body per frequency — BYHOUR is a *filter*, so it must only be
     applied where it means "at this time each day" (daily/weekly). Appending
     it to HOURLY/MINUTELY would collapse recurrence to once a day at that
-    hour (found by independent review 2026-10-04)."""
-    f = frequency.lower()
+    hour. Unknown values raise instead of silently falling back to DAILY
+    (a typo must not create a 30x-more-frequent job — found by independent
+    review 2026-10-04)."""
+    f = (frequency or "").strip().lower()
+    if f not in _FREQUENCIES:
+        raise ValueError(
+            f"frequency must be one of {', '.join(_FREQUENCIES)} (or pass a raw rrule=); got {frequency!r}"
+        )
     if f == "minutely":
         return "FREQ=MINUTELY"
     if f == "hourly":
@@ -88,11 +119,9 @@ def register(mcp, client: BackendClient) -> None:
         dot messaging is not available; scheduled dot work is still
         controllable via the automation tools. See docs/dots.md.
         """
-        convs = await async_get(
-            client,
-            "/backend-api/conversations?limit=50",
-            target_path="/backend-api/conversations",
-        ) or {}
+        errors: list[str] = []
+        convs = await _safe_get(client, "/backend-api/conversations?limit=50",
+                                "/backend-api/conversations", errors, "conversations") or {}
         items = convs.get("items") or []
         automation_ids: list[str] = []
         dot_fields: list[str] = []
@@ -108,11 +137,8 @@ def register(mcp, client: BackendClient) -> None:
             if isinstance(otype, str) and otype and otype not in _KNOWN_ORIGIN_TYPES:
                 unknown_origins.append(otype)
 
-        models = await async_get(
-            client,
-            "/backend-api/models?history_and_training_disabled=false",
-            target_path="/backend-api/models",
-        ) or {}
+        models = await _safe_get(client, "/backend-api/models?history_and_training_disabled=false",
+                                 "/backend-api/models", errors, "models") or {}
         astra_slugs = sorted(
             {
                 str(m.get("slug"))
@@ -121,14 +147,11 @@ def register(mcp, client: BackendClient) -> None:
             }
         )
 
-        check = await async_get(
-            client,
-            "/backend-api/accounts/check/v4-2023-04-27",
-            target_path="/backend-api/accounts/check/v4-2023-04-27",
-        ) or {}
+        check = await _safe_get(client, "/backend-api/accounts/check/v4-2023-04-27",
+                                "/backend-api/accounts/check/v4-2023-04-27", errors, "accounts_check") or {}
         dot_fields += _dot_named_fields(check, path="accounts_check")
 
-        autos = await async_get(client, _AUTOMATIONS_PATH, target_path=_AUTOMATIONS_PATH) or {}
+        autos = await _safe_get(client, _AUTOMATIONS_PATH, _AUTOMATIONS_PATH, errors, "automations") or {}
         auto_items = autos.get("items") or []
         cloud_autos = [a for a in auto_items if isinstance(a, dict) and a.get("executor") == "cloud"]
         aeon_count = sum(1 for a in cloud_autos if a.get("aeon_id"))
@@ -137,9 +160,10 @@ def register(mcp, client: BackendClient) -> None:
         # an explicit off (False/None/0) — e.g. {"dots_enabled": false} must
         # not read as available (found by independent review 2026-10-04).
         hard_marker = any(
-            not isinstance(v, (dict, list)) and v not in (False, None, 0, "", "disabled", "false")
+            (not isinstance(v, (dict, list)) and v not in (False, None, 0, "", "disabled", "false"))
+            or (isinstance(v, (dict, list)) and v)
             for _, v in dot_fields
-        ) or any(isinstance(v, (dict, list)) for _, v in dot_fields)
+        )
         detected = hard_marker or any("dot" in o.lower() for o in unknown_origins)
         hint = (
             "Dots detected — use list_dots / dot_messages / the automation tools."
@@ -157,6 +181,7 @@ def register(mcp, client: BackendClient) -> None:
             "dot_named_fields": [p for p, _ in dot_fields],
             "astra_catalog_slugs": astra_slugs,
             "unknown_conversation_origins": sorted(set(unknown_origins)),
+            "errors": errors,
             "automations": {
                 "total": len(auto_items),
                 "cloud_executor": len(cloud_autos),
@@ -314,12 +339,7 @@ def register(mcp, client: BackendClient) -> None:
         see docs/dots.md.
         """
         if not room_id:
-            rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
-                                    target_path="/backend-api/messaging/rooms") or {}
-            for r in rooms.get("items") or []:
-                if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
-                    room_id = r["id"]
-                    break
+            room_id = await _default_dot_room(client)
         if not room_id:
             return {
                 "status": "no_dot",
@@ -362,12 +382,7 @@ def register(mcp, client: BackendClient) -> None:
         ChatGPT desktop app instead.
         """
         if not room_id:
-            rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
-                                    target_path="/backend-api/messaging/rooms") or {}
-            for r in rooms.get("items") or []:
-                if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
-                    room_id = r["id"]
-                    break
+            room_id = await _default_dot_room(client)
         if not room_id:
             return {"delivered": False,
                     "how_to_enable": "Create your dot in the ChatGPT desktop app or "
