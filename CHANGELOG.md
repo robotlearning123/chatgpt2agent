@@ -4,7 +4,7 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.0.25] - 2026-10-04
 
 ### Added
 
@@ -24,6 +24,11 @@ versioning: [SemVer](https://semver.org/).
     Full control loop verified live through the MCP tools (create-disabled →
     list → set_status → remove → confirmed gone). Direct dot messaging
     remains gated on a captured HAR — runbook in `docs/dots.md`.
+- Known upstream gate: `target_thread_id` automations (output delivered into
+  an existing chat thread) are refused with HTTP 503
+  `orbit_access_unavailable` (reproducible A/B against a plain create,
+  2026-10-04). Thread-targeted readback waits on the orbit service or a
+  captured HAR.
 
 ## [0.0.24] - 2026-09-29
 
