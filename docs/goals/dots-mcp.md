@@ -100,3 +100,14 @@ create_automation (disabled-by-default), set_automation_status,
 remove_automation, list_dots, dot_messages. Suite: 697 passed / 14 skipped /
 ruff clean; verify_release: 0.0.25. Six labeled test messages remain in the
 dot room (dot instructed to only reply PONG).
+
+## Addendum 3 (2026-10-04 night): subbot formation verified
+
+Owner task: "test my dot, which can launch 6 subbot". Sent via send_to_dot
+(19:06:26): launch up to 6 subbots, each reply "<name> ready", no file/branch/
+PR/external side effects, then reply SUBBOTS-DONE <n>. DOT answered exactly
+"SUBBOTS-DONE 6" at 19:14:32. No new tbo threads / wham tasks / room authors
+— subbots are the dot's internal background agents (room authors remain
+exactly dot + owner). Control model: dot orchestration fully controllable via
+API (async ~8-16 min cadence); individual subbots only indirectly through
+dot instructions; instant wake remains app-only.
