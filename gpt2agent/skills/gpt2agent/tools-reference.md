@@ -403,7 +403,9 @@ requires the caller to explicitly choose `temporary=False`.
 - **Parameters**: None.
 - **Returns**: `dict` -- contains:
   - `dots_detected` (bool)
-  - `status` (str) -- `"detected"` or `"not_rolled_out"`
+  - `status` (str) -- `"detected"`, `"not_rolled_out"`, or `"unknown_upstream_error"` (any surface failed to read — NOT a "no dots" verdict; check `errors`)
+  - `hint` (str) -- actionable guidance for the status
+  - `errors` (list[str]) -- per-surface GET failures
   - `checked_conversations` (int)
   - `automation_conversation_ids` (list[str]) -- conversations flagged `is_automation_conversation` (dot candidates)
   - `dot_named_fields` (list[str]) -- any dot-named keys found in account payloads

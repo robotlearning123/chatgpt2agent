@@ -461,21 +461,35 @@ def test_total_upstream_failure_is_unknown_not_absent() -> None:
     out = _run(mcp, "dots_status")
     assert out["dots_detected"] is False
     assert out["status"] == "unknown_upstream_error"
-    assert "NOT a 'no dots' verdict" in out["hint"]
+    assert "NOT a 'no dots' verdict" in out["hint"] and "4 of 4" in out["hint"]
     assert len(out["errors"]) == 4
 
 
-def test_partial_failure_still_reports_rolled_out_state() -> None:
+def test_any_failed_surface_makes_negative_unknown() -> None:
+    # Even 1 of 4 surfaces failing (esp. conversations, the primary
+    # detection surface) must not yield a confident "not_rolled_out".
     routes = dict(_ROUTES_ABSENT)
 
     class OneDeadClient(FakeClient):
         def get(self, path, target_path=None, **k):
-            if path.startswith("/backend-api/models"):
-                raise RuntimeError("HTTP 500 for models")
+            if path.startswith("/backend-api/conversations"):
+                raise RuntimeError("HTTP 401 Unauthorized")
             return super().get(path, target_path, **k)
 
     mcp = FakeMCP()
     dots.register(mcp, OneDeadClient(routes))
     out = _run(mcp, "dots_status")
-    assert out["status"] == "not_rolled_out"  # 3/4 surfaces readable = still a verdict
+    assert out["status"] == "unknown_upstream_error"
+    assert "1 of 4" in out["hint"]
     assert len(out["errors"]) == 1
+    assert out["dots_detected"] is False
+
+
+def test_has_on_value_depth_bounded() -> None:
+    deep = cur = {}
+    for _ in range(500):
+        cur["n"] = {}
+        cur = cur["n"]
+    cur["n"] = True
+    assert dots._has_on_value({"dots": deep}) is False  # no RecursionError, depth-capped
+    assert dots._has_on_value({"dots": {"a": {"b": True}}}) is True

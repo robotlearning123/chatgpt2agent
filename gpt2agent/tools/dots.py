@@ -25,12 +25,15 @@ _AUTOMATIONS_PATH = "/backend-api/automations"
 _PROMPT_CAP = 280
 
 
-def _has_on_value(v) -> bool:
+def _has_on_value(v, depth: int = 0) -> bool:
     """True when a dot-named field carries an ON value: a non-off scalar, or
-    a non-empty container with at least one truthy leaf."""
+    a non-empty container with at least one truthy leaf. Depth-bounded so a
+    pathologically nested payload cannot raise RecursionError."""
+    if depth > 32:
+        return False
     if isinstance(v, (dict, list)):
         vals = v.values() if isinstance(v, dict) else v
-        return any(_has_on_value(x) for x in vals)
+        return any(_has_on_value(x, depth + 1) for x in vals)
     return v not in (False, None, 0, "", "disabled", "false")
 
 
@@ -117,16 +120,19 @@ def register(mcp, client: BackendClient) -> None:
         Dots have no documented API and roll out gradually to Pro plans; this
         tool reads only documented GET surfaces (conversations, model catalog,
         account check, automations) and reports the structural markers.
-        Returns a dict with: `dots_detected` (bool), `status` ("detected" or
-        "not_rolled_out"), `checked_conversations`, `automation_conversation_ids`
+        Returns a dict with: `dots_detected` (bool), `status` ("detected",
+        "not_rolled_out", or "unknown_upstream_error" — the latter whenever
+        any surface failed to read; NOT a "no dots" answer), `hint`,
+        `checked_conversations`, `automation_conversation_ids`
         (conversations flagged `is_automation_conversation` — dot candidates),
         `dot_named_fields` (any dot-named keys found in the payloads),
         `astra_catalog_slugs` (GPT-6 Astra catalog entries — context only,
-        NOT dots access), `unknown_conversation_origins`, and `automations`
-        (cloud/aeon counts: dot-driven scheduled work rides the automations
-        API — see `list_automations`). When `dots_detected` is false, direct
-        dot messaging is not available; scheduled dot work is still
-        controllable via the automation tools. See docs/dots.md.
+        NOT dots access), `unknown_conversation_origins`, `errors`
+        (per-surface GET failures), and `automations` (cloud/aeon counts:
+        dot-driven scheduled work rides the automations API — see
+        `list_automations`). Scheduled dot work is controllable via the
+        automation tools regardless; messaging via `send_to_dot`. See
+        docs/dots.md.
         """
         errors: list[str] = []
         convs = await _safe_get(client, "/backend-api/conversations?limit=50",
@@ -171,13 +177,14 @@ def register(mcp, client: BackendClient) -> None:
         # read as available (found by independent review 2026-10-04).
         hard_marker = any(_has_on_value(v) for _, v in dot_fields)
         detected = hard_marker or any("dot" in o.lower() for o in unknown_origins)
-        upstream_failed = len(errors) >= 4  # every surface failed: token/network
         if detected:
             status, hint = "detected", "Dots detected — use list_dots / dot_messages / the automation tools."
-        elif upstream_failed:
+        elif errors:
+            # A clean negative requires EVERY detection surface readable;
+            # even one failed GET (401/5xx) makes "no dots" unprovable.
             status = "unknown_upstream_error"
-            hint = ("Could not read any account surface — check the token "
-                    "(codex login) and connection; see `errors`. This is NOT a "
+            hint = (f"{len(errors)} of 4 account surfaces failed to read — check the "
+                    "token (codex login) and connection; see `errors`. This is NOT a "
                     "'no dots' verdict.")
         else:
             status = "not_rolled_out"
