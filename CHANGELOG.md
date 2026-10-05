@@ -4,6 +4,23 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.26] - 2026-10-05
+
+### Fixed
+
+- gpt-6-pro streams that hand off mid-answer no longer return a truncated
+  fragment (observed live 2026-10-05: the `gpt6pro` lane answered its first
+  sentence, then the server sent `stream_handoff` — `complete()` only polled
+  a handoff when NO text had streamed). A handoff now always polls the
+  persisted conversation; the finished server-side message replaces the
+  streamed fragment only when it carries the entire fragment as its prefix
+  (review rounds: gpt6pro cross-family + CodeRabbit — length-only and
+  truncated-prefix acceptance both rejected). A failed recovery poll
+  (temporary-chat 404, repeated GET errors) keeps the streamed text instead
+  of discarding it; text-less streams keep the honest raise. Three
+  regression tests discriminate the branches (full replacement,
+  unrelated-poll keep, poll-failure keep).
+
 ## [0.0.25] - 2026-10-04
 
 ### Added
