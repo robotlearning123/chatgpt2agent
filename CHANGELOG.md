@@ -4,6 +4,47 @@ All notable changes to this project will be documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.0.25] - 2026-10-04
+
+### Added
+
+- Dots/automations MCP surface (OpenAI dots = always-on GPT-6 Astra agents,
+  launched 2026-09-29; no documented API — routes and payload shapes
+  extracted from the ChatGPT desktop app bundle and verified by execution
+  2026-10-04):
+  - `dots_status`: read-only marker detection across conversations / model
+    catalog / account check / automations, plus cloud-executor automation
+    counts (the dot scheduled-work surface). Catalog `astra` slugs never
+    claim detection — `gpt-6-astra-wm` routes to `gpt-5-6`.
+  - `list_automations`: the dot's recurring work (PII-redacted, truncated).
+  - `create_automation`: schedules dot work; created DISABLED by default
+    (server-validated schema learned from its own 422 details: title
+    required, `schedule` = full VEVENT string, `timing_mode` = int enum).
+  - `set_automation_status` / `remove_automation`: enable/disable/delete.
+    Full control loop verified live through the MCP tools (create-disabled →
+    list → set_status → remove → confirmed gone).
+  - `list_dots`: the account's dots (aeon registry `/backend-api/tbo` joined
+    with messaging rooms on `aeon_id`) with their DM room ids.
+  - `dot_messages`: read the dot conversation (role-classified DOT/OWNER,
+    PII-redacted; upstream page cap 32). Verified live — includes reading the
+    dot's replies end-to-end.
+  - `send_to_dot`: deliver a message into the dot's room from an MCP client.
+    Upstream answers 422 "stable send identifier" even on successful
+    persistence — the tool tolerates it and verifies delivery by readback.
+    The dot processes API-sent messages on its own cadence: 4/4 E2E-confirmed
+    replies on 2026-10-04 (~16/10/8 min PONGs + a six-subbot formation task
+    answered `SUBBOTS-DONE 6` in ~8 min, zero side effects), versus ~6-10 s
+    for app-typed messages (realtime channel). Instant turnaround still
+    requires typing in the desktop app. No-dot accounts get a friendly
+    `how_to_enable` dict. `create_automation` validates `frequency`
+    (daily/weekly/hourly/minutely) — typos raise instead of silently
+    scheduling DAILY.
+- Known upstream gate: `target_thread_id` automations (output delivered into
+  an existing chat thread) are refused with HTTP 503
+  `orbit_access_unavailable` (reproducible A/B against a plain create,
+  2026-10-04). Thread-targeted readback waits on the orbit service or a
+  captured HAR.
+
 ## [0.0.24] - 2026-09-29
 
 ### Fixed

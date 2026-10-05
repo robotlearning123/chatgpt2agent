@@ -397,6 +397,108 @@ requires the caller to explicitly choose `temporary=False`.
 
 ---
 
+### dots_status
+
+- **Purpose**: Report whether OpenAI dots (always-on GPT-6 Astra agents) are usable on this account, via read-only structural markers.
+- **Parameters**: None.
+- **Returns**: `dict` -- contains:
+  - `dots_detected` (bool)
+  - `status` (str) -- `"detected"`, `"not_rolled_out"`, or `"unknown_upstream_error"` (any surface failed to read — NOT a "no dots" verdict; check `errors`)
+  - `hint` (str) -- actionable guidance for the status
+  - `errors` (list[str]) -- per-surface GET failures
+  - `checked_conversations` (int)
+  - `automation_conversation_ids` (list[str]) -- conversations flagged `is_automation_conversation` (dot candidates)
+  - `dot_named_fields` (list[str]) -- any dot-named keys found in account payloads
+  - `astra_catalog_slugs` (list[str]) -- GPT-6 Astra catalog entries (context only; NOT dots access)
+  - `unknown_conversation_origins` (list[str])
+  - `automations` (dict) -- `{total, cloud_executor, with_aeon_id, note}`: the dot scheduled-work surface
+- **When to use**: Before attempting any dots workflow; to check whether the gradual dots rollout has reached the account and whether dot-driven automations exist.
+- **Example**:
+  ```python
+  status = dots_status()
+  print(status["automations"])  # cloud-executor counts = dot runtime usage
+  ```
+- **Notes**:
+  - Dots have no documented API (2026-10-04); detection is marker-based on four GET surfaces (conversations, models, accounts check, automations), each error-tolerant (`errors` lists per-surface failures). Catalog `astra` slugs alone never set `dots_detected` (the `-wm` slugs route to `gpt-5-6`).
+  - Read-only; no conversation writes, no endpoint guessing.
+  - To message the dot use `send_to_dot` (async, minutes-level); see `docs/dots.md`.
+
+---
+
+### list_automations
+
+- **Purpose**: List scheduled automations — the dot's recurring work surface.
+- **Parameters**:
+  - `limit` (int, default: `20`) -- maximum number of automations to return.
+- **Returns**: `list[dict]` -- each dict contains:
+  - `id` (str) -- the handle for the write tools
+  - `title` (str) -- PII-redacted
+  - `prompt` (str) -- PII-redacted, truncated to 280 chars
+  - `is_enabled` (bool)
+  - `executor` (str) -- `"cloud"` = dot runtime
+  - `timing_mode` (str), `schedule` (str, RRULE excerpt, single line)
+  - `last_run_time` (str), `next_run_times` (list, first 3)
+  - `display_emoji` (str), `can_delete` (bool)
+- **When to use**: Inspect what the dot is scheduled to do; get ids before enabling/disabling/removing.
+- **Example**:
+  ```python
+  autos = list_automations(limit=10)
+  active = [a for a in autos if a["is_enabled"]]
+  ```
+- **Notes**:
+  - Titles and prompts are PII-redacted; prompts truncated.
+  - Async handler; one GET.
+
+---
+
+### create_automation
+
+- **Purpose**: Create a scheduled automation (dot recurring work). Created DISABLED by default.
+- **Parameters**:
+  - `prompt` (str, required) -- what the automation should do each run
+  - `title` (str, default: first 60 chars of prompt)
+  - `frequency` (str, default: `"daily"`) -- daily/weekly/hourly/minutely
+  - `by_hour` (int, default: `3`), `by_minute` (int, default: `0`)
+  - `rrule` (str, optional) -- raw RRULE body, overrides frequency/by_* (e.g. `"FREQ=WEEKLY;BYDAY=MO,FR;BYHOUR=9"`)
+  - `timezone` (str, default: `"UTC"`)
+  - `executor` (str, default: `"cloud"`) -- `"cloud"` = dot runtime
+  - `enabled` (bool, default: `False`) -- paused at birth; enable via `set_automation_status`
+  - `model` (str, optional), `reasoning_effort` (str, optional)
+- **Returns**: `dict` -- the created automation (with `id`).
+- **When to use**: Schedule recurring dot work from an MCP client.
+- **Example**:
+  ```python
+  a = create_automation(prompt="Summarize repo activity", title="repo digest",
+                        frequency="daily", by_hour=9)
+  set_automation_status(automation_id=a["id"], enabled=True)
+  ```
+- **Notes**:
+  - Wire shape verified by execution 2026-10-04 (title required; `schedule` = full VEVENT string; `timing_mode` = 0 for exact schedules).
+  - Disabled-by-default is deliberate: nothing runs until explicitly enabled.
+
+---
+
+### set_automation_status
+
+- **Purpose**: Enable or disable a scheduled automation.
+- **Parameters**:
+  - `automation_id` (str, required) -- from `list_automations`
+  - `enabled` (bool, required)
+- **Returns**: `dict` -- upstream response.
+- **Notes**: Wire field is `jawbone_id` upstream; verified 2026-10-04.
+
+---
+
+### remove_automation
+
+- **Purpose**: Delete a scheduled automation.
+- **Parameters**:
+  - `automation_id` (str, required) -- from `list_automations`
+- **Returns**: `dict` -- upstream response.
+- **Notes**: Irreversible on the account; the ChatGPT UI has no undo for deleted automations.
+
+---
+
 ### list_apps
 
 - **Purpose**: Return ChatGPT connected apps and connectors.
@@ -684,3 +786,43 @@ results = memory_search("keyword from new fact")
 7. **Codex label resolution**: `codex_task_create` resolves `environment_id` from `repo_label` by fetching all environments. Raises `ValueError` on no match or ambiguous match.
 
 8. **Download URL expiry**: File download URLs from `get_file_download_url` and `generate_image` expire after approximately 1 hour.
+
+---
+
+### list_dots
+
+- **Purpose**: List the account's dots (always-on agents) with their DM rooms.
+- **Parameters**:
+  - `limit` (int, default: `10`)
+- **Returns**: `list[dict]` -- `aeon_id` (dot instance id = automation runtime id), `display_name`, `room_id`, `room_name`, `room_updated_at`.
+- **Notes**: room join considers the first 25 messaging rooms (wire-verified cap); a dot room beyond that window joins as null.
+- **When to use**: Discover the dot before reading messages (`dot_messages`) or scheduling work (`create_automation`).
+- **Notes**: Reads `/backend-api/tbo` (aeon registry) + `/backend-api/messaging/rooms`; joins on `aeon_id`.
+
+---
+
+### dot_messages
+
+- **Purpose**: Read the dot conversation (newest last).
+- **Parameters**:
+  - `limit` (int, default: `20`, capped at 32 upstream)
+  - `room_id` (str, optional) -- from `list_dots`; defaults to the first aeon room
+- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). When the account has no dot yet, returns `{status: "no_dot", dots_available: false, how_to_enable: ...}`. A `room_id` that is not an aeon-linked dot room returns `{status: "invalid_room", error: ...}` (no read happens).
+- **When to use**: Read what the dot has done/replied; pair with `list_automations`.
+- **Notes**:
+  - To send, use `send_to_dot` (async, minutes-level latency); instant turnaround requires the desktop app's realtime channel. See `docs/dots.md`.
+  - DOT messages are identified by the `calpico-member-*` author prefix.
+
+---
+
+### send_to_dot
+
+- **Purpose**: Send a message to your dot (async delivery — the dot replies later).
+- **Parameters**:
+  - `text` (str, required) -- the message
+  - `room_id` (str, optional) -- from `list_dots`; defaults to the dot DM
+- **Returns**: `dict` -- `delivered` / `verified_in_room` (bool — judged by the message appearing in the room, NOT the upstream HTTP code), `room_id`, `note` (latency guidance). An unlinked `room_id` returns `{delivered: false, status: "invalid_room"}` before any write.
+- **When to use**: Hand work to the dot from an MCP client when minutes-level latency is fine; poll `dot_messages` for the reply.
+- **Notes**:
+  - Upstream answers 422 "stable send identifier" even on successful persistence — expected and tolerated; delivery is verified by readback.
+  - Observed latency ~16 min (n=1, 2026-10-04); app-typed messages turn around in ~6-10 s (realtime channel). For instant turnaround, type in the ChatGPT desktop app.
