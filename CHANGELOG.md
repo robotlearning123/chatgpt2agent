@@ -8,8 +8,10 @@ versioning: [SemVer](https://semver.org/).
 
 ### Fixed
 
-- gpt-6-pro streams that hand off mid-answer no longer return a truncated
-  fragment (observed live 2026-10-05: the `gpt6pro` lane answered its first
+- gpt-6-pro streams that hand off mid-answer now recover the completed
+  answer when the recovery poll succeeds and prefix validation passes;
+  before, `complete()` returned the streamed fragment as final
+  (observed live 2026-10-05: the `gpt6pro` lane answered its first
   sentence, then the server sent `stream_handoff` — `complete()` only polled
   a handoff when NO text had streamed). A handoff now always polls the
   persisted conversation; the finished server-side message replaces the
