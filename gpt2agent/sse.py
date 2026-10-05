@@ -1388,14 +1388,40 @@ class ConversationClient:
         text = "".join(chunks)
 
         # Server-side ``stream_handoff`` (gpt-6-pro, 2026-09-23): the SSE ends
-        # with a handoff frame and no assistant text, while the answer is
-        # persisted server-side — returning "" here is the silent-empty defect.
-        # Poll the conversation for it. A handoff after partial text is not a
-        # case we have observed; if the stream already produced text we keep it
-        # and do not poll (conservative — never splice two copies of an answer),
-        # so this runs only for a text-less stream.
-        if stream_handoff and not text and conv_id:
-            text = await self._poll_async_response(conv_id, temporary=temporary)
+        # with a handoff frame and the answer is persisted server-side —
+        # returning "" (or a partial fragment) here is the silent-truncation
+        # defect. A handoff CAN arrive after partial stream text (observed
+        # live 2026-10-05: gpt-6-pro answered its first sentence, then handed
+        # off): poll for the finished server-side message and prefer it over
+        # the partial ONLY when the polled text carries the entire partial as
+        # its prefix (review 2026-10-05: a length-only rule can accept an
+        # unrelated older answer; a truncated prefix match can shorten the
+        # fragment). Anything else keeps the streamed partial — never splice
+        # two copies of an answer, never replace with unrelated text.
+        if stream_handoff and conv_id:
+            try:
+                polled = await self._poll_async_response(conv_id, temporary=temporary)
+            except Exception as exc:
+                # A failed recovery poll must not discard streamed text
+                # (CodeRabbit 2026-10-05: temporary-chat 404 / repeated GET
+                # errors raised and lost the partial fragment). With nothing
+                # streamed, keep the honest raise — the caller sees the error.
+                if not text.strip():
+                    raise
+                _log.warning(
+                    "stream_handoff recovery poll failed (%s); keeping %d "
+                    "streamed chars", exc, len(text)
+                )
+                polled = ""
+            polled_ns = (polled or "").strip()
+            partial_ns = text.strip()
+            if polled_ns and (not partial_ns or polled_ns.startswith(partial_ns)):
+                if polled_ns != partial_ns:
+                    _log.info(
+                        "stream_handoff after partial text: replacing %d streamed "
+                        "chars with %d polled chars", len(partial_ns), len(polled_ns)
+                    )
+                text = polled
 
         # Silent downgrade detection: the SSE ``server_ste_metadata`` frame
         # reports the slug that actually served the request. When it differs
