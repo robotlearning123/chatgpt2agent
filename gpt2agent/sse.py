@@ -1399,7 +1399,20 @@ class ConversationClient:
         # fragment). Anything else keeps the streamed partial — never splice
         # two copies of an answer, never replace with unrelated text.
         if stream_handoff and conv_id:
-            polled = await self._poll_async_response(conv_id, temporary=temporary)
+            try:
+                polled = await self._poll_async_response(conv_id, temporary=temporary)
+            except Exception as exc:
+                # A failed recovery poll must not discard streamed text
+                # (CodeRabbit 2026-10-05: temporary-chat 404 / repeated GET
+                # errors raised and lost the partial fragment). With nothing
+                # streamed, keep the honest raise — the caller sees the error.
+                if not text.strip():
+                    raise
+                _log.warning(
+                    "stream_handoff recovery poll failed (%s); keeping %d "
+                    "streamed chars", exc, len(text)
+                )
+                polled = ""
             polled_ns = (polled or "").strip()
             partial_ns = text.strip()
             if polled_ns and (not partial_ns or polled_ns.startswith(partial_ns)):

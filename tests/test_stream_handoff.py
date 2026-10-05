@@ -343,3 +343,26 @@ def test_handoff_partial_text_kept_when_poll_unrelated(
     )
     assert text == "PONG-gpt"
     assert backend.gets == [f"/backend-api/conversation/{_CONV_ID}"]
+
+
+def test_handoff_partial_text_survives_poll_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing recovery poll (temporary-chat 404, repeated GET errors)
+    must not discard streamed text (CodeRabbit 2026-10-05); with nothing
+    streamed the honest raise is preserved by the existing 404 test."""
+    _patch_sse_frames(monkeypatch, _handoff_frames(partial_text="PONG-gpt"))
+    _no_sleep(monkeypatch)
+    backend = _Backend()
+
+    def missing(path: str, **_: Any) -> dict:
+        backend.gets.append(path)
+        raise RuntimeError(f"404 Not Found: {path}")
+
+    monkeypatch.setattr(backend, "get", missing)
+    client = sse_mod.ConversationClient(backend)  # type: ignore[arg-type]
+    text = asyncio.run(
+        client.complete("gpt-6-pro", [{"role": "user", "content": _PROMPT}],
+                        temporary=True)
+    )
+    assert text == "PONG-gpt"
