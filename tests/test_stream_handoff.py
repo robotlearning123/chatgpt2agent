@@ -313,13 +313,31 @@ def test_textless_stream_without_handoff_does_not_poll(
     assert backend.gets == []
 
 
-def test_handoff_after_partial_text_keeps_streamed_text(
+def test_handoff_after_partial_text_polls_and_takes_full(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mid-stream handoff (not observed live): never splice two copies."""
+    """Mid-stream handoff after partial text (observed live 2026-10-05:
+    gpt-6-pro streamed its first sentence, then handed off): the poll's
+    finished server-side message replaces the truncated fragment."""
     text, backend = _complete(
         _handoff_frames(partial_text="PONG-gpt"), monkeypatch
     )
 
+    assert text == "PONG-gpt-6-pro"
+    assert backend.gets == [f"/backend-api/conversation/{_CONV_ID}"]
+
+
+def test_handoff_partial_text_kept_when_poll_shrinks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conservative branch: a polled message that neither extends nor
+    exceeds the streamed fragment must not replace it (never lose text,
+    never splice two copies)."""
+    _patch_sse_frames(monkeypatch, _handoff_frames(partial_text="PONG-gpt"))
+    _no_sleep(monkeypatch)
+    backend = _Backend(poll_text="no")
+    client = sse_mod.ConversationClient(backend)  # type: ignore[arg-type]
+    text = asyncio.run(
+        client.complete("gpt-6-pro", [{"role": "user", "content": _PROMPT}])
+    )
     assert text == "PONG-gpt"
-    assert backend.gets == []
