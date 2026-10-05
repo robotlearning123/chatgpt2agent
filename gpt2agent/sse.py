@@ -1393,18 +1393,16 @@ class ConversationClient:
         # defect. A handoff CAN arrive after partial stream text (observed
         # live 2026-10-05: gpt-6-pro answered its first sentence, then handed
         # off): poll for the finished server-side message and prefer it over
-        # the partial when it extends or exceeds the streamed fragment —
-        # never splice two copies of an answer, and keep the partial when the
-        # poll times out or returns something unrelated.
+        # the partial ONLY when the polled text carries the entire partial as
+        # its prefix (review 2026-10-05: a length-only rule can accept an
+        # unrelated older answer; a truncated prefix match can shorten the
+        # fragment). Anything else keeps the streamed partial — never splice
+        # two copies of an answer, never replace with unrelated text.
         if stream_handoff and conv_id:
             polled = await self._poll_async_response(conv_id, temporary=temporary)
             polled_ns = (polled or "").strip()
             partial_ns = text.strip()
-            if polled_ns and (
-                not partial_ns
-                or polled_ns.startswith(partial_ns[:64])
-                or len(polled_ns) > len(partial_ns)
-            ):
+            if polled_ns and (not partial_ns or polled_ns.startswith(partial_ns)):
                 if polled_ns != partial_ns:
                     _log.info(
                         "stream_handoff after partial text: replacing %d streamed "

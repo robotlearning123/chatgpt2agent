@@ -327,17 +327,19 @@ def test_handoff_after_partial_text_polls_and_takes_full(
     assert backend.gets == [f"/backend-api/conversation/{_CONV_ID}"]
 
 
-def test_handoff_partial_text_kept_when_poll_shrinks(
+def test_handoff_partial_text_kept_when_poll_unrelated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Conservative branch: a polled message that neither extends nor
-    exceeds the streamed fragment must not replace it (never lose text,
-    never splice two copies)."""
+    """Conservative branch: a polled message that does not carry the entire
+    streamed fragment as its prefix must not replace it — including a LONGER
+    unrelated answer (review 2026-10-05: length alone cannot establish answer
+    identity). The poll still happens."""
     _patch_sse_frames(monkeypatch, _handoff_frames(partial_text="PONG-gpt"))
     _no_sleep(monkeypatch)
-    backend = _Backend(poll_text="no")
+    backend = _Backend(poll_text="An unrelated older answer that is much longer")
     client = sse_mod.ConversationClient(backend)  # type: ignore[arg-type]
     text = asyncio.run(
         client.complete("gpt-6-pro", [{"role": "user", "content": _PROMPT}])
     )
     assert text == "PONG-gpt"
+    assert backend.gets == [f"/backend-api/conversation/{_CONV_ID}"]
