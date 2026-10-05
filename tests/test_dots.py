@@ -269,9 +269,66 @@ def test_dot_messages_classifies_roles_sorts_and_redacts() -> None:
 
 
 def test_dot_messages_explicit_room_and_limit_cap() -> None:
-    mcp, client = _reg(_ROUTES_ABSENT)
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/messaging/rooms"] = {"items": [{"id": "r9", "aeon_id": "a1"}]}
+    mcp, client = _reg(routes)
     _run(mcp, "dot_messages", room_id="r9", limit=99)
+    assert client.gets[0] == "/backend-api/messaging/rooms?limit=25"  # validated
     assert client.gets[-1] == "/backend-api/messaging/rooms/r9/messages?limit=32"
+
+
+def test_dot_messages_rejects_unlinked_room() -> None:
+    # A caller-supplied room that is not a dot DM must not silently read an
+    # unrelated room (review 2026-10-04).
+    mcp, client = _reg(_ROUTES_ABSENT)
+    out = _run(mcp, "dot_messages", room_id="r-not-linked")
+    assert out["status"] == "invalid_room"
+    assert not any("/messages" in p for p in client.gets)
+
+
+def test_send_to_dot_rejects_unlinked_room() -> None:
+    mcp, client = _reg(_ROUTES_ABSENT)
+    out = _run(mcp, "send_to_dot", text="hi", room_id="r-not-linked")
+    assert out["delivered"] is False and out["status"] == "invalid_room"
+    assert not client.posted
+
+
+def test_dots_status_scans_envelope_and_models() -> None:
+    # A dot-named key in the conversations envelope or the models payload is
+    # a marker (review 2026-10-04) — detection must be capable of a positive
+    # from either surface alone.
+    for surface, payload in (
+        ("conversations", {"dotted_features": {"dots": True}, "items": []}),
+        ("models", {"models": [], "dots_beta": True}),
+    ):
+        routes = dict(_ROUTES_ABSENT)
+        routes[f"/backend-api/{surface}"] = payload
+        mcp, _ = _reg(routes)
+        out = _run(mcp, "dots_status")
+        assert out["dots_detected"] is True, surface
+        assert out["status"] == "detected", surface
+
+
+def test_dots_status_reports_incomplete_conversation_scan() -> None:
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/conversations"] = {"items": [_conv(id=f"c{i}") for i in range(50)]}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "dots_status")
+    assert out["checked_conversations"] == 50
+    assert out["conversations_scan_complete"] is False
+
+
+def test_list_dots_joins_room_beyond_old_window() -> None:
+    # The join must consider the whole fetched page, not slice to `limit`
+    # (review 2026-10-04: dot room outside a 10-room window joined as null).
+    rooms = [{"id": f"r{i}", "aeon_id": None} for i in range(11)]
+    rooms.append({"id": "r-dot", "aeon_id": "a1", "name": "dot dm"})
+    routes = dict(_ROUTES_ABSENT)
+    routes["/backend-api/tbo"] = {"items": [{"id": "a1", "display_name": "D"}]}
+    routes["/backend-api/messaging/rooms"] = {"items": rooms}
+    mcp, _ = _reg(routes)
+    out = _run(mcp, "list_dots", limit=10)
+    assert out[0]["room_id"] == "r-dot" and out[0]["room_name"] == "dot dm"
 
 
 def test_dot_messages_no_room_friendly_guidance() -> None:

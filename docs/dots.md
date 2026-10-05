@@ -8,12 +8,15 @@ have no documented API; this package drives the surfaces they actually use.
 
 - `dots_status` — read-only detection across conversations / catalog /
   account-check / automations (per-surface error-tolerant). `dots_detected`
-  flips only on hard markers (non-empty dot-named keys, dot
-  `conversation_origin`); `automations` reports the cloud-executor counts.
+  flips only on hard markers (non-empty dot-named keys — including the
+  conversations envelope and the models payload, dot `conversation_origin`);
+  `automations` reports the cloud-executor counts.
   Catalog `astra` slugs never claim detection — `gpt-6-astra-wm` routes to
-  `gpt-5-6`.
-- `list_dots` — the account's dots (aeon registry joined with messaging
-  rooms).
+  `gpt-5-6`. Scan window: the first 50 conversations; when
+  `conversations_scan_complete` is false a negative is incomplete, not
+  "no dots".
+- `list_dots` — the account's dots (aeon registry joined with the first 25
+  messaging rooms (wire-verified cap); a room outside that window joins as null).
 - `dot_messages` — the dot conversation (DOT/OWNER-classified, redacted).
 - `send_to_dot` — async messaging: delivery verified by room readback; the
   dot replies on its own cadence (see below).

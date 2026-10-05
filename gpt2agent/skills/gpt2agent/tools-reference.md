@@ -795,6 +795,7 @@ results = memory_search("keyword from new fact")
 - **Parameters**:
   - `limit` (int, default: `10`)
 - **Returns**: `list[dict]` -- `aeon_id` (dot instance id = automation runtime id), `display_name`, `room_id`, `room_name`, `room_updated_at`.
+- **Notes**: room join considers the first 25 messaging rooms (wire-verified cap); a dot room beyond that window joins as null.
 - **When to use**: Discover the dot before reading messages (`dot_messages`) or scheduling work (`create_automation`).
 - **Notes**: Reads `/backend-api/tbo` (aeon registry) + `/backend-api/messaging/rooms`; joins on `aeon_id`.
 
@@ -806,7 +807,7 @@ results = memory_search("keyword from new fact")
 - **Parameters**:
   - `limit` (int, default: `20`, capped at 32 upstream)
   - `room_id` (str, optional) -- from `list_dots`; defaults to the first aeon room
-- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). When the account has no dot yet, returns `{status: "no_dot", dots_available: false, how_to_enable: ...}`.
+- **Returns**: `list[dict]` -- `role` ("DOT" or "OWNER"), `created_at`, `text` (PII-redacted, 400-char cap). When the account has no dot yet, returns `{status: "no_dot", dots_available: false, how_to_enable: ...}`. A `room_id` that is not an aeon-linked dot room returns `{status: "invalid_room", error: ...}` (no read happens).
 - **When to use**: Read what the dot has done/replied; pair with `list_automations`.
 - **Notes**:
   - To send, use `send_to_dot` (async, minutes-level latency); instant turnaround requires the desktop app's realtime channel. See `docs/dots.md`.
@@ -820,7 +821,7 @@ results = memory_search("keyword from new fact")
 - **Parameters**:
   - `text` (str, required) -- the message
   - `room_id` (str, optional) -- from `list_dots`; defaults to the dot DM
-- **Returns**: `dict` -- `delivered` / `verified_in_room` (bool — judged by the message appearing in the room, NOT the upstream HTTP code), `room_id`, `note` (latency guidance).
+- **Returns**: `dict` -- `delivered` / `verified_in_room` (bool — judged by the message appearing in the room, NOT the upstream HTTP code), `room_id`, `note` (latency guidance). An unlinked `room_id` returns `{delivered: false, status: "invalid_room"}` before any write.
 - **When to use**: Hand work to the dot from an MCP client when minutes-level latency is fine; poll `dot_messages` for the reply.
 - **Notes**:
   - Upstream answers 422 "stable send identifier" even on successful persistence — expected and tolerated; delivery is verified by readback.

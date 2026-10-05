@@ -48,15 +48,50 @@ async def _safe_get(client: BackendClient, path: str, target: str,
         return None
 
 
-async def _default_dot_room(client: BackendClient) -> str | None:
-    """First messaging room tied to an aeon (the dot DM). Single source for
-    dot_messages/send_to_dot default resolution."""
-    rooms = await async_get(client, "/backend-api/messaging/rooms?limit=10",
-                            target_path="/backend-api/messaging/rooms") or {}
-    for r in rooms.get("items") or []:
-        if isinstance(r, dict) and r.get("aeon_id") and r.get("id"):
-            return str(r["id"])
-    return None
+_ROOMS_SCAN_CAP = 25
+
+
+async def _dot_rooms(client: BackendClient) -> tuple[list[dict], bool]:
+    """Messaging rooms tied to an aeon (dot DMs), as ``(rooms, scan_complete)``.
+
+    One bounded fetch of the first ``_ROOMS_SCAN_CAP`` rooms — a dot room
+    beyond that window is invisible (review 2026-10-04); callers surface the
+    completeness flag instead of treating a missing join as "no dot room".
+    """
+    data = await async_get(
+        client, f"/backend-api/messaging/rooms?limit={_ROOMS_SCAN_CAP}",
+        target_path="/backend-api/messaging/rooms") or {}
+    items = [r for r in (data.get("items") or []) if isinstance(r, dict)]
+    return items, len(items) < _ROOMS_SCAN_CAP
+
+
+def _aeon_linked(room: dict) -> bool:
+    return bool(room.get("aeon_id") and room.get("id"))
+
+
+async def _validated_room(client: BackendClient,
+                          room_id: str | None) -> tuple[str | None, dict | None]:
+    """Resolve an explicit room_id against aeon-linked dot rooms.
+
+    A caller-supplied room that is not a dot DM would silently redirect the
+    read/send to an unrelated room (found by review 2026-10-04) — reject it
+    instead. Returns ``(room_id, None)`` on success, ``(None, error_dict)``
+    on an unlinked id, and ``(None, None)`` when the account has no dot room.
+    """
+    rooms, _ = await _dot_rooms(client)
+    if room_id:
+        linked = {str(r["id"]) for r in rooms if _aeon_linked(r)}
+        if room_id not in linked:
+            return None, {
+                "status": "invalid_room",
+                "error": f"room_id {room_id} is not a dot room (no aeon link); "
+                         "use list_dots for valid room ids.",
+            }
+        return room_id, None
+    for r in rooms:
+        if _aeon_linked(r):
+            return str(r["id"]), None
+    return None, None
 
 
 def _dot_named_fields(obj: Any, path: str = "$", hits: list[str] | None = None) -> list[tuple[str, Any]]:
@@ -128,7 +163,10 @@ def register(mcp, client: BackendClient) -> None:
         `dot_named_fields` (any dot-named keys found in the payloads),
         `astra_catalog_slugs` (GPT-6 Astra catalog entries — context only,
         NOT dots access), `unknown_conversation_origins`, `errors`
-        (per-surface GET failures), and `automations` (cloud/aeon counts:
+        (per-surface GET failures), `conversations_scan_complete` (False when
+        the 50-conversation scan window was full — a marker on a later page
+        would be missed; treat a negative with False as incomplete), and
+        `automations` (cloud/aeon counts:
         dot-driven scheduled work rides the automations API — see
         `list_automations`). Scheduled dot work is controllable via the
         automation tools regardless; messaging via `send_to_dot`. See
@@ -140,6 +178,11 @@ def register(mcp, client: BackendClient) -> None:
         items = convs.get("items") or []
         automation_ids: list[str] = []
         dot_fields: list[str] = []
+        # The conversations response envelope (outside `items`) and the full
+        # models payload are scanned too — a dot-named key there is a marker
+        # (found by review 2026-10-04).
+        dot_fields += _dot_named_fields(
+            {k: v for k, v in convs.items() if k != "items"}, path="conversations")
         unknown_origins: list[str] = []
         for it in items if isinstance(items, list) else []:
             if not isinstance(it, dict):
@@ -154,6 +197,7 @@ def register(mcp, client: BackendClient) -> None:
 
         models = await _safe_get(client, "/backend-api/models?history_and_training_disabled=false",
                                  "/backend-api/models", errors, "models") or {}
+        dot_fields += _dot_named_fields(models, path="models")
         astra_slugs = sorted(
             {
                 str(m.get("slug"))
@@ -196,6 +240,7 @@ def register(mcp, client: BackendClient) -> None:
             "status": status,
             "hint": hint,
             "checked_conversations": len(items) if isinstance(items, list) else 0,
+            "conversations_scan_complete": (isinstance(items, list) and len(items) < 50),
             "automation_conversation_ids": automation_ids,
             "dot_named_fields": [p for p, _ in dot_fields],
             "astra_catalog_slugs": astra_slugs,
@@ -317,16 +362,17 @@ def register(mcp, client: BackendClient) -> None:
         Returns a list of dicts with: `aeon_id` (the dot instance id, also
         the automation runtime id), `display_name`, `room_id`, `room_name`,
         `room_updated_at`. Reads two GET surfaces: the aeon registry
-        (`/backend-api/tbo`) and the messaging rooms list. Messages are read
-        with `dot_messages`; scheduled work with `list_automations`.
+        (`/backend-api/tbo`) and the messaging rooms list (first 25 rooms —
+        a dot room outside that window joins as null; review 2026-10-04).
+        Messages are read with `dot_messages`; scheduled work with
+        `list_automations`.
         """
         tbos = await async_get(client, "/backend-api/tbo?limit=25",
                                target_path="/backend-api/tbo") or {}
-        rooms = await async_get(client, f"/backend-api/messaging/rooms?limit={max(1, limit)}",
-                                target_path="/backend-api/messaging/rooms") or {}
+        rooms, _scan_complete = await _dot_rooms(client)
         room_by_aeon = {
             r.get("aeon_id"): r
-            for r in (rooms.get("items") or []) if isinstance(r, dict) and r.get("aeon_id")
+            for r in rooms if r.get("aeon_id")
         }
         out: list[dict] = []
         for t in (tbos.get("items") or [])[: max(0, limit)]:
@@ -353,12 +399,12 @@ def register(mcp, client: BackendClient) -> None:
         truncated to 400 chars). The upstream page cap is 32 messages. When
         the account has no dot yet, returns a friendly dict instead:
         `{"status": "no_dot", "dots_available": false, "how_to_enable": ...}`.
-        Sending is deliberately NOT offered: REST posts persist but do not
-        wake the dot (the wake rides the desktop app's realtime channel) —
-        see docs/dots.md.
+        Sending is a separate tool, `send_to_dot` (REST posts persist; the
+        dot wakes on its own cadence, not instantly) — see docs/dots.md.
         """
-        if not room_id:
-            room_id = await _default_dot_room(client)
+        room_id, invalid = await _validated_room(client, room_id)
+        if invalid:
+            return invalid
         if not room_id:
             return {
                 "status": "no_dot",
@@ -400,8 +446,9 @@ def register(mcp, client: BackendClient) -> None:
         persistence; that is expected). For instant turnaround, type in the
         ChatGPT desktop app instead.
         """
-        if not room_id:
-            room_id = await _default_dot_room(client)
+        room_id, invalid = await _validated_room(client, room_id)
+        if invalid:
+            return {"delivered": False, **invalid}
         if not room_id:
             return {"delivered": False,
                     "how_to_enable": "Create your dot in the ChatGPT desktop app or "
