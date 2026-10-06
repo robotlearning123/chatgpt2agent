@@ -43,8 +43,9 @@ python -m gpt2agent run             # start MCP server (stdio)
 - Wire-probe rule: unit fakes cannot validate wire truth (2026-10-04:
   FakeClient accepted `rooms?limit=50`, live backend 422s; cap is 25). Any
   NEW or CHANGED query param / payload field on a live surface needs ONE
-  live read-only probe before merge; record the observed value in the
-  docstring or receipt.
+  live probe before merge, recorded in the docstring or receipt: read-only
+  GET for query params; for write payloads, a schema-driven 422 probe on a
+  disposable target (the automations precedent, docs/dots.md).
 
 ## Review
 
@@ -54,15 +55,18 @@ rules and the verification bar for reviewers.
 ## Merge gate mechanics (learned 2026-10-04/05)
 
 - Ruleset 16935748 (protect-main) blocks on UNRESOLVED REVIEW THREADS and
-  required checks. Its API cannot be relaxed with the fleet token
-  (`PATCH .../rulesets/{id}` → 404) — close the threads instead (adjudicate
-  each against HEAD: fix / already-fixed / doc).
+  required checks. A `PATCH .../rulesets/{id}` relax attempt 404'd with the
+  fleet token (2026-10-05; the documented update method is PUT, so that
+  attempt proved nothing about token capability) — irrelevant in practice:
+  close the threads instead (adjudicate each against HEAD: fix /
+  already-fixed / doc); it needs no protection change at all.
 - The classic layer's `required_pull_request_reviews` block = 1 approval by
   default. Authorized relax: PUT protection with `required_pull_request_reviews: null`
   → merge → restore (with a trap) → verify restoration. `--admin` is hook-blocked.
-- CI "failure" with EMPTY job steps (killed ~15m) = GitHub runner
-  starvation, not a code problem: `gh run rerun --failed`, keep a watcher;
-  do not touch the workflow.
+- CI "failure" with EMPTY job steps (killed ~15m): first hypothesis is
+  runner starvation, not code (2026-10-05: `gh run rerun --failed` went
+  green). Rerun and watch; only if a rerun reproduces it does the workflow
+  config deserve investigation.
 
 ## Release
 

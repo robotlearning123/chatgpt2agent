@@ -17,11 +17,12 @@ have no documented API; this package drives the surfaces they actually use.
   "no dots".
 - `list_dots` — the account's dots (aeon registry joined with the first 25
   messaging rooms (wire-verified cap); a room outside that window joins as null).
-  Rooms/tbo are PER-ACCOUNT (the aeon id prefix is the account uuid): if
-  `~/.codex/auth.json` is rewritten for a different account, the rooms,
-  dots, and automations you see all change (2026-10-05: a 13:13Z token
-  switch read as "the dot room vanished"). `send_to_dot`'s default
-  resolution follows the live registry, so it survives the switch.
+  Rooms/tbo are PER-ACCOUNT (the aeon id prefix is the account uuid): once
+  requests carry a rewritten `~/.codex/auth.json` (token reloaded per
+  request), the rooms, dots, and automations you see all change (2026-10-05:
+  a 13:13Z token switch read as "the dot room vanished"). `send_to_dot`'s
+  default resolution reads the live registry of whatever account the token
+  now belongs to, provided that account has a resolvable default dot.
 - `dot_messages` — the dot conversation (DOT/OWNER-classified, redacted).
 - `send_to_dot` — async messaging: delivery verified by room readback; the
   dot replies on its own cadence (see below).
