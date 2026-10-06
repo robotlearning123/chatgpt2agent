@@ -35,6 +35,11 @@ Release publication still requires the owner's explicit authorization.
 - **"Works with X and Y" requires an executed check per variant.** Import-level
   compatibility is not behaviour compatibility — the same incident had a working
   import shim and a crashing server path.
+- **SSE/stream fixes need a raw-frames regression fixture** (`tests/test_stream_handoff.py`
+  pattern): a fixture built from captured frames, run before AND after the fix,
+  proving the old code fails the new test. Prose review of a parser change is
+  not a gate. *(2026-10-05: the mid-answer handoff truncation shipped because
+  "handoff after partial text" was assumed unobserved and had no fixture.)*
 - **Test the call site, not only the helper.** A fully tested helper does not
   stop a regression at its caller.
 - **Hand-written docstrings can claim mechanisms that do not exist** ("the skill
